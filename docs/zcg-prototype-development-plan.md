@@ -28,6 +28,7 @@ The prototype should follow the same general operating style as sibling systems 
 
 - **Web app:** Next.js 15, React 19, TypeScript, Node 24 LTS.
 - **Hosting:** AWS Amplify SSR for the main application.
+- **Portable AWS deployment package:** CDK-managed ECS Fargate service with a private Aurora PostgreSQL database for Phase 0 account portability.
 - **Auth:** Better Auth for self-hosted authentication and session management, with app-owned role-based authorization.
 - **Data:** RDS Postgres as the primary grants/workflow store, because grants, milestones, payments, liabilities, reconciliation, and audit events are relational and reporting-heavy.
 - **Auxiliary storage:** DynamoDB is acceptable for sessions, short-lived caches, idempotency locks, or admin queues where it matches existing sibling patterns.
@@ -38,6 +39,8 @@ The prototype should follow the same general operating style as sibling systems 
 - **Deployment:** GitHub push-triggered deployment with explicit Amplify jobs and migration scripts, matching the operational style already used by the dashboard family.
 
 This keeps the prototype familiar to the existing local codebase family without forcing every ZCG workflow into a dashboard-only shape.
+
+Implementation note: the repository now includes `amplify.yml` for sibling-system familiarity, but the Phase 0 portable deployment path is CDK/ECS. This keeps the database private inside a VPC and packages the app runtime, database, workers, storage, secrets, logs, and alarms into one repeatable AWS account deployment.
 
 ### Runtime architecture decision
 
