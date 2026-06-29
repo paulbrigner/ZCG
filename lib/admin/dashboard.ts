@@ -1,5 +1,9 @@
 import { query } from "@/lib/db";
 
+export const applicationFilters = ["all", "matched", "github_only", "sheet_only", "needs_review"] as const;
+
+export type ApplicationFilter = (typeof applicationFilters)[number];
+
 export type SyncRunRow = {
   id: string;
   source: string;
@@ -25,6 +29,15 @@ export type ReconciliationSummaryRow = {
   issue_count: string;
 };
 
+export type ApplicationTotalsRow = {
+  total_applications: string;
+  total_grants: string;
+  matched_applications: string;
+  github_only_applications: string;
+  sheet_only_applications: string;
+  needs_review_applications: string;
+};
+
 export type GrantApplicationRow = {
   id: string;
   title: string;
@@ -32,6 +45,7 @@ export type GrantApplicationRow = {
   normalized_status: string;
   requested_amount_usd: string | null;
   match_confidence: string;
+  source_profile: "matched" | "github_only" | "sheet_only" | "unknown";
   github_issue_number: string | null;
   github_issue_url: string | null;
   source_count: string;
@@ -61,8 +75,46 @@ export type ReconciliationIssueRow = {
   created_at: string;
 };
 
-export async function getAdminDashboard() {
-  const [syncRuns, sourceCounts, reconciliationSummary, applications] = await Promise.all([
+const applicationFilterWhere: Record<ApplicationFilter, string> = {
+  all: "true",
+  matched: "ga.canonical_key like 'github:%' and ga.match_confidence > 0",
+  github_only: "ga.canonical_key like 'github:%' and ga.match_confidence = 0",
+  sheet_only: "ga.canonical_key like 'sheet:%'",
+  needs_review: `exists (
+    select 1
+      from reconciliation_issues ri_filter
+     where ri_filter.canonical_type = 'grant_application'
+       and ri_filter.canonical_id = ga.id
+       and ri_filter.status = 'open'
+  )`
+};
+
+function sourceProfileSql(alias = "ga") {
+  return `case
+            when ${alias}.canonical_key like 'github:%' and ${alias}.match_confidence > 0 then 'matched'
+            when ${alias}.canonical_key like 'github:%' then 'github_only'
+            when ${alias}.canonical_key like 'sheet:%' then 'sheet_only'
+            else 'unknown'
+          end`;
+}
+
+export function normalizeApplicationFilter(value: string | string[] | undefined): ApplicationFilter {
+  const candidate = Array.isArray(value) ? value[0] : value;
+  return applicationFilters.includes(candidate as ApplicationFilter) ? (candidate as ApplicationFilter) : "all";
+}
+
+const emptyApplicationTotals: ApplicationTotalsRow = {
+  total_applications: "0",
+  total_grants: "0",
+  matched_applications: "0",
+  github_only_applications: "0",
+  sheet_only_applications: "0",
+  needs_review_applications: "0"
+};
+
+export async function getAdminDashboard(applicationFilter: ApplicationFilter = "all") {
+  const whereClause = applicationFilterWhere[applicationFilter];
+  const [syncRuns, sourceCounts, reconciliationSummary, applicationTotals, applications] = await Promise.all([
     query<SyncRunRow>(
       `select id,
               source,
@@ -94,6 +146,26 @@ export async function getAdminDashboard() {
         group by status, severity
         order by status, severity`
     ),
+    query<ApplicationTotalsRow>(
+      `select count(*)::text as total_applications,
+              (select count(*)::text from grants) as total_grants,
+              count(*) filter (where ga.canonical_key like 'github:%' and ga.match_confidence > 0)::text
+                as matched_applications,
+              count(*) filter (where ga.canonical_key like 'github:%' and ga.match_confidence = 0)::text
+                as github_only_applications,
+              count(*) filter (where ga.canonical_key like 'sheet:%')::text
+                as sheet_only_applications,
+              count(*) filter (
+                where exists (
+                  select 1
+                    from reconciliation_issues ri_filter
+                   where ri_filter.canonical_type = 'grant_application'
+                     and ri_filter.canonical_id = ga.id
+                     and ri_filter.status = 'open'
+                )
+              )::text as needs_review_applications
+         from grant_applications ga`
+    ),
     query<GrantApplicationRow>(
       `select ga.id::text,
               ga.title,
@@ -101,6 +173,7 @@ export async function getAdminDashboard() {
               ga.normalized_status,
               ga.requested_amount_usd::text,
               ga.match_confidence::text,
+              ${sourceProfileSql()} as source_profile,
               ga.github_issue_number::text,
               ga.github_issue_url,
               count(distinct sl.source_record_id)::text as source_count,
@@ -111,6 +184,7 @@ export async function getAdminDashboard() {
                                   and sl.canonical_id = ga.id
          left join reconciliation_issues ri on ri.canonical_type = 'grant_application'
                                            and ri.canonical_id = ga.id
+        where ${whereClause}
         group by ga.id
         order by ga.updated_at desc
         limit 20`
@@ -121,6 +195,8 @@ export async function getAdminDashboard() {
     syncRuns: syncRuns.rows,
     sourceCounts: sourceCounts.rows,
     reconciliationSummary: reconciliationSummary.rows,
+    applicationTotals: applicationTotals.rows[0] ?? emptyApplicationTotals,
+    activeApplicationFilter: applicationFilter,
     applications: applications.rows
   };
 }
@@ -134,6 +210,7 @@ export async function getGrantApplicationDetail(id: string) {
               ga.normalized_status,
               ga.requested_amount_usd::text,
               ga.match_confidence::text,
+              ${sourceProfileSql()} as source_profile,
               ga.github_issue_number::text,
               ga.github_issue_url,
               count(distinct sl.source_record_id)::text as source_count,

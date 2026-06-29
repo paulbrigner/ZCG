@@ -1,5 +1,10 @@
 import Link from "next/link";
-import { getAdminDashboard } from "@/lib/admin/dashboard";
+import {
+  getAdminDashboard,
+  normalizeApplicationFilter,
+  type ApplicationFilter,
+  type GrantApplicationRow
+} from "@/lib/admin/dashboard";
 import { requirePermission } from "@/lib/authorization";
 
 function numberText(value: string | number | null | undefined) {
@@ -23,6 +28,35 @@ function percentText(value: string | null) {
   return Number.isFinite(parsed) ? `${Math.round(parsed * 100)}%` : "0%";
 }
 
+function sourceProfileLabel(profile: GrantApplicationRow["source_profile"]) {
+  switch (profile) {
+    case "matched":
+      return "GitHub + Sheet";
+    case "github_only":
+      return "GitHub only";
+    case "sheet_only":
+      return "Sheet only";
+    default:
+      return "Unknown";
+  }
+}
+
+function matchText(application: GrantApplicationRow) {
+  if (application.source_profile === "github_only") {
+    return "No Sheet match";
+  }
+
+  if (application.source_profile === "sheet_only") {
+    return "No GitHub match";
+  }
+
+  if (application.source_profile === "matched") {
+    return percentText(application.match_confidence);
+  }
+
+  return "Unclassified";
+}
+
 function dateText(value: string | null) {
   if (!value) {
     return "-";
@@ -39,12 +73,27 @@ function dateText(value: string | null) {
       });
 }
 
-export default async function AdminPage() {
+const applicationFilterOptions: Array<{ key: ApplicationFilter; label: string }> = [
+  { key: "all", label: "All" },
+  { key: "matched", label: "GitHub + Sheet" },
+  { key: "github_only", label: "GitHub only" },
+  { key: "sheet_only", label: "Sheet only" },
+  { key: "needs_review", label: "Needs review" }
+];
+
+export default async function AdminPage({
+  searchParams
+}: {
+  searchParams?: Promise<{ applicationFilter?: string | string[] }>;
+}) {
   const principal = await requirePermission("admin:dashboard:view");
   await requirePermission("source:mirror:read");
   await requirePermission("grant:read");
   await requirePermission("reconciliation:read");
-  const dashboard = await getAdminDashboard();
+  const resolvedSearchParams = searchParams ? await searchParams : {};
+  const activeApplicationFilter = normalizeApplicationFilter(resolvedSearchParams.applicationFilter);
+  const dashboard = await getAdminDashboard(activeApplicationFilter);
+  const totals = dashboard.applicationTotals;
   const totalSourceRecords = dashboard.sourceCounts.reduce(
     (total, row) => total + Number(row.record_count),
     0
@@ -52,7 +101,14 @@ export default async function AdminPage() {
   const openReconciliationIssues = dashboard.reconciliationSummary
     .filter((row) => row.status === "open")
     .reduce((total, row) => total + Number(row.issue_count), 0);
-  const completedRuns = dashboard.syncRuns.filter((run) => run.status === "completed").length;
+  const applicationFilterCounts: Record<ApplicationFilter, string> = {
+    all: totals.total_applications,
+    matched: totals.matched_applications,
+    github_only: totals.github_only_applications,
+    sheet_only: totals.sheet_only_applications,
+    needs_review: totals.needs_review_applications
+  };
+  const activeApplicationTotal = applicationFilterCounts[activeApplicationFilter];
 
   return (
     <main className="admin-shell">
@@ -73,15 +129,18 @@ export default async function AdminPage() {
         </article>
         <article className="metric-card">
           <span className="metric-label">Canonical applications</span>
-          <strong>{numberText(dashboard.applications.length)}</strong>
+          <strong>{numberText(totals.total_applications)}</strong>
+          <span className="metric-note">Total normalized application records</span>
+        </article>
+        <article className="metric-card">
+          <span className="metric-label">Canonical grants</span>
+          <strong>{numberText(totals.total_grants)}</strong>
+          <span className="metric-note">Applications with grant records</span>
         </article>
         <article className="metric-card">
           <span className="metric-label">Open reconciliation</span>
           <strong>{numberText(openReconciliationIssues)}</strong>
-        </article>
-        <article className="metric-card">
-          <span className="metric-label">Recent completed syncs</span>
-          <strong>{numberText(completedRuns)}</strong>
+          <span className="metric-note">Items needing review or confirmation</span>
         </article>
       </section>
 
@@ -162,15 +221,18 @@ export default async function AdminPage() {
           <div className="status-list">
             <p className="status-item">
               <span className="dot green" />
-              GitHub applications
-            </p>
-            <p className="status-item">
-              <span className="dot green" />
-              Sheet project groups
+              Matched GitHub + Sheet records
+              <strong>{numberText(totals.matched_applications)}</strong>
             </p>
             <p className="status-item">
               <span className="dot amber" />
-              Title-confidence matching
+              GitHub-only records
+              <strong>{numberText(totals.github_only_applications)}</strong>
+            </p>
+            <p className="status-item">
+              <span className="dot amber" />
+              Sheet-only records
+              <strong>{numberText(totals.sheet_only_applications)}</strong>
             </p>
             <p className="status-item">
               <span className="dot blue" />
@@ -182,38 +244,66 @@ export default async function AdminPage() {
 
       <section className="panel">
         <div className="section-heading">
-          <h2>Canonical applications</h2>
+          <div>
+            <h2>Application reconciliation</h2>
+            <span className="section-count">
+              Showing {numberText(dashboard.applications.length)} of {numberText(activeApplicationTotal)}
+            </span>
+          </div>
         </div>
+        <nav className="filter-tabs" aria-label="Application reconciliation filters">
+          {applicationFilterOptions.map((option) => {
+            const active = option.key === activeApplicationFilter;
+            const href = option.key === "all" ? "/admin" : `/admin?applicationFilter=${option.key}`;
+
+            return (
+              <Link aria-current={active ? "page" : undefined} className={`filter-tab ${active ? "active" : ""}`} href={href} key={option.key}>
+                <span>{option.label}</span>
+                <strong>{numberText(applicationFilterCounts[option.key])}</strong>
+              </Link>
+            );
+          })}
+        </nav>
         <div className="table-wrap">
           <table className="data-table">
             <thead>
               <tr>
                 <th>Application</th>
+                <th>Source state</th>
                 <th>Status</th>
                 <th>Amount</th>
-                <th>Match</th>
+                <th>GitHub-Sheet match</th>
                 <th>Sources</th>
                 <th>Issues</th>
               </tr>
             </thead>
             <tbody>
-              {dashboard.applications.map((application) => (
-                <tr key={application.id}>
-                  <td>
-                    <Link className="table-link" href={`/admin/grants/${application.id}`}>
-                      {application.title}
-                    </Link>
-                    <span className="subtle">{application.applicant_name ?? "Unknown applicant"}</span>
-                  </td>
-                  <td>
-                    <span className={`badge ${application.normalized_status}`}>{application.normalized_status}</span>
-                  </td>
-                  <td>{moneyText(application.requested_amount_usd)}</td>
-                  <td>{percentText(application.match_confidence)}</td>
-                  <td>{numberText(application.source_count)}</td>
-                  <td>{numberText(application.open_issue_count)}</td>
+              {dashboard.applications.length ? (
+                dashboard.applications.map((application) => (
+                  <tr key={application.id}>
+                    <td>
+                      <Link className="table-link" href={`/admin/grants/${application.id}`}>
+                        {application.title}
+                      </Link>
+                      <span className="subtle">{application.applicant_name ?? "Unknown applicant"}</span>
+                    </td>
+                    <td>
+                      <span className={`badge ${application.source_profile}`}>{sourceProfileLabel(application.source_profile)}</span>
+                    </td>
+                    <td>
+                      <span className={`badge ${application.normalized_status}`}>{application.normalized_status}</span>
+                    </td>
+                    <td>{moneyText(application.requested_amount_usd)}</td>
+                    <td>{matchText(application)}</td>
+                    <td>{numberText(application.source_count)}</td>
+                    <td>{numberText(application.open_issue_count)}</td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={7}>No application records match this filter.</td>
                 </tr>
-              ))}
+              )}
             </tbody>
           </table>
         </div>

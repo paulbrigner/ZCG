@@ -305,6 +305,15 @@ button:disabled {
   overflow-wrap: anywhere;
 }
 
+.metric-note,
+.section-count {
+  color: var(--muted);
+  display: block;
+  font-size: 12px;
+  line-height: 1.4;
+  margin-top: 8px;
+}
+
 .admin-grid {
   display: grid;
   gap: 16px;
@@ -323,6 +332,40 @@ button:disabled {
 
 .section-heading h2 {
   margin: 0;
+}
+
+.filter-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 14px;
+}
+
+.filter-tab {
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: #273244;
+  display: inline-flex;
+  gap: 10px;
+  min-height: 38px;
+  padding: 8px 10px;
+}
+
+.filter-tab.active {
+  background: #eff6ff;
+  border-color: #93c5fd;
+  color: #1d4ed8;
+}
+
+.filter-tab span {
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.filter-tab strong {
+  font-size: 13px;
 }
 
 .table-wrap {
@@ -408,10 +451,18 @@ button:disabled {
 
 .badge.neutral,
 .badge.open,
-.badge.info {
+.badge.info,
+.badge.matched {
   background: #eff6ff;
   border-color: #bfdbfe;
   color: #1d4ed8;
+}
+
+.badge.github_only,
+.badge.sheet_only {
+  background: #fffbeb;
+  border-color: #fde68a;
+  color: var(--amber);
 }
 
 .source-counts {

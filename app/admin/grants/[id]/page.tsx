@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getGrantApplicationDetail } from "@/lib/admin/dashboard";
+import { getGrantApplicationDetail, type GrantApplicationRow } from "@/lib/admin/dashboard";
 import { requirePermission } from "@/lib/authorization";
 
 function moneyText(value: string | null) {
@@ -17,6 +17,35 @@ function moneyText(value: string | null) {
 function percentText(value: string | null) {
   const parsed = Number(value ?? 0);
   return Number.isFinite(parsed) ? `${Math.round(parsed * 100)}%` : "0%";
+}
+
+function sourceProfileLabel(profile: GrantApplicationRow["source_profile"]) {
+  switch (profile) {
+    case "matched":
+      return "GitHub + Sheet";
+    case "github_only":
+      return "GitHub only";
+    case "sheet_only":
+      return "Sheet only";
+    default:
+      return "Unknown";
+  }
+}
+
+function matchText(application: GrantApplicationRow) {
+  if (application.source_profile === "github_only") {
+    return "No Sheet match";
+  }
+
+  if (application.source_profile === "sheet_only") {
+    return "No GitHub match";
+  }
+
+  if (application.source_profile === "matched") {
+    return percentText(application.match_confidence);
+  }
+
+  return "Unclassified";
 }
 
 function parseJson(value: string) {
@@ -86,8 +115,12 @@ export default async function GrantApplicationPage({
           <strong>{moneyText(application.requested_amount_usd)}</strong>
         </article>
         <article className="metric-card">
-          <span className="metric-label">Match confidence</span>
-          <strong>{percentText(application.match_confidence)}</strong>
+          <span className="metric-label">Source state</span>
+          <strong>{sourceProfileLabel(application.source_profile)}</strong>
+        </article>
+        <article className="metric-card">
+          <span className="metric-label">GitHub-Sheet match</span>
+          <strong>{matchText(application)}</strong>
         </article>
       </section>
 
