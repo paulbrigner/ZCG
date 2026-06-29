@@ -26,6 +26,10 @@ export class ZcgPrototypeStack extends Stack {
     const environmentName = this.node.tryGetContext("environment") ?? "prototype";
     const betterAuthUrl = this.node.tryGetContext("betterAuthUrl");
     const bootstrapAdminEmails = this.node.tryGetContext("bootstrapAdminEmails") ?? "";
+    const sesFromEmail = this.node.tryGetContext("sesFromEmail") as string | undefined;
+    const sesIdentityName =
+      (this.node.tryGetContext("sesIdentityName") as string | undefined) ??
+      sesFromEmail?.split("@").at(-1);
     const enableDeletionProtection = this.node.tryGetContext("deletionProtection") === "true";
     const removalPolicy =
       this.node.tryGetContext("removalPolicy") === "destroy"
@@ -98,6 +102,21 @@ export class ZcgPrototypeStack extends Stack {
     );
     database.secret!.grantRead(amplifyComputeRole);
 
+    if (sesFromEmail && sesIdentityName) {
+      amplifyComputeRole.addToPolicy(
+        new iam.PolicyStatement({
+          actions: ["ses:SendEmail", "ses:SendRawEmail"],
+          resources: [
+            this.formatArn({
+              service: "ses",
+              resource: "identity",
+              resourceName: sesIdentityName
+            })
+          ]
+        })
+      );
+    }
+
     const cluster = new ecs.Cluster(this, "Cluster", {
       vpc,
       containerInsightsV2: ecs.ContainerInsights.ENABLED
@@ -140,7 +159,8 @@ export class ZcgPrototypeStack extends Stack {
           DB_NAME: "zcg",
           DB_SSL: "false",
           SNAPSHOT_BUCKET_NAME: snapshotBucket.bucketName,
-          BOOTSTRAP_ADMIN_EMAILS: bootstrapAdminEmails
+          BOOTSTRAP_ADMIN_EMAILS: bootstrapAdminEmails,
+          ...(sesFromEmail ? { SES_FROM_EMAIL: sesFromEmail } : {})
         },
         secrets: {
           DB_USER: ecs.Secret.fromSecretsManager(database.secret!, "username"),
@@ -164,12 +184,20 @@ export class ZcgPrototypeStack extends Stack {
     database.connections.allowDefaultPortFrom(service.service);
     snapshotBucket.grantReadWrite(service.taskDefinition.taskRole);
 
-    service.taskDefinition.taskRole.addToPrincipalPolicy(
-      new iam.PolicyStatement({
-        actions: ["ses:SendEmail", "ses:SendRawEmail"],
-        resources: ["*"]
-      })
-    );
+    if (sesFromEmail && sesIdentityName) {
+      service.taskDefinition.taskRole.addToPrincipalPolicy(
+        new iam.PolicyStatement({
+          actions: ["ses:SendEmail", "ses:SendRawEmail"],
+          resources: [
+            this.formatArn({
+              service: "ses",
+              resource: "identity",
+              resourceName: sesIdentityName
+            })
+          ]
+        })
+      );
+    }
 
     const workerSecurityGroup = new ec2.SecurityGroup(this, "WorkerSecurityGroup", {
       vpc,
