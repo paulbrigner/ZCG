@@ -74,9 +74,10 @@ export default async function GrantApplicationPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  await requirePermission("grant:read");
-  await requirePermission("source:mirror:read");
-  await requirePermission("reconciliation:read");
+  const publicReadOptions = { allowPublicPrototypeRead: true };
+  await requirePermission("grant:read", publicReadOptions);
+  await requirePermission("source:mirror:read", publicReadOptions);
+  await requirePermission("reconciliation:read", publicReadOptions);
 
   const { id } = await params;
   const detail = await getGrantApplicationDetail(id);

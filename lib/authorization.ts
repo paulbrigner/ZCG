@@ -8,7 +8,38 @@ export type Principal = {
   id: string;
   authSubject: string;
   email: string;
+  accessMode?: "authenticated" | "public-readonly";
 };
+
+type RequirePermissionOptions = {
+  allowPublicPrototypeRead?: boolean;
+};
+
+const publicPrototypeReadPermissions = new Set([
+  "admin:dashboard:view",
+  "source:mirror:read",
+  "grant:read",
+  "reconciliation:read"
+]);
+
+const publicPrototypePrincipal: Principal = {
+  id: "public-prototype-readonly",
+  authSubject: "public-prototype-readonly",
+  email: "public-readonly@prototype.local",
+  accessMode: "public-readonly"
+};
+
+export function isPublicPrototypePrincipal(principal: Principal) {
+  return principal.accessMode === "public-readonly";
+}
+
+function canUsePublicPrototypeRead(permissionKey: string, options?: RequirePermissionOptions) {
+  return (
+    options?.allowPublicPrototypeRead === true &&
+    process.env.PUBLIC_PROTOTYPE_READONLY === "true" &&
+    publicPrototypeReadPermissions.has(permissionKey)
+  );
+}
 
 export async function getCurrentPrincipal(): Promise<Principal | null> {
   const session = await auth.api.getSession({
@@ -28,7 +59,7 @@ export async function getCurrentPrincipal(): Promise<Principal | null> {
     [session.user.id, session.user.email, session.user.name ?? session.user.email]
   );
 
-  const principal = result.rows[0] ?? null;
+  const principal = result.rows[0] ? { ...result.rows[0], accessMode: "authenticated" as const } : null;
 
   if (principal) {
     await ensureBootstrapAdmin(principal);
@@ -81,14 +112,25 @@ export async function principalHasPermission(principalId: string, permissionKey:
   return result.rows[0]?.allowed ?? false;
 }
 
-export async function requirePermission(permissionKey: string): Promise<Principal> {
+export async function requirePermission(
+  permissionKey: string,
+  options?: RequirePermissionOptions
+): Promise<Principal> {
   const principal = await getCurrentPrincipal();
 
   if (!principal) {
+    if (canUsePublicPrototypeRead(permissionKey, options)) {
+      return publicPrototypePrincipal;
+    }
+
     redirect("/sign-in");
   }
 
   const allowed = await principalHasPermission(principal.id, permissionKey);
+
+  if (!allowed && canUsePublicPrototypeRead(permissionKey, options)) {
+    return { ...principal, accessMode: "public-readonly" };
+  }
 
   await recordAuditEvent({
     actorPrincipalId: principal.id,

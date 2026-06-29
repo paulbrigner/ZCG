@@ -346,10 +346,14 @@ Current rules:
 - `.env.example` contains placeholders only.
 - `.env` and `.env.*` are ignored except `.env.example`.
 - `cdk.context.json` is ignored because it can include account-specific context.
+- `PUBLIC_PROTOTYPE_READONLY=true` can temporarily expose the server-rendered
+  reconciliation dashboard and application detail pages as read-only prototype
+  views while keeping Better Auth and protected admin APIs in place.
 - Private KYC, agreements, payment instructions, treasury custody operations,
   and internal deliberation are out of scope for public commits.
 - Public APIs should be generated from explicit allowlisted projections.
-- Admin routes must enforce server-side permissions.
+- Authenticated admin APIs and write routes must enforce server-side
+  permissions.
 
 ## Local Development
 

@@ -16,7 +16,8 @@ const envSchema = z.object({
   SNAPSHOT_BUCKET_NAME: z.string().optional(),
   WORKER_SHARED_SECRET: z.string().optional(),
   SES_FROM_EMAIL: z.string().optional(),
-  BOOTSTRAP_ADMIN_EMAILS: z.string().optional()
+  BOOTSTRAP_ADMIN_EMAILS: z.string().optional(),
+  PUBLIC_PROTOTYPE_READONLY: z.enum(["true", "false"]).optional()
 });
 
 export type RuntimeEnv = z.infer<typeof envSchema>;

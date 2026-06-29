@@ -7,7 +7,7 @@ import {
   type ApplicationFilter,
   type GrantApplicationRow
 } from "@/lib/admin/dashboard";
-import { requirePermission } from "@/lib/authorization";
+import { isPublicPrototypePrincipal, requirePermission } from "@/lib/authorization";
 
 function numberText(value: string | number | null | undefined) {
   const parsed = Number(value ?? 0);
@@ -127,10 +127,11 @@ export default async function AdminPage({
     applicationPage?: string | string[];
   }>;
 }) {
-  const principal = await requirePermission("admin:dashboard:view");
-  await requirePermission("source:mirror:read");
-  await requirePermission("grant:read");
-  await requirePermission("reconciliation:read");
+  const publicReadOptions = { allowPublicPrototypeRead: true };
+  const principal = await requirePermission("admin:dashboard:view", publicReadOptions);
+  await requirePermission("source:mirror:read", publicReadOptions);
+  await requirePermission("grant:read", publicReadOptions);
+  await requirePermission("reconciliation:read", publicReadOptions);
   const resolvedSearchParams = searchParams ? await searchParams : {};
   const activeApplicationFilter = normalizeApplicationFilter(resolvedSearchParams.applicationFilter);
   const activeApplicationSearch = normalizeApplicationSearch(resolvedSearchParams.applicationSearch);
@@ -176,7 +177,15 @@ export default async function AdminPage({
           <p className="eyebrow">Admin console</p>
           <h1>Source mirror and reconciliation dashboard</h1>
           <p className="lead">
-            Signed in as <span className="code">{principal.email}</span>.
+            {isPublicPrototypePrincipal(principal) ? (
+              <>
+                Public read-only prototype view. <Link className="table-link" href="/sign-in">Sign in</Link> for admin operations.
+              </>
+            ) : (
+              <>
+                Signed in as <span className="code">{principal.email}</span>.
+              </>
+            )}
           </p>
         </div>
       </section>

@@ -127,6 +127,7 @@ p {
 
 .panel {
   align-self: start;
+  min-width: 0;
 }
 
 .card {
@@ -566,13 +567,25 @@ button:disabled {
 .evidence-list {
   display: grid;
   gap: 12px;
+  min-width: 0;
 }
 
 .evidence-item {
   border-bottom: 1px solid var(--line);
   display: grid;
   gap: 10px;
+  min-width: 0;
   padding: 0 0 14px;
+}
+
+.evidence-item > *,
+.evidence-item h3,
+.evidence-item p,
+.evidence-item a,
+.evidence-meta dd {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .evidence-item:last-child {
