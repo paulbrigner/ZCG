@@ -8,6 +8,8 @@ frontend:
         - npm ci
     build:
       commands:
+        - rm -f .env.production
+        - env | grep -E '^(APP_ENV|BETTER_AUTH_URL|BETTER_AUTH_SECRET|DATABASE_DRIVER|DB_CLUSTER_ARN|DB_SECRET_ARN|DB_NAME|BOOTSTRAP_ADMIN_EMAILS|ZCG_GITHUB_OWNER|ZCG_GITHUB_REPO|ZCG_GITHUB_MAX_PAGES|ZCG_GOOGLE_SHEET_ID|ZCG_GOOGLE_SHEET_TABS)=' >> .env.production
         - npm run build
   artifacts:
     baseDirectory: .next

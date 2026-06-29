@@ -2,6 +2,7 @@ import path from "node:path";
 import * as cdk from "aws-cdk-lib";
 import { Duration, RemovalPolicy, Stack, StackProps } from "aws-cdk-lib";
 import * as cloudwatch from "aws-cdk-lib/aws-cloudwatch";
+import { Platform } from "aws-cdk-lib/aws-ecr-assets";
 import * as ec2 from "aws-cdk-lib/aws-ec2";
 import * as ecs from "aws-cdk-lib/aws-ecs";
 import * as ecsPatterns from "aws-cdk-lib/aws-ecs-patterns";
@@ -112,6 +113,10 @@ export class ZcgPrototypeStack extends Stack {
       cpu: Number(this.node.tryGetContext("webCpu") ?? 512),
       desiredCount: Number(this.node.tryGetContext("webDesiredCount") ?? 1),
       memoryLimitMiB: Number(this.node.tryGetContext("webMemoryMiB") ?? 1024),
+      runtimePlatform: {
+        cpuArchitecture: ecs.CpuArchitecture.X86_64,
+        operatingSystemFamily: ecs.OperatingSystemFamily.LINUX
+      },
       publicLoadBalancer: true,
       assignPublicIp: false,
       circuitBreaker: {
@@ -119,7 +124,9 @@ export class ZcgPrototypeStack extends Stack {
       },
       minHealthyPercent: 100,
       taskImageOptions: {
-        image: ecs.ContainerImage.fromAsset(path.join(__dirname, "..")),
+        image: ecs.ContainerImage.fromAsset(path.join(__dirname, ".."), {
+          platform: Platform.LINUX_AMD64
+        }),
         containerPort: 3000,
         logDriver: ecs.LogDrivers.awsLogs({
           logGroup: appLogGroup,
