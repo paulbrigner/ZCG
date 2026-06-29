@@ -17,6 +17,7 @@
     "check": "npm run typecheck && npm run lint && npm run build",
     "db:migrate": "tsx scripts/migrate.ts",
     "db:seed": "tsx scripts/seed.ts",
+    "reconcile:grants": "tsx scripts/reconcile.ts",
     "worker:sync": "tsx workers/sync-worker.ts",
     "infra:synth": "cdk synth --app \"npx tsx infra/app.ts\"",
     "infra:diff": "cdk diff --app \"npx tsx infra/app.ts\"",
