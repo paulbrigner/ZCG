@@ -78,6 +78,25 @@ export class ZcgPrototypeStack extends Stack {
       enableDataApi: true
     });
 
+    const amplifyComputeRole = new iam.Role(this, "AmplifyComputeRole", {
+      assumedBy: new iam.ServicePrincipal("amplify.amazonaws.com"),
+      description: "SSR compute role for the ZCG Amplify web tier to call the RDS Data API."
+    });
+
+    amplifyComputeRole.addToPolicy(
+      new iam.PolicyStatement({
+        actions: [
+          "rds-data:ExecuteStatement",
+          "rds-data:BatchExecuteStatement",
+          "rds-data:BeginTransaction",
+          "rds-data:CommitTransaction",
+          "rds-data:RollbackTransaction"
+        ],
+        resources: [database.clusterArn]
+      })
+    );
+    database.secret!.grantRead(amplifyComputeRole);
+
     const cluster = new ecs.Cluster(this, "Cluster", {
       vpc,
       containerInsightsV2: ecs.ContainerInsights.ENABLED
@@ -262,6 +281,12 @@ export class ZcgPrototypeStack extends Stack {
     });
     new cdk.CfnOutput(this, "DatabaseSecretArn", {
       value: database.secret!.secretArn
+    });
+    new cdk.CfnOutput(this, "DatabaseClusterArn", {
+      value: database.clusterArn
+    });
+    new cdk.CfnOutput(this, "AmplifyComputeRoleArn", {
+      value: amplifyComputeRole.roleArn
     });
     new cdk.CfnOutput(this, "SyncWorkerFunctionName", {
       value: syncWorker.functionName

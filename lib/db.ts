@@ -1,5 +1,6 @@
 import pg from "pg";
 import { databaseUrlFromEnv } from "@/lib/env";
+import { dataApiQuery } from "@/lib/data-api";
 
 const { Pool } = pg;
 
@@ -23,9 +24,24 @@ export async function query<T extends pg.QueryResultRow = pg.QueryResultRow>(
   text: string,
   values: readonly unknown[] = []
 ): Promise<pg.QueryResult<T>> {
+  if (process.env.DATABASE_DRIVER === "data-api") {
+    const result = await dataApiQuery<T>(text, values);
+    return {
+      command: "",
+      oid: 0,
+      fields: [],
+      rowCount: result.rowCount,
+      rows: result.rows
+    };
+  }
+
   return pool.query<T>(text, [...values]);
 }
 
 export async function closePool() {
+  if (process.env.DATABASE_DRIVER === "data-api") {
+    return;
+  }
+
   await pool.end();
 }

@@ -51,9 +51,20 @@ Secrets should live in Secrets Manager or service-managed secrets. Avoid copying
 5. Set only non-sensitive web environment values in Amplify.
 6. Deploy the CDK backend stack in the same account/region.
 7. Run migrations with the migration-runner Lambda.
-8. Decide the web-to-backend boundary before enabling DB-backed admin flows through Amplify.
-9. Create and associate a CloudFront-scope WAF web ACL before wider stakeholder access if public exposure increases.
+8. Configure Amplify SSR to use the CDK output `AmplifyComputeRoleArn`.
+9. Set Amplify runtime variables for Data API mode:
+   - `DATABASE_DRIVER=data-api`
+   - `DB_CLUSTER_ARN=<DatabaseClusterArn output>`
+   - `DB_SECRET_ARN=<DatabaseSecretArn output>`
+   - `DB_NAME=zcg`
+   - `BETTER_AUTH_URL=https://zcg.pgpz.org`
+   - `BETTER_AUTH_SECRET=<Secrets Manager-backed or generated strong secret>`
+   - `BOOTSTRAP_ADMIN_EMAILS=<initial admin emails>`
+10. Verify `/api/health/db`, Better Auth sign-in, `/admin`, and `/api/admin/source-records`.
+11. Create and associate a CloudFront-scope WAF web ACL before wider stakeholder access if public exposure increases.
 
 ## Phase 1 implication
 
 Phase 1 source mirroring should be backend-first and read-only. Workers can safely import GitHub and Google Sheet data into private Aurora/S3 regardless of whether the public web tier is later hosted on Amplify, ECS, or a hybrid.
+
+The backend connection spike selected RDS Data API as the Amplify-to-private-Aurora bridge. See [Backend connection spike](backend-connection-spike.md).

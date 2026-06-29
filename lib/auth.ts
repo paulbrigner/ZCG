@@ -3,6 +3,7 @@ import { betterAuth } from "better-auth";
 import { emailOTP } from "better-auth/plugins";
 import { databaseUrlFromEnv, getEnv } from "@/lib/env";
 import { sendAuthCodeEmail } from "@/lib/email";
+import { betterAuthDataApiAdapter } from "@/lib/better-auth-data-api-adapter";
 
 const { Pool } = pg;
 const env = getEnv();
@@ -13,11 +14,14 @@ export const auth = betterAuth({
   secret:
     env.BETTER_AUTH_SECRET ??
     (process.env.NODE_ENV === "production" ? undefined : "phase0-local-build-secret-change-before-deploy"),
-  database: new Pool({
-    connectionString: databaseUrlFromEnv(env),
-    max: 4,
-    ssl: process.env.DB_SSL === "true" ? { rejectUnauthorized: true } : undefined
-  }),
+  database:
+    env.DATABASE_DRIVER === "data-api"
+      ? betterAuthDataApiAdapter
+      : new Pool({
+          connectionString: databaseUrlFromEnv(env),
+          max: 4,
+          ssl: process.env.DB_SSL === "true" ? { rejectUnauthorized: true } : undefined
+        }),
   plugins: [
     emailOTP({
       async sendVerificationOTP({ email, otp }) {
