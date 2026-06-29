@@ -72,9 +72,17 @@ type ReconciliationIssueInput = {
   details: Record<string, unknown>;
 };
 
+type ForumLinkInput = {
+  url: string;
+  title: string;
+  summary: string;
+  discoveredFrom: string[];
+};
+
 type PlannedApplication = {
   application: ApplicationInput;
   links: Omit<SourceLinkInput, "canonicalId">[];
+  forumLinks: ForumLinkInput[];
   grant: Omit<GrantInput, "applicationId"> | null;
   issues: Omit<ReconciliationIssueInput, "canonicalId">[];
 };
@@ -85,6 +93,7 @@ export type ReconciliationRunResult = {
   grantsCreatedOrUpdated: number;
   linksCreated: number;
   issuesCreated: number;
+  forumLinksCreatedOrUpdated: number;
   matchedApplications: number;
   unmatchedGitHubApplications: number;
   unmatchedSheetProjects: number;
@@ -93,6 +102,8 @@ export type ReconciliationRunResult = {
 const generatedBy = "grant_reconciliation_v1";
 const sourceRecordBatchSize = 10;
 const writeBatchSize = 100;
+const forumUrlPattern = /https?:\/\/forum\.zcashcommunity\.com\/t\/[^\s)"'<\]}]+/gi;
+const genericForumTopicSlugs = new Set(["zcg-code-of-conduct", "zcg-communication-guidelines"]);
 
 function parseJsonRecord(value: string): Record<string, unknown> {
   try {
@@ -125,6 +136,121 @@ function numberValue(value: unknown): number | null {
 
   const parsed = Number(normalized);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function collectStringValues(value: unknown, depth = 0): string[] {
+  if (depth > 6 || value === null || value === undefined) {
+    return [];
+  }
+
+  if (typeof value === "string") {
+    return [value];
+  }
+
+  if (typeof value === "number" || typeof value === "boolean") {
+    return [String(value)];
+  }
+
+  if (Array.isArray(value)) {
+    return value.flatMap((entry) => collectStringValues(entry, depth + 1));
+  }
+
+  if (typeof value === "object") {
+    return Object.values(value).flatMap((entry) => collectStringValues(entry, depth + 1));
+  }
+
+  return [];
+}
+
+function normalizeForumUrl(value: string) {
+  const trimmed = value.replace(/[.,;:]+$/g, "").replace(/\/+$/g, "");
+
+  try {
+    const parsed = new URL(trimmed);
+
+    if (parsed.hostname !== "forum.zcashcommunity.com" || !parsed.pathname.startsWith("/t/")) {
+      return null;
+    }
+
+    const slug = parsed.pathname.split("/").filter(Boolean)[1];
+
+    if (!slug || genericForumTopicSlugs.has(slug)) {
+      return null;
+    }
+
+    parsed.hash = "";
+    parsed.search = "";
+    parsed.pathname = parsed.pathname.replace(/\/+$/g, "");
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+}
+
+function forumTitleFromUrl(url: string) {
+  try {
+    const parsed = new URL(url);
+    const slug = parsed.pathname.split("/").filter(Boolean)[1];
+
+    if (slug) {
+      return `Forum thread: ${decodeURIComponent(slug).replace(/-/g, " ")}`;
+    }
+  } catch {
+    return "Forum thread";
+  }
+
+  return "Forum thread";
+}
+
+function forumLinksFromRecord(record: RawSourceRecord) {
+  const raw = parseJsonRecord(record.raw_payload);
+  const values = [
+    record.title,
+    record.summary,
+    record.source_url,
+    ...collectStringValues(raw)
+  ].filter((value): value is string => typeof value === "string");
+  const urls = new Map<string, ForumLinkInput>();
+
+  for (const value of values) {
+    const matches = value.match(forumUrlPattern) ?? [];
+
+    for (const match of matches) {
+      const url = normalizeForumUrl(match);
+
+      if (!url || urls.has(url)) {
+        continue;
+      }
+
+      urls.set(url, {
+        url,
+        title: forumTitleFromUrl(url),
+        summary: `Forum link discovered in ${record.source_kind} ${record.source_id}`,
+        discoveredFrom: [`${record.source_kind}:${record.source_id}`]
+      });
+    }
+  }
+
+  return [...urls.values()];
+}
+
+function mergeForumLinks(records: RawSourceRecord[]) {
+  const links = new Map<string, ForumLinkInput>();
+
+  for (const record of records) {
+    for (const link of forumLinksFromRecord(record)) {
+      const existing = links.get(link.url);
+
+      if (existing) {
+        existing.discoveredFrom = [...new Set([...existing.discoveredFrom, ...link.discoveredFrom])];
+        continue;
+      }
+
+      links.set(link.url, link);
+    }
+  }
+
+  return [...links.values()];
 }
 
 function normalizeTitle(value: string | null | undefined) {
@@ -494,6 +620,71 @@ async function bulkUpsertGrants(grants: GrantInput[]) {
   return grants.length;
 }
 
+async function bulkUpsertForumSourceRecords(forumLinks: ForumLinkInput[]) {
+  const idsByUrl = new Map<string, string>();
+  const uniqueLinks = [...new Map(forumLinks.map((link) => [link.url, link])).values()];
+
+  for (const batch of chunkArray(uniqueLinks, writeBatchSize)) {
+    const payload = batch.map((link) => ({
+      url: link.url,
+      title: link.title,
+      summary: link.summary,
+      raw_payload: {
+        url: link.url,
+        discoveredFrom: link.discoveredFrom
+      },
+      metadata: {
+        source: "reconciliation",
+        generatedBy,
+        discoveredFrom: link.discoveredFrom
+      }
+    }));
+
+    const result = await query<{ source_id: string; id: string }>(
+      `insert into source_records (
+         source_kind,
+         source_id,
+         source_url,
+         title,
+         summary,
+         raw_payload,
+         metadata,
+         updated_at
+       )
+       select 'forum_link',
+              url,
+              url,
+              title,
+              summary,
+              coalesce(raw_payload, '{}'::jsonb),
+              coalesce(metadata, '{}'::jsonb),
+              now()
+         from jsonb_to_recordset($1::jsonb) as x(
+           url text,
+           title text,
+           summary text,
+           raw_payload jsonb,
+           metadata jsonb
+         )
+       on conflict (source_kind, source_id)
+       do update set source_url = excluded.source_url,
+                     title = excluded.title,
+                     summary = excluded.summary,
+                     raw_payload = excluded.raw_payload,
+                     metadata = excluded.metadata,
+                     updated_at = now()
+       returning source_id, id`,
+      [JSON.stringify(payload)]
+    );
+
+    for (const row of result.rows) {
+      idsByUrl.set(row.source_id, row.id);
+    }
+  }
+
+  return idsByUrl;
+}
+
 async function bulkLinkSources(links: SourceLinkInput[]) {
   for (const batch of chunkArray(links, writeBatchSize)) {
     const payload = batch.map((link) => ({
@@ -581,6 +772,12 @@ export async function runGrantReconciliation(): Promise<ReconciliationRunResult>
     [generatedBy]
   );
   await query(`delete from source_links where canonical_type = 'grant_application'`);
+  await query(
+    `delete from source_records
+      where source_kind = 'forum_link'
+        and metadata->>'generatedBy' = $1`,
+    [generatedBy]
+  );
 
   const counts: ReconciliationRunResult = {
     ok: true,
@@ -588,6 +785,7 @@ export async function runGrantReconciliation(): Promise<ReconciliationRunResult>
     grantsCreatedOrUpdated: 0,
     linksCreated: 0,
     issuesCreated: 0,
+    forumLinksCreatedOrUpdated: 0,
     matchedApplications: 0,
     unmatchedGitHubApplications: 0,
     unmatchedSheetProjects: 0
@@ -620,6 +818,7 @@ export async function runGrantReconciliation(): Promise<ReconciliationRunResult>
         }
       },
       links: [{ sourceRecordId: app.sourceRecord.id, confidence: 1 }],
+      forumLinks: forumLinksFromRecord(app.sourceRecord),
       grant: null,
       issues: []
     };
@@ -629,6 +828,7 @@ export async function runGrantReconciliation(): Promise<ReconciliationRunResult>
     if (match) {
       matchedSheetKeys.add(match.group.key);
       counts.matchedApplications += 1;
+      planned.forumLinks = mergeForumLinks([app.sourceRecord, ...match.group.rows]);
 
       for (const row of match.group.rows) {
         planned.links.push({ sourceRecordId: row.id, confidence: match.confidence });
@@ -710,6 +910,7 @@ export async function runGrantReconciliation(): Promise<ReconciliationRunResult>
         }
       },
       links: group.rows.map((row) => ({ sourceRecordId: row.id, confidence: 1 })),
+      forumLinks: mergeForumLinks(group.rows),
       grant: {
         title: group.project,
         granteeName: group.grantee,
@@ -738,9 +939,13 @@ export async function runGrantReconciliation(): Promise<ReconciliationRunResult>
   }
 
   const applicationIds = await bulkUpsertApplications(plannedApplications.map((planned) => planned.application));
+  const forumSourceIds = await bulkUpsertForumSourceRecords(
+    plannedApplications.flatMap((planned) => planned.forumLinks)
+  );
   const grants: GrantInput[] = [];
   const links: SourceLinkInput[] = [];
   const issues: ReconciliationIssueInput[] = [];
+  counts.forumLinksCreatedOrUpdated = forumSourceIds.size;
 
   for (const planned of plannedApplications) {
     const applicationId = applicationIds.get(planned.application.canonicalKey);
@@ -751,6 +956,14 @@ export async function runGrantReconciliation(): Promise<ReconciliationRunResult>
 
     for (const link of planned.links) {
       links.push({ ...link, canonicalId: applicationId });
+    }
+
+    for (const forumLink of planned.forumLinks) {
+      const sourceRecordId = forumSourceIds.get(forumLink.url);
+
+      if (sourceRecordId) {
+        links.push({ sourceRecordId, canonicalId: applicationId, confidence: 1 });
+      }
     }
 
     if (planned.grant) {

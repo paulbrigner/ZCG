@@ -1,6 +1,7 @@
 import { query } from "@/lib/db";
 
 export const applicationFilters = ["all", "matched", "github_only", "sheet_only", "needs_review"] as const;
+const applicationPageSize = 20;
 
 export type ApplicationFilter = (typeof applicationFilters)[number];
 
@@ -36,6 +37,14 @@ export type ApplicationTotalsRow = {
   github_only_applications: string;
   sheet_only_applications: string;
   needs_review_applications: string;
+};
+
+export type ApplicationPagination = {
+  page: number;
+  pageSize: number;
+  totalResults: string;
+  totalPages: number;
+  search: string;
 };
 
 export type GrantApplicationRow = {
@@ -103,6 +112,17 @@ export function normalizeApplicationFilter(value: string | string[] | undefined)
   return applicationFilters.includes(candidate as ApplicationFilter) ? (candidate as ApplicationFilter) : "all";
 }
 
+export function normalizeApplicationSearch(value: string | string[] | undefined) {
+  const candidate = Array.isArray(value) ? value[0] : value;
+  return (candidate ?? "").trim().replace(/\s+/g, " ").slice(0, 120);
+}
+
+export function normalizeApplicationPage(value: string | string[] | undefined) {
+  const candidate = Array.isArray(value) ? value[0] : value;
+  const parsed = Number(candidate);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : 1;
+}
+
 const emptyApplicationTotals: ApplicationTotalsRow = {
   total_applications: "0",
   total_grants: "0",
@@ -112,9 +132,52 @@ const emptyApplicationTotals: ApplicationTotalsRow = {
   needs_review_applications: "0"
 };
 
-export async function getAdminDashboard(applicationFilter: ApplicationFilter = "all") {
+function applicationSearchWhere(search: string) {
+  if (!search) {
+    return { sql: "", values: [] as string[] };
+  }
+
+  return {
+    sql: `and (
+      ga.title ilike $1
+      or ga.applicant_name ilike $1
+      or ga.normalized_status ilike $1
+      or ga.github_issue_number::text = $2
+      or ga.github_issue_url ilike $1
+      or exists (
+        select 1
+          from source_links sl_search
+          join source_records sr_search on sr_search.id = sl_search.source_record_id
+         where sl_search.canonical_type = 'grant_application'
+           and sl_search.canonical_id = ga.id
+           and (
+             sr_search.source_id ilike $1
+             or sr_search.title ilike $1
+             or sr_search.summary ilike $1
+           )
+      )
+    )`,
+    values: [`%${search}%`, search]
+  };
+}
+
+export async function getAdminDashboard({
+  applicationFilter = "all",
+  applicationPage = 1,
+  applicationSearch = ""
+}: {
+  applicationFilter?: ApplicationFilter;
+  applicationPage?: number;
+  applicationSearch?: string;
+} = {}) {
   const whereClause = applicationFilterWhere[applicationFilter];
-  const [syncRuns, sourceCounts, reconciliationSummary, applicationTotals, applications] = await Promise.all([
+  const search = normalizeApplicationSearch(applicationSearch);
+  const page = Math.max(1, applicationPage);
+  const searchWhere = applicationSearchWhere(search);
+  const applicationWhereClause = `${whereClause} ${searchWhere.sql}`;
+  const applicationLimitParam = searchWhere.values.length + 1;
+  const applicationOffsetParam = searchWhere.values.length + 2;
+  const [syncRuns, sourceCounts, reconciliationSummary, applicationTotals, applicationResultCount] = await Promise.all([
     query<SyncRunRow>(
       `select id,
               source,
@@ -166,30 +229,42 @@ export async function getAdminDashboard(applicationFilter: ApplicationFilter = "
               )::text as needs_review_applications
          from grant_applications ga`
     ),
-    query<GrantApplicationRow>(
-      `select ga.id::text,
-              ga.title,
-              ga.applicant_name,
-              ga.normalized_status,
-              ga.requested_amount_usd::text,
-              ga.match_confidence::text,
-              ${sourceProfileSql()} as source_profile,
-              ga.github_issue_number::text,
-              ga.github_issue_url,
-              count(distinct sl.source_record_id)::text as source_count,
-              count(distinct ri.id) filter (where ri.status = 'open')::text as open_issue_count,
-              ga.updated_at::text
+    query<{ total_results: string }>(
+      `select count(*)::text as total_results
          from grant_applications ga
-         left join source_links sl on sl.canonical_type = 'grant_application'
-                                  and sl.canonical_id = ga.id
-         left join reconciliation_issues ri on ri.canonical_type = 'grant_application'
-                                           and ri.canonical_id = ga.id
-        where ${whereClause}
-        group by ga.id
-        order by ga.updated_at desc
-        limit 20`
+        where ${applicationWhereClause}`,
+      searchWhere.values
     )
   ]);
+  const totalResults = applicationResultCount.rows[0]?.total_results ?? "0";
+  const totalPages = Math.max(1, Math.ceil(Number(totalResults) / applicationPageSize));
+  const boundedPage = Math.min(page, totalPages);
+  const offset = (boundedPage - 1) * applicationPageSize;
+  const applicationQueryValues = [...searchWhere.values, applicationPageSize, offset];
+  const applications = await query<GrantApplicationRow>(
+    `select ga.id::text,
+            ga.title,
+            ga.applicant_name,
+            ga.normalized_status,
+            ga.requested_amount_usd::text,
+            ga.match_confidence::text,
+            ${sourceProfileSql()} as source_profile,
+            ga.github_issue_number::text,
+            ga.github_issue_url,
+            count(distinct sl.source_record_id)::text as source_count,
+            count(distinct ri.id) filter (where ri.status = 'open')::text as open_issue_count,
+            ga.updated_at::text
+       from grant_applications ga
+       left join source_links sl on sl.canonical_type = 'grant_application'
+                                and sl.canonical_id = ga.id
+       left join reconciliation_issues ri on ri.canonical_type = 'grant_application'
+                                         and ri.canonical_id = ga.id
+      where ${applicationWhereClause}
+      group by ga.id
+      order by ga.updated_at desc
+      limit $${applicationLimitParam} offset $${applicationOffsetParam}`,
+    applicationQueryValues
+  );
 
   return {
     syncRuns: syncRuns.rows,
@@ -197,6 +272,13 @@ export async function getAdminDashboard(applicationFilter: ApplicationFilter = "
     reconciliationSummary: reconciliationSummary.rows,
     applicationTotals: applicationTotals.rows[0] ?? emptyApplicationTotals,
     activeApplicationFilter: applicationFilter,
+    applicationPagination: {
+      page: boundedPage,
+      pageSize: applicationPageSize,
+      totalResults,
+      totalPages,
+      search
+    } satisfies ApplicationPagination,
     applications: applications.rows
   };
 }

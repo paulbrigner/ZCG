@@ -368,6 +368,76 @@ button:disabled {
   font-size: 13px;
 }
 
+.table-controls {
+  align-items: flex-end;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 0 0 14px;
+}
+
+.search-field {
+  display: grid;
+  gap: 6px;
+  min-width: min(360px, 100%);
+}
+
+.search-field span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.search-field input {
+  background: #ffffff;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: var(--ink);
+  font: inherit;
+  min-height: 40px;
+  padding: 8px 10px;
+  width: 100%;
+}
+
+.search-field input:focus {
+  border-color: var(--blue);
+  outline: 3px solid rgba(37, 99, 235, 0.18);
+}
+
+.ghost-link,
+.page-link {
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: #273244;
+  display: inline-flex;
+  font-size: 14px;
+  font-weight: 750;
+  min-height: 40px;
+  padding: 8px 12px;
+}
+
+.pagination {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+  margin-top: 14px;
+}
+
+.page-link.disabled {
+  color: var(--muted);
+  opacity: 0.58;
+}
+
+.page-status {
+  color: var(--muted);
+  font-size: 14px;
+}
+
 .table-wrap {
   overflow-x: auto;
 }

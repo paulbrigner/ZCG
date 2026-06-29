@@ -2,6 +2,8 @@ import Link from "next/link";
 import {
   getAdminDashboard,
   normalizeApplicationFilter,
+  normalizeApplicationPage,
+  normalizeApplicationSearch,
   type ApplicationFilter,
   type GrantApplicationRow
 } from "@/lib/admin/dashboard";
@@ -73,6 +75,41 @@ function dateText(value: string | null) {
       });
 }
 
+function adminHref(params: {
+  applicationFilter?: ApplicationFilter;
+  applicationSearch?: string;
+  applicationPage?: number;
+}) {
+  const searchParams = new URLSearchParams();
+
+  if (params.applicationFilter && params.applicationFilter !== "all") {
+    searchParams.set("applicationFilter", params.applicationFilter);
+  }
+
+  if (params.applicationSearch) {
+    searchParams.set("applicationSearch", params.applicationSearch);
+  }
+
+  if (params.applicationPage && params.applicationPage > 1) {
+    searchParams.set("applicationPage", String(params.applicationPage));
+  }
+
+  const queryString = searchParams.toString();
+  return queryString ? `/admin?${queryString}` : "/admin";
+}
+
+function resultRangeText(page: number, pageSize: number, totalResults: string, displayedCount: number) {
+  const total = Number(totalResults);
+
+  if (!displayedCount || !Number.isFinite(total) || total <= 0) {
+    return "Showing 0 of 0";
+  }
+
+  const first = (page - 1) * pageSize + 1;
+  const last = Math.min(first + displayedCount - 1, total);
+  return `Showing ${numberText(first)}-${numberText(last)} of ${numberText(total)}`;
+}
+
 const applicationFilterOptions: Array<{ key: ApplicationFilter; label: string }> = [
   { key: "all", label: "All" },
   { key: "matched", label: "GitHub + Sheet" },
@@ -84,7 +121,11 @@ const applicationFilterOptions: Array<{ key: ApplicationFilter; label: string }>
 export default async function AdminPage({
   searchParams
 }: {
-  searchParams?: Promise<{ applicationFilter?: string | string[] }>;
+  searchParams?: Promise<{
+    applicationFilter?: string | string[];
+    applicationSearch?: string | string[];
+    applicationPage?: string | string[];
+  }>;
 }) {
   const principal = await requirePermission("admin:dashboard:view");
   await requirePermission("source:mirror:read");
@@ -92,12 +133,20 @@ export default async function AdminPage({
   await requirePermission("reconciliation:read");
   const resolvedSearchParams = searchParams ? await searchParams : {};
   const activeApplicationFilter = normalizeApplicationFilter(resolvedSearchParams.applicationFilter);
-  const dashboard = await getAdminDashboard(activeApplicationFilter);
+  const activeApplicationSearch = normalizeApplicationSearch(resolvedSearchParams.applicationSearch);
+  const activeApplicationPage = normalizeApplicationPage(resolvedSearchParams.applicationPage);
+  const dashboard = await getAdminDashboard({
+    applicationFilter: activeApplicationFilter,
+    applicationSearch: activeApplicationSearch,
+    applicationPage: activeApplicationPage
+  });
   const totals = dashboard.applicationTotals;
+  const pagination = dashboard.applicationPagination;
   const totalSourceRecords = dashboard.sourceCounts.reduce(
     (total, row) => total + Number(row.record_count),
     0
   );
+  const forumLinkCount = dashboard.sourceCounts.find((row) => row.source_kind === "forum_link")?.record_count ?? "0";
   const openReconciliationIssues = dashboard.reconciliationSummary
     .filter((row) => row.status === "open")
     .reduce((total, row) => total + Number(row.issue_count), 0);
@@ -109,6 +158,16 @@ export default async function AdminPage({
     needs_review: totals.needs_review_applications
   };
   const activeApplicationTotal = applicationFilterCounts[activeApplicationFilter];
+  const previousPageHref = adminHref({
+    applicationFilter: activeApplicationFilter,
+    applicationSearch: pagination.search,
+    applicationPage: pagination.page - 1
+  });
+  const nextPageHref = adminHref({
+    applicationFilter: activeApplicationFilter,
+    applicationSearch: pagination.search,
+    applicationPage: pagination.page + 1
+  });
 
   return (
     <main className="admin-shell">
@@ -236,7 +295,8 @@ export default async function AdminPage({
             </p>
             <p className="status-item">
               <span className="dot blue" />
-              Forum links pending
+              Forum links associated
+              <strong>{numberText(forumLinkCount)}</strong>
             </p>
           </div>
         </article>
@@ -247,14 +307,28 @@ export default async function AdminPage({
           <div>
             <h2>Application reconciliation</h2>
             <span className="section-count">
-              Showing {numberText(dashboard.applications.length)} of {numberText(activeApplicationTotal)}
+              {resultRangeText(
+                pagination.page,
+                pagination.pageSize,
+                pagination.totalResults,
+                dashboard.applications.length
+              )}
+              {pagination.search ? ` for "${pagination.search}"` : ""}
             </span>
+            {pagination.search ? (
+              <span className="section-count">
+                {numberText(activeApplicationTotal)} records in this filter before search
+              </span>
+            ) : null}
           </div>
         </div>
         <nav className="filter-tabs" aria-label="Application reconciliation filters">
           {applicationFilterOptions.map((option) => {
             const active = option.key === activeApplicationFilter;
-            const href = option.key === "all" ? "/admin" : `/admin?applicationFilter=${option.key}`;
+            const href = adminHref({
+              applicationFilter: option.key,
+              applicationSearch: pagination.search
+            });
 
             return (
               <Link aria-current={active ? "page" : undefined} className={`filter-tab ${active ? "active" : ""}`} href={href} key={option.key}>
@@ -264,6 +338,27 @@ export default async function AdminPage({
             );
           })}
         </nav>
+        <form action="/admin" className="table-controls" method="get">
+          {activeApplicationFilter !== "all" ? (
+            <input name="applicationFilter" type="hidden" value={activeApplicationFilter} />
+          ) : null}
+          <label className="search-field">
+            <span>Search</span>
+            <input
+              autoComplete="off"
+              defaultValue={pagination.search}
+              name="applicationSearch"
+              placeholder="Application, applicant, status, issue, source"
+              type="search"
+            />
+          </label>
+          <button type="submit">Search</button>
+          {pagination.search ? (
+            <Link className="ghost-link" href={adminHref({ applicationFilter: activeApplicationFilter })}>
+              Clear
+            </Link>
+          ) : null}
+        </form>
         <div className="table-wrap">
           <table className="data-table">
             <thead>
@@ -307,6 +402,25 @@ export default async function AdminPage({
             </tbody>
           </table>
         </div>
+        <nav className="pagination" aria-label="Application reconciliation pages">
+          {pagination.page > 1 ? (
+            <Link className="page-link" href={previousPageHref}>
+              Previous
+            </Link>
+          ) : (
+            <span className="page-link disabled">Previous</span>
+          )}
+          <span className="page-status">
+            Page {numberText(pagination.page)} of {numberText(pagination.totalPages)}
+          </span>
+          {pagination.page < pagination.totalPages ? (
+            <Link className="page-link" href={nextPageHref}>
+              Next
+            </Link>
+          ) : (
+            <span className="page-link disabled">Next</span>
+          )}
+        </nav>
       </section>
     </main>
   );
