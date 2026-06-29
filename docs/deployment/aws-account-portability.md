@@ -6,7 +6,7 @@ This guide describes the Phase 0 deployment package for moving the ZCG prototype
 
 ## Deployment decision
 
-The primary portable deployment path is CDK-managed AWS infrastructure:
+The Phase 0 portable deployment path is CDK-managed AWS infrastructure:
 
 - ECS Fargate service running the Next.js standalone container.
 - Public Application Load Balancer.
@@ -20,7 +20,9 @@ The primary portable deployment path is CDK-managed AWS infrastructure:
 
 This is intentionally more complete than a static hosting setup. The prototype needs a private relational database, worker execution, secrets, and audit/security foundations from day one. Keeping those resources in one CDK stack makes the system easier to reproduce in another AWS account.
 
-The repository still includes `amplify.yml` because Amplify remains a familiar sibling-system hosting pattern. For Phase 0 portability, CDK/ECS is the primary deploy target because it avoids brittle direct access from hosted SSR compute to a private database.
+The repository also includes `amplify.yml` because Amplify remains a familiar sibling-system hosting pattern and is the intended web-tier target for `zcg.pgpz.org`. For DB-backed Phase 0 routes, CDK/ECS remains the safest complete runtime because it can live in the same VPC boundary as private Aurora PostgreSQL.
+
+See [Amplify target for zcg.pgpz.org](amplify-zcg-target.md) for the current target-account/domain assessment and the web-tier/backend split.
 
 ## Prerequisites
 

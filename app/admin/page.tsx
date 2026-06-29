@@ -30,6 +30,10 @@ export default async function AdminPage() {
               <span className="dot blue" />
               Audit event viewer
             </p>
+            <p className="status-item">
+              <span className="dot blue" />
+              Source mirror inspector
+            </p>
           </div>
         </aside>
       </section>

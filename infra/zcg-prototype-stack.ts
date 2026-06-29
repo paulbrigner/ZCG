@@ -158,7 +158,13 @@ export class ZcgPrototypeStack extends Stack {
       DB_NAME: "zcg",
       DB_SECRET_ARN: database.secret!.secretArn,
       DB_SSL: "false",
-      SNAPSHOT_BUCKET_NAME: snapshotBucket.bucketName
+      SNAPSHOT_BUCKET_NAME: snapshotBucket.bucketName,
+      ZCG_GITHUB_OWNER: this.node.tryGetContext("githubOwner") ?? "ZcashCommunityGrants",
+      ZCG_GITHUB_REPO: this.node.tryGetContext("githubRepo") ?? "zcashcommunitygrants",
+      ZCG_GITHUB_MAX_PAGES: String(this.node.tryGetContext("githubMaxPages") ?? 10),
+      ZCG_GOOGLE_SHEET_ID:
+        this.node.tryGetContext("googleSheetId") ?? "1FQ28rDCyRW0TiNxrm3rgD8ai2KGUsXAjPieQmI1kKKg",
+      ZCG_GOOGLE_SHEET_TABS: this.node.tryGetContext("googleSheetTabs") ?? "default:803214474"
     };
 
     const syncWorkerLogGroup = new logs.LogGroup(this, "SyncWorkerLogGroup", {
