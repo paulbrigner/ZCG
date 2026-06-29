@@ -46,7 +46,7 @@ Secrets should live in Secrets Manager or service-managed secrets. Avoid copying
 
 1. Commit and push the application repo.
 2. Create the Amplify app in `us-east-1` connected to `paulbrigner/ZCG`.
-3. Attach the `main` branch with Node `24.18.0` from `amplify.yml`.
+3. Attach the `main` branch with Node 24 from `amplify.yml`; local/build tooling pins `24.18.0`, while Amplify SSR compute uses AWS-managed Node 24.x at runtime.
 4. Attach `zcg.pgpz.org` from the `pgpz.org` Route53 hosted zone.
 5. Set only non-sensitive web environment values in Amplify.
 6. Deploy the CDK backend stack in the same account/region.

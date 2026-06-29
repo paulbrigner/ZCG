@@ -54,8 +54,9 @@ Rationale:
 
 Implementation policy:
 
-- Pin an exact Node 24 version in repository tooling instead of using `latest`.
+- Pin an exact Node 24 version in local and container tooling instead of using `latest`.
 - Configure the Amplify build environment to use the pinned Node 24 version.
+- Treat Amplify SSR compute as Node 24.x because Amplify manages the runtime minor/patch version for the Node major used at build time.
 - Configure Lambda workers to use `nodejs24.x`.
 - Validate Amplify SSR compatibility during Phase 0; do not silently downgrade the application runtime without recording a new architecture decision.
 

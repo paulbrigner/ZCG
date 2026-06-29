@@ -29,6 +29,7 @@ See [Amplify target for zcg.pgpz.org](amplify-zcg-target.md) for the current tar
 - AWS CLI configured for the target account.
 - Docker available locally for CDK container asset builds.
 - Node 24.18.0 available locally.
+- Amplify SSR runtime uses AWS-managed Node 24.x for the Node major used during build; it may not report the same minor/patch as local tooling.
 - npm 11.
 - CDK bootstrap permissions in the target account.
 - A planned public URL for `betterAuthUrl` if using a custom domain. Without one, the stack uses its generated ALB URL.
