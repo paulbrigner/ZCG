@@ -26,9 +26,9 @@ The target architecture should preserve public trust and public history while re
 
 The prototype should follow the same general operating style as sibling systems such as Zodl Dashboard, X Monitor, and PGPZ Community:
 
-- **Web app:** Next.js 15, React 19, TypeScript, Node 22.
+- **Web app:** Next.js 15, React 19, TypeScript, Node 24 LTS.
 - **Hosting:** AWS Amplify SSR for the main application.
-- **Auth:** NextAuth with email magic links and role-based authorization.
+- **Auth:** Better Auth for self-hosted authentication and session management, with app-owned role-based authorization.
 - **Data:** RDS Postgres as the primary grants/workflow store, because grants, milestones, payments, liabilities, reconciliation, and audit events are relational and reporting-heavy.
 - **Auxiliary storage:** DynamoDB is acceptable for sessions, short-lived caches, idempotency locks, or admin queues where it matches existing sibling patterns.
 - **Files:** S3 for source snapshots, exports, and attachments.
@@ -38,6 +38,74 @@ The prototype should follow the same general operating style as sibling systems 
 - **Deployment:** GitHub push-triggered deployment with explicit Amplify jobs and migration scripts, matching the operational style already used by the dashboard family.
 
 This keeps the prototype familiar to the existing local codebase family without forcing every ZCG workflow into a dashboard-only shape.
+
+### Runtime architecture decision
+
+The prototype should use Node 24 LTS rather than Node 22.
+
+Rationale:
+
+- Node 24 is the newer LTS line and gives the prototype a longer support runway.
+- AWS Lambda supports the `nodejs24.x` managed runtime on Amazon Linux 2023.
+- Node 26 should not be the prototype default yet because it is current, not LTS, and would increase platform-compatibility risk for little prototype benefit.
+
+Implementation policy:
+
+- Pin an exact Node 24 version in repository tooling instead of using `latest`.
+- Configure the Amplify build environment to use the pinned Node 24 version.
+- Configure Lambda workers to use `nodejs24.x`.
+- Validate Amplify SSR compatibility during Phase 0; do not silently downgrade the application runtime without recording a new architecture decision.
+
+### Authentication architecture decision
+
+The prototype should use Better Auth rather than NextAuth/Auth.js as the authentication and session layer.
+
+Rationale:
+
+- Better Auth continues the original open-source and self-hosted rationale for using NextAuth/Auth.js.
+- User, account, and session data can remain in the prototype's own Postgres database instead of depending on a third-party hosted auth service.
+- The library is TypeScript-native and compatible with a Next.js application architecture.
+- It supports the prototype's near-term needs: email-based login, sessions, invitations, organizations or teams if useful, and stronger authentication methods for sensitive roles.
+- Auth.js/NextAuth's current project direction points toward Better Auth, so starting new prototype work on Better Auth avoids building new work on a stack that may become a compatibility bridge.
+
+Boundary:
+
+- Better Auth should own authentication, identity-provider connections, sessions, and login flows.
+- The ZCG platform should own authorization, permissions, public/private data projections, workflow transitions, and audit policy.
+- Authorization should be enforced server-side through platform tables such as `roles`, `role_assignments`, and `permission_grants`, not only through UI visibility or Better Auth organization membership.
+
+Initial prototype policy:
+
+- Use email magic links or email one-time-code login for low-risk prototype access.
+- Require stronger authentication for admin, FPF operations, finance, and committee roles before enabling private records, writebacks, or approval workflows. Acceptable options include passkeys, TOTP, or another Better Auth-supported second factor.
+- Keep public pages unauthenticated and generated from an allowlisted public projection.
+- Store secrets in AWS-managed environment variables or Secrets Manager.
+- Record auth-sensitive events in `audit_events`, including sign-in, role changes, permission changes, MFA enrollment/removal, and privileged workflow actions.
+
+Future escape hatch:
+
+- Internal authorization records should reference a stable internal `principal_id`.
+- Better Auth user IDs should map to that internal principal rather than becoming the permanent authorization key.
+- This leaves room to adopt OIDC, SAML, Keycloak, Cognito, Google Workspace, or another enterprise identity provider later without rewriting grants permissions or audit history.
+
+### Audit and security architecture decision
+
+The audit and security model is a Phase 0 requirement, not a later hardening task.
+
+Rationale:
+
+- The platform will eventually handle public/private data boundaries, writebacks to public systems, payment-state workflow, and private FPF/compliance status.
+- Retrofitting audit and authorization after workflow code exists would make early prototype behavior harder to trust and harder to migrate.
+- The prototype's main claim is that it can reduce manual synchronization without reducing public trust; that claim depends on explainable permissions and event history from the beginning.
+
+Phase 0 requirements:
+
+- Define the internal principal, role, permission, and role-assignment tables before building privileged product flows.
+- Define `audit_events` and `public_audit_events` before enabling workflow transitions or source writebacks.
+- Record actor, principal, action, target object, timestamp, source IP or request context where available, before/after values where appropriate, and public/private projection impact.
+- Enforce authorization server-side for admin, FPF operations, finance, committee, and applicant routes.
+- Generate public pages and exports only from an allowlisted public projection.
+- Keep writebacks, destructive operations, and private KYC/payment-instruction imports disabled by default.
 
 ## Target architecture
 
@@ -178,8 +246,10 @@ Objective: create the deployable prototype shell.
 Build:
 
 - Next.js app with public, admin, and API route groups.
-- NextAuth email magic-link auth.
+- Node 24 LTS pinned for local development, Amplify builds, and Lambda workers.
+- Better Auth login, session handling, and initial email-based access.
 - Role model for `admin`, `committee`, `fpf_ops`, `finance`, `applicant`, and `public`.
+- Phase 0 audit/security foundation: principals, roles, permissions, server-side authorization helpers, public projection allowlist, `audit_events`, and `public_audit_events`.
 - RDS Postgres schema migrations.
 - S3 bucket for snapshots/exports/attachments.
 - EventBridge/Lambda sync worker skeleton.
@@ -189,8 +259,12 @@ Build:
 Acceptance criteria:
 
 - App deploys through Amplify.
+- Local, Amplify, and Lambda runtime configuration use Node 24.
 - Database migrations run repeatably.
 - Admin-only route is protected.
+- Server-side authorization is enforced for protected routes.
+- Audit events can be recorded for auth-sensitive and privileged actions.
+- Public projections are generated from an allowlist.
 - A sync run can be recorded with counts and errors.
 
 ### Phase 1: read-only public source mirror
@@ -337,7 +411,10 @@ Rollback:
 ### Foundation
 
 - Create Next.js app, auth, RBAC, layout, and admin shell.
+- Pin Node 24 for local development, Amplify builds, and Lambda workers.
 - Add migration tooling and initial Postgres schema.
+- Add Better Auth integration with internal principal, role, and permission tables.
+- Add the Phase 0 audit/security model and public projection allowlist.
 - Add source snapshot S3 writer.
 - Add sync-run and reconciliation tables.
 - Add local fixture data and test harness.
@@ -438,8 +515,10 @@ Migration stages:
 
 ## Security and governance requirements
 
+- These requirements are Phase 0 gates, not post-prototype hardening.
 - No private KYC or payment-instruction data should be imported until FPF approves data boundaries and access controls.
 - Admin routes must require authenticated roles, not just obscurity.
+- Sensitive admin, FPF operations, finance, and committee capabilities should require stronger authentication before write access is enabled.
 - Public exports must be generated from an allowlisted public projection.
 - Every state transition and writeback must produce an audit event.
 - Every source import must be reproducible from a raw snapshot.
