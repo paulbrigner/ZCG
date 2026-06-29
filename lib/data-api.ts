@@ -13,13 +13,13 @@ type DataApiQueryResult<T> = {
 
 const dataApi = new RDSDataClient({});
 
+function formatTimestamp(date: Date) {
+  return date.toISOString().replace("T", " ").replace("Z", "");
+}
+
 function valueToField(value: unknown): Field {
   if (value === null || value === undefined) {
     return { isNull: true };
-  }
-
-  if (value instanceof Date) {
-    return { stringValue: value.toISOString() };
   }
 
   if (typeof value === "boolean") {
@@ -35,6 +35,29 @@ function valueToField(value: unknown): Field {
   }
 
   return { stringValue: String(value) };
+}
+
+function valueToSqlParameter(name: string, value: unknown): SqlParameter {
+  if (value instanceof Date) {
+    return {
+      name,
+      typeHint: "TIMESTAMP",
+      value: { stringValue: formatTimestamp(value) }
+    };
+  }
+
+  if (value && typeof value === "object") {
+    return {
+      name,
+      typeHint: "JSON",
+      value: { stringValue: JSON.stringify(value) }
+    };
+  }
+
+  return {
+    name,
+    value: valueToField(value)
+  };
 }
 
 function fieldToValue(field: Field | undefined): unknown {
@@ -74,10 +97,7 @@ export function postgresPlaceholdersToNamed(sql: string) {
 }
 
 function sqlParameters(values: readonly unknown[]): SqlParameter[] {
-  return values.map((value, index) => ({
-    name: `p${index + 1}`,
-    value: valueToField(value)
-  }));
+  return values.map((value, index) => valueToSqlParameter(`p${index + 1}`, value));
 }
 
 export async function dataApiQuery<T extends Record<string, unknown> = Record<string, unknown>>(
