@@ -4,9 +4,9 @@ Date: 2026-06-29
 
 ## Current AWS facts
 
-Read-only checks against `--profile zodldashboard` showed:
+Read-only checks against the target AWS profile showed:
 
-- The profile resolves to an AWS SSO AdministratorAccess role in account `860091316962`.
+- The profile resolves to the expected AWS account with sufficient administrative deployment permissions.
 - Route53 has a public hosted zone for `pgpz.org`.
 - No `zcg.pgpz.org` record currently exists in that hosted zone.
 - Existing sibling Amplify apps are in `us-east-1` and use the `WEB_COMPUTE` platform.
