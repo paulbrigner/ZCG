@@ -13,6 +13,13 @@ The goal is to preserve transparency while creating one structured operational
 model for applications, review, milestones, progress updates, payments,
 reporting, audit, and eventual public publishing.
 
+That makes the work both simpler and more complex than it may first appear. The
+simple part is the architectural destination: create one canonical grants model
+and publish the right public, private, and operational views from it. The
+complex part is earning the right to become that model by preserving history,
+respecting current community habits, reconciling imperfect source data, and
+making public/private boundaries explicit before any cutover.
+
 Prototype deployment: https://zcg.pgpz.org
 
 > Status: independent prototype and architecture proposal. This is not an
@@ -50,6 +57,32 @@ That creates predictable problems:
 
 The architectural smell is not that any one tool is bad. The smell is that each
 tool holds part of the truth.
+
+## Simple Thesis, Complex Migration
+
+The redesign argument is intentionally simple:
+
+- ZCG should have one durable grant object instead of separate partial records
+  scattered across GitHub, Sheets, Discourse, Jotform, and manual operations.
+- Existing public tools should become source systems, mirrors, archives, or
+  publishing surfaces rather than the only places where operational truth
+  exists.
+- Public transparency should improve because the system can publish structured
+  grant pages, exports, timelines, and source evidence from a coherent model.
+- Private operational work should become safer because KYC, agreements,
+  internal review, and payment-state records can live behind explicit
+  permissions and audit controls.
+
+The implementation is complex because the current process carries more than
+data. It carries history, community expectations, informal workflows, applicant
+habits, committee judgment, FPF operations, treasury context, and public trust.
+Those cannot be replaced by a clean schema alone.
+
+That is why this prototype takes a sync-first path. The first job is not to ask
+ZCG to abandon familiar tools. The first job is to prove that a new platform can
+read the existing corpus, preserve source evidence, reveal inconsistencies,
+reduce manual reconciliation, and generate better public views without breaking
+the transparency model that already matters to the community.
 
 ## Current State
 
