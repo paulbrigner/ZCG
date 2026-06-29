@@ -12,6 +12,7 @@ type DataApiQueryResult<T> = {
 };
 
 const dataApi = new RDSDataClient({});
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function formatTimestamp(date: Date) {
   return date.toISOString().replace("T", " ").replace("Z", "");
@@ -51,6 +52,14 @@ function valueToSqlParameter(name: string, value: unknown): SqlParameter {
       name,
       typeHint: "JSON",
       value: { stringValue: JSON.stringify(value) }
+    };
+  }
+
+  if (typeof value === "string" && uuidPattern.test(value)) {
+    return {
+      name,
+      typeHint: "UUID",
+      value: { stringValue: value }
     };
   }
 
