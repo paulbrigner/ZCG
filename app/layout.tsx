@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { SessionNav } from "./session-nav";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -20,6 +21,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
               <a href="/admin">Admin</a>
               <a href="/api/health">Health</a>
               <a href="/api/public/grants">Public API</a>
+              <SessionNav />
             </nav>
           </div>
         </header>

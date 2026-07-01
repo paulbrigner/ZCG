@@ -56,10 +56,27 @@ main {
 }
 
 .nav {
+  align-items: center;
   display: flex;
   gap: 18px;
   font-size: 14px;
   color: var(--muted);
+}
+
+.session-nav {
+  align-items: center;
+  display: inline-flex;
+  gap: 10px;
+}
+
+.session-email {
+  color: #273244;
+  font-size: 13px;
+  font-weight: 650;
+  max-width: min(230px, 34vw);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .hero {
@@ -243,6 +260,15 @@ button:disabled {
   background: #ffffff;
   border-color: var(--line);
   color: #273244;
+}
+
+.nav-button {
+  background: #ffffff;
+  border-color: var(--line);
+  color: #273244;
+  font-size: 13px;
+  min-height: 30px;
+  padding: 4px 9px;
 }
 
 .form-status,
@@ -684,5 +710,10 @@ button:disabled {
     align-items: flex-start;
     flex-direction: column;
     gap: 12px;
+  }
+
+  .nav {
+    align-items: flex-start;
+    flex-wrap: wrap;
   }
 }
