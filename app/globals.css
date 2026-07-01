@@ -438,6 +438,14 @@ button:disabled {
   min-width: min(220px, 100%);
 }
 
+.label-filter-field {
+  min-width: min(340px, 100%);
+}
+
+.label-filter-field select[multiple] {
+  min-height: 132px;
+}
+
 .ghost-link,
 .page-link {
   align-items: center;

@@ -46,10 +46,20 @@ export type ApplicationPagination = {
   totalPages: number;
   search: string;
   status: string;
+  labels: string[];
 };
 
 export type ApplicationStatusOptionRow = {
   normalized_status: string;
+  application_count: string;
+};
+
+export type ApplicationLabelOptionRow = {
+  label_name: string;
+  label_slug: string;
+  label_color: string | null;
+  label_category: string;
+  label_status: string | null;
   application_count: string;
 };
 
@@ -155,6 +165,15 @@ export function normalizeApplicationStatus(value: string | string[] | undefined)
   return (candidate ?? "").trim().toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 80);
 }
 
+export function normalizeApplicationLabels(value: string | string[] | undefined) {
+  const values = Array.isArray(value) ? value : value ? [value] : [];
+  return [...new Set(
+    values
+      .map((entry) => entry.trim().toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 120))
+      .filter(Boolean)
+  )];
+}
+
 export function normalizeApplicationPage(value: string | string[] | undefined) {
   const candidate = Array.isArray(value) ? value[0] : value;
   const parsed = Number(candidate);
@@ -220,28 +239,58 @@ function applicationStatusWhere(status: string, parameterIndex: number) {
   };
 }
 
+function applicationLabelsWhere(labels: string[], parameterIndex: number) {
+  if (!labels.length) {
+    return { sql: "", values: [] as string[] };
+  }
+
+  const placeholders = labels.map((_label, index) => `$${parameterIndex + index}`).join(", ");
+
+  return {
+    sql: `and exists (
+      select 1
+        from grant_application_github_labels gal_filter
+       where gal_filter.application_id = ga.id
+         and gal_filter.label_slug in (${placeholders})
+    )`,
+    values: labels
+  };
+}
+
 export async function getAdminDashboard({
   applicationFilter = "all",
   applicationPage = 1,
   applicationSearch = "",
-  applicationStatus = ""
+  applicationStatus = "",
+  applicationLabels = []
 }: {
   applicationFilter?: ApplicationFilter;
   applicationPage?: number;
   applicationSearch?: string;
   applicationStatus?: string;
+  applicationLabels?: string[];
 } = {}) {
   const whereClause = applicationFilterWhere[applicationFilter];
   const search = normalizeApplicationSearch(applicationSearch);
   const status = normalizeApplicationStatus(applicationStatus);
+  const labels = normalizeApplicationLabels(applicationLabels);
   const page = Math.max(1, applicationPage);
   const searchWhere = applicationSearchWhere(search);
   const statusWhere = applicationStatusWhere(status, searchWhere.values.length + 1);
-  const applicationWhereValues = [...searchWhere.values, ...statusWhere.values];
-  const applicationWhereClause = `${whereClause} ${searchWhere.sql} ${statusWhere.sql}`;
+  const labelWhere = applicationLabelsWhere(labels, searchWhere.values.length + statusWhere.values.length + 1);
+  const applicationWhereValues = [...searchWhere.values, ...statusWhere.values, ...labelWhere.values];
+  const applicationWhereClause = `${whereClause} ${searchWhere.sql} ${statusWhere.sql} ${labelWhere.sql}`;
   const applicationLimitParam = applicationWhereValues.length + 1;
   const applicationOffsetParam = applicationWhereValues.length + 2;
-  const [syncRuns, sourceCounts, reconciliationSummary, applicationTotals, applicationStatusOptions, applicationResultCount] =
+  const [
+    syncRuns,
+    sourceCounts,
+    reconciliationSummary,
+    applicationTotals,
+    applicationStatusOptions,
+    applicationLabelOptions,
+    applicationResultCount
+  ] =
     await Promise.all([
     query<SyncRunRow>(
       `select id,
@@ -313,6 +362,17 @@ export async function getAdminDashboard({
                  end,
                  normalized_status`
     ),
+    query<ApplicationLabelOptionRow>(
+      `select label_name,
+              label_slug,
+              label_color,
+              label_category,
+              label_status,
+              count(distinct application_id)::text as application_count
+         from grant_application_github_labels
+        group by label_name, label_slug, label_color, label_category, label_status, label_order
+        order by label_order, label_name`
+    ),
     query<{ total_results: string }>(
       `select count(*)::text as total_results
          from grant_applications ga
@@ -383,6 +443,7 @@ export async function getAdminDashboard({
     reconciliationSummary: reconciliationSummary.rows,
     applicationTotals: applicationTotals.rows[0] ?? emptyApplicationTotals,
     applicationStatusOptions: applicationStatusOptions.rows,
+    applicationLabelOptions: applicationLabelOptions.rows,
     activeApplicationFilter: applicationFilter,
     applicationPagination: {
       page: boundedPage,
@@ -390,7 +451,8 @@ export async function getAdminDashboard({
       totalResults,
       totalPages,
       search,
-      status
+      status,
+      labels
     } satisfies ApplicationPagination,
     applications: applications.rows
   };
