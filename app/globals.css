@@ -439,11 +439,88 @@ button:disabled {
 }
 
 .label-filter-field {
-  min-width: min(340px, 100%);
+  min-width: min(520px, 100%);
 }
 
-.label-filter-field select[multiple] {
+.label-filter-list {
+  background: #ffffff;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  display: grid;
+  gap: 6px;
+  max-height: 230px;
   min-height: 132px;
+  overflow: auto;
+  padding: 8px;
+}
+
+.label-filter-row {
+  align-items: center;
+  display: grid;
+  gap: 6px;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  min-width: 0;
+}
+
+.label-filter-name {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.label-filter-name small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.label-filter-toggle {
+  display: inline-flex;
+  min-width: 0;
+}
+
+.label-filter-toggle input {
+  border: 0;
+  height: 1px;
+  min-height: 0;
+  opacity: 0;
+  padding: 0;
+  position: absolute;
+  width: 1px;
+}
+
+.label-filter-toggle span {
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: #273244;
+  cursor: pointer;
+  display: inline-flex;
+  font-size: 14px;
+  font-weight: 900;
+  height: 28px;
+  justify-content: center;
+  line-height: 1;
+  width: 30px;
+}
+
+.label-filter-toggle input:focus-visible + span {
+  border-color: var(--blue);
+  outline: 3px solid rgba(37, 99, 235, 0.18);
+}
+
+.label-filter-toggle.include input:checked + span {
+  background: #ecfdf5;
+  border-color: #a7f3d0;
+  color: var(--green);
+}
+
+.label-filter-toggle.exclude input:checked + span {
+  background: #fef2f2;
+  border-color: #fecaca;
+  color: var(--red);
 }
 
 .ghost-link,

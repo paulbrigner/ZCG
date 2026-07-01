@@ -151,6 +151,7 @@ function adminHref(params: {
   applicationSearch?: string;
   applicationStatus?: string;
   applicationLabels?: string[];
+  excludedApplicationLabels?: string[];
   applicationPage?: number;
 }) {
   const searchParams = new URLSearchParams();
@@ -169,6 +170,10 @@ function adminHref(params: {
 
   for (const label of params.applicationLabels ?? []) {
     searchParams.append("applicationLabels", label);
+  }
+
+  for (const label of params.excludedApplicationLabels ?? []) {
+    searchParams.append("excludedApplicationLabels", label);
   }
 
   if (params.applicationPage && params.applicationPage > 1) {
@@ -207,6 +212,7 @@ export default async function AdminPage({
     applicationSearch?: string | string[];
     applicationStatus?: string | string[];
     applicationLabels?: string | string[];
+    excludedApplicationLabels?: string | string[];
     applicationPage?: string | string[];
   }>;
 }) {
@@ -220,12 +226,14 @@ export default async function AdminPage({
   const activeApplicationSearch = normalizeApplicationSearch(resolvedSearchParams.applicationSearch);
   const activeApplicationStatus = normalizeApplicationStatus(resolvedSearchParams.applicationStatus);
   const activeApplicationLabels = normalizeApplicationLabels(resolvedSearchParams.applicationLabels);
+  const activeExcludedApplicationLabels = normalizeApplicationLabels(resolvedSearchParams.excludedApplicationLabels);
   const activeApplicationPage = normalizeApplicationPage(resolvedSearchParams.applicationPage);
   const dashboard = await getAdminDashboard({
     applicationFilter: activeApplicationFilter,
     applicationSearch: activeApplicationSearch,
     applicationStatus: activeApplicationStatus,
     applicationLabels: activeApplicationLabels,
+    excludedApplicationLabels: activeExcludedApplicationLabels,
     applicationPage: activeApplicationPage
   });
   const totals = dashboard.applicationTotals;
@@ -251,6 +259,7 @@ export default async function AdminPage({
     applicationSearch: pagination.search,
     applicationStatus: pagination.status,
     applicationLabels: pagination.labels,
+    excludedApplicationLabels: pagination.excludedLabels,
     applicationPage: pagination.page - 1
   });
   const nextPageHref = adminHref({
@@ -258,14 +267,17 @@ export default async function AdminPage({
     applicationSearch: pagination.search,
     applicationStatus: pagination.status,
     applicationLabels: pagination.labels,
+    excludedApplicationLabels: pagination.excludedLabels,
     applicationPage: pagination.page + 1
   });
   const labelTextBySlug = new Map(dashboard.applicationLabelOptions.map((option) => [option.label_slug, option.label_name]));
   const activeLabelNames = pagination.labels.map((label) => labelTextBySlug.get(label) ?? statusLabel(label));
+  const excludedLabelNames = pagination.excludedLabels.map((label) => labelTextBySlug.get(label) ?? statusLabel(label));
   const activeResultQualifiers = [
     pagination.search ? `"${pagination.search}"` : null,
     pagination.status ? `status ${statusLabel(pagination.status)}` : null,
-    activeLabelNames.length ? `labels ${activeLabelNames.join(" or ")}` : null
+    activeLabelNames.length ? `labels ${activeLabelNames.join(" or ")}` : null,
+    excludedLabelNames.length ? `without ${excludedLabelNames.join(" or ")}` : null
   ].filter(Boolean);
   const canManageUsers =
     !isPublicPrototypePrincipal(principal) &&
@@ -442,7 +454,7 @@ export default async function AdminPage({
               )}
               {activeResultQualifiers.length ? ` for ${activeResultQualifiers.join(" and ")}` : ""}
             </span>
-            {pagination.search || pagination.status || pagination.labels.length ? (
+            {pagination.search || pagination.status || pagination.labels.length || pagination.excludedLabels.length ? (
               <span className="section-count">
                 {numberText(activeApplicationTotal)} records in this source filter before table filters
               </span>
@@ -456,7 +468,8 @@ export default async function AdminPage({
               applicationFilter: option.key,
               applicationSearch: pagination.search,
               applicationStatus: pagination.status,
-              applicationLabels: pagination.labels
+              applicationLabels: pagination.labels,
+              excludedApplicationLabels: pagination.excludedLabels
             });
 
             return (
@@ -492,23 +505,47 @@ export default async function AdminPage({
               ))}
             </select>
           </label>
-          <label className="search-field label-filter-field">
+          <div className="search-field label-filter-field">
             <span>Labels</span>
-            <select
-              defaultValue={pagination.labels}
-              multiple
-              name="applicationLabels"
-              size={Math.min(8, Math.max(4, dashboard.applicationLabelOptions.length))}
-            >
+            <div className="label-filter-list">
               {dashboard.applicationLabelOptions.map((option) => (
-                <option key={option.label_slug} value={option.label_slug}>
-                  {option.label_name} ({numberText(option.application_count)})
-                </option>
+                <div className="label-filter-row" key={option.label_slug}>
+                  <span className="label-filter-name">
+                    <span
+                      className={`github-label-chip ${option.label_category}`}
+                      style={githubLabelStyle({ labelColor: option.label_color })}
+                      title={option.label_status ?? option.label_category}
+                    >
+                      {option.label_name}
+                    </span>
+                    <small>{numberText(option.application_count)}</small>
+                  </span>
+                  <label className="label-filter-toggle include" title={`Require ${option.label_name}`}>
+                    <input
+                      aria-label={`Require ${option.label_name}`}
+                      defaultChecked={pagination.labels.includes(option.label_slug)}
+                      name="applicationLabels"
+                      type="checkbox"
+                      value={option.label_slug}
+                    />
+                    <span>+</span>
+                  </label>
+                  <label className="label-filter-toggle exclude" title={`Exclude ${option.label_name}`}>
+                    <input
+                      aria-label={`Exclude ${option.label_name}`}
+                      defaultChecked={pagination.excludedLabels.includes(option.label_slug)}
+                      name="excludedApplicationLabels"
+                      type="checkbox"
+                      value={option.label_slug}
+                    />
+                    <span>-</span>
+                  </label>
+                </div>
               ))}
-            </select>
-          </label>
+            </div>
+          </div>
           <button type="submit">Search</button>
-          {pagination.search || pagination.status || pagination.labels.length ? (
+          {pagination.search || pagination.status || pagination.labels.length || pagination.excludedLabels.length ? (
             <Link className="ghost-link" href={adminHref({ applicationFilter: activeApplicationFilter })}>
               Clear
             </Link>

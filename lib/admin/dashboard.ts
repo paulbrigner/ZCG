@@ -47,6 +47,7 @@ export type ApplicationPagination = {
   search: string;
   status: string;
   labels: string[];
+  excludedLabels: string[];
 };
 
 export type ApplicationStatusOptionRow = {
@@ -239,21 +240,38 @@ function applicationStatusWhere(status: string, parameterIndex: number) {
   };
 }
 
-function applicationLabelsWhere(labels: string[], parameterIndex: number) {
-  if (!labels.length) {
+function applicationLabelsWhere(labels: string[], excludedLabels: string[], parameterIndex: number) {
+  if (!labels.length && !excludedLabels.length) {
     return { sql: "", values: [] as string[] };
   }
 
-  const placeholders = labels.map((_label, index) => `$${parameterIndex + index}`).join(", ");
+  const conditions: string[] = [];
+  const values = [...labels, ...excludedLabels];
 
-  return {
-    sql: `and exists (
+  if (labels.length) {
+    const placeholders = labels.map((_label, index) => `$${parameterIndex + index}`).join(", ");
+    conditions.push(`exists (
       select 1
         from grant_application_github_labels gal_filter
        where gal_filter.application_id = ga.id
          and gal_filter.label_slug in (${placeholders})
-    )`,
-    values: labels
+    )`);
+  }
+
+  if (excludedLabels.length) {
+    const startIndex = parameterIndex + labels.length;
+    const placeholders = excludedLabels.map((_label, index) => `$${startIndex + index}`).join(", ");
+    conditions.push(`not exists (
+      select 1
+        from grant_application_github_labels gal_exclude
+       where gal_exclude.application_id = ga.id
+         and gal_exclude.label_slug in (${placeholders})
+    )`);
+  }
+
+  return {
+    sql: `and ${conditions.join(" and ")}`,
+    values
   };
 }
 
@@ -262,22 +280,25 @@ export async function getAdminDashboard({
   applicationPage = 1,
   applicationSearch = "",
   applicationStatus = "",
-  applicationLabels = []
+  applicationLabels = [],
+  excludedApplicationLabels = []
 }: {
   applicationFilter?: ApplicationFilter;
   applicationPage?: number;
   applicationSearch?: string;
   applicationStatus?: string;
   applicationLabels?: string[];
+  excludedApplicationLabels?: string[];
 } = {}) {
   const whereClause = applicationFilterWhere[applicationFilter];
   const search = normalizeApplicationSearch(applicationSearch);
   const status = normalizeApplicationStatus(applicationStatus);
-  const labels = normalizeApplicationLabels(applicationLabels);
+  const excludedLabels = normalizeApplicationLabels(excludedApplicationLabels);
+  const labels = normalizeApplicationLabels(applicationLabels).filter((label) => !excludedLabels.includes(label));
   const page = Math.max(1, applicationPage);
   const searchWhere = applicationSearchWhere(search);
   const statusWhere = applicationStatusWhere(status, searchWhere.values.length + 1);
-  const labelWhere = applicationLabelsWhere(labels, searchWhere.values.length + statusWhere.values.length + 1);
+  const labelWhere = applicationLabelsWhere(labels, excludedLabels, searchWhere.values.length + statusWhere.values.length + 1);
   const applicationWhereValues = [...searchWhere.values, ...statusWhere.values, ...labelWhere.values];
   const applicationWhereClause = `${whereClause} ${searchWhere.sql} ${statusWhere.sql} ${labelWhere.sql}`;
   const applicationLimitParam = applicationWhereValues.length + 1;
@@ -452,7 +473,8 @@ export async function getAdminDashboard({
       totalPages,
       search,
       status,
-      labels
+      labels,
+      excludedLabels
     } satisfies ApplicationPagination,
     applications: applications.rows
   };
