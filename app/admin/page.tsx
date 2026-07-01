@@ -4,6 +4,7 @@ import {
   normalizeApplicationFilter,
   normalizeApplicationPage,
   normalizeApplicationSearch,
+  normalizeApplicationStatus,
   type ApplicationFilter,
   type GrantApplicationRow
 } from "@/lib/admin/dashboard";
@@ -75,9 +76,18 @@ function dateText(value: string | null) {
       });
 }
 
+function statusLabel(value: string) {
+  return value
+    .split("_")
+    .filter(Boolean)
+    .map((part) => part.slice(0, 1).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
 function adminHref(params: {
   applicationFilter?: ApplicationFilter;
   applicationSearch?: string;
+  applicationStatus?: string;
   applicationPage?: number;
 }) {
   const searchParams = new URLSearchParams();
@@ -88,6 +98,10 @@ function adminHref(params: {
 
   if (params.applicationSearch) {
     searchParams.set("applicationSearch", params.applicationSearch);
+  }
+
+  if (params.applicationStatus) {
+    searchParams.set("applicationStatus", params.applicationStatus);
   }
 
   if (params.applicationPage && params.applicationPage > 1) {
@@ -124,6 +138,7 @@ export default async function AdminPage({
   searchParams?: Promise<{
     applicationFilter?: string | string[];
     applicationSearch?: string | string[];
+    applicationStatus?: string | string[];
     applicationPage?: string | string[];
   }>;
 }) {
@@ -135,10 +150,12 @@ export default async function AdminPage({
   const resolvedSearchParams = searchParams ? await searchParams : {};
   const activeApplicationFilter = normalizeApplicationFilter(resolvedSearchParams.applicationFilter);
   const activeApplicationSearch = normalizeApplicationSearch(resolvedSearchParams.applicationSearch);
+  const activeApplicationStatus = normalizeApplicationStatus(resolvedSearchParams.applicationStatus);
   const activeApplicationPage = normalizeApplicationPage(resolvedSearchParams.applicationPage);
   const dashboard = await getAdminDashboard({
     applicationFilter: activeApplicationFilter,
     applicationSearch: activeApplicationSearch,
+    applicationStatus: activeApplicationStatus,
     applicationPage: activeApplicationPage
   });
   const totals = dashboard.applicationTotals;
@@ -162,13 +179,19 @@ export default async function AdminPage({
   const previousPageHref = adminHref({
     applicationFilter: activeApplicationFilter,
     applicationSearch: pagination.search,
+    applicationStatus: pagination.status,
     applicationPage: pagination.page - 1
   });
   const nextPageHref = adminHref({
     applicationFilter: activeApplicationFilter,
     applicationSearch: pagination.search,
+    applicationStatus: pagination.status,
     applicationPage: pagination.page + 1
   });
+  const activeResultQualifiers = [
+    pagination.search ? `"${pagination.search}"` : null,
+    pagination.status ? `status ${statusLabel(pagination.status)}` : null
+  ].filter(Boolean);
   const canManageUsers =
     !isPublicPrototypePrincipal(principal) &&
     (await principalHasRole(principal.id, "admin"));
@@ -342,11 +365,11 @@ export default async function AdminPage({
                 pagination.totalResults,
                 dashboard.applications.length
               )}
-              {pagination.search ? ` for "${pagination.search}"` : ""}
+              {activeResultQualifiers.length ? ` for ${activeResultQualifiers.join(" and ")}` : ""}
             </span>
-            {pagination.search ? (
+            {pagination.search || pagination.status ? (
               <span className="section-count">
-                {numberText(activeApplicationTotal)} records in this filter before search
+                {numberText(activeApplicationTotal)} records in this source filter before table filters
               </span>
             ) : null}
           </div>
@@ -356,7 +379,8 @@ export default async function AdminPage({
             const active = option.key === activeApplicationFilter;
             const href = adminHref({
               applicationFilter: option.key,
-              applicationSearch: pagination.search
+              applicationSearch: pagination.search,
+              applicationStatus: pagination.status
             });
 
             return (
@@ -377,12 +401,23 @@ export default async function AdminPage({
               autoComplete="off"
               defaultValue={pagination.search}
               name="applicationSearch"
-              placeholder="Application, applicant, status, issue, source"
+              placeholder="Application, applicant, issue, source"
               type="search"
             />
           </label>
+          <label className="search-field compact-field">
+            <span>Status</span>
+            <select defaultValue={pagination.status} name="applicationStatus">
+              <option value="">Any status</option>
+              {dashboard.applicationStatusOptions.map((option) => (
+                <option key={option.normalized_status} value={option.normalized_status}>
+                  {statusLabel(option.normalized_status)} ({numberText(option.application_count)})
+                </option>
+              ))}
+            </select>
+          </label>
           <button type="submit">Search</button>
-          {pagination.search ? (
+          {pagination.search || pagination.status ? (
             <Link className="ghost-link" href={adminHref({ applicationFilter: activeApplicationFilter })}>
               Clear
             </Link>

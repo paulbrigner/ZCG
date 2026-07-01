@@ -45,6 +45,12 @@ export type ApplicationPagination = {
   totalResults: string;
   totalPages: number;
   search: string;
+  status: string;
+};
+
+export type ApplicationStatusOptionRow = {
+  normalized_status: string;
+  application_count: string;
 };
 
 export type GrantApplicationRow = {
@@ -117,6 +123,11 @@ export function normalizeApplicationSearch(value: string | string[] | undefined)
   return (candidate ?? "").trim().replace(/\s+/g, " ").slice(0, 120);
 }
 
+export function normalizeApplicationStatus(value: string | string[] | undefined) {
+  const candidate = Array.isArray(value) ? value[0] : value;
+  return (candidate ?? "").trim().toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 80);
+}
+
 export function normalizeApplicationPage(value: string | string[] | undefined) {
   const candidate = Array.isArray(value) ? value[0] : value;
   const parsed = Number(candidate);
@@ -161,23 +172,40 @@ function applicationSearchWhere(search: string) {
   };
 }
 
+function applicationStatusWhere(status: string, parameterIndex: number) {
+  if (!status) {
+    return { sql: "", values: [] as string[] };
+  }
+
+  return {
+    sql: `and ga.normalized_status = $${parameterIndex}`,
+    values: [status]
+  };
+}
+
 export async function getAdminDashboard({
   applicationFilter = "all",
   applicationPage = 1,
-  applicationSearch = ""
+  applicationSearch = "",
+  applicationStatus = ""
 }: {
   applicationFilter?: ApplicationFilter;
   applicationPage?: number;
   applicationSearch?: string;
+  applicationStatus?: string;
 } = {}) {
   const whereClause = applicationFilterWhere[applicationFilter];
   const search = normalizeApplicationSearch(applicationSearch);
+  const status = normalizeApplicationStatus(applicationStatus);
   const page = Math.max(1, applicationPage);
   const searchWhere = applicationSearchWhere(search);
-  const applicationWhereClause = `${whereClause} ${searchWhere.sql}`;
-  const applicationLimitParam = searchWhere.values.length + 1;
-  const applicationOffsetParam = searchWhere.values.length + 2;
-  const [syncRuns, sourceCounts, reconciliationSummary, applicationTotals, applicationResultCount] = await Promise.all([
+  const statusWhere = applicationStatusWhere(status, searchWhere.values.length + 1);
+  const applicationWhereValues = [...searchWhere.values, ...statusWhere.values];
+  const applicationWhereClause = `${whereClause} ${searchWhere.sql} ${statusWhere.sql}`;
+  const applicationLimitParam = applicationWhereValues.length + 1;
+  const applicationOffsetParam = applicationWhereValues.length + 2;
+  const [syncRuns, sourceCounts, reconciliationSummary, applicationTotals, applicationStatusOptions, applicationResultCount] =
+    await Promise.all([
     query<SyncRunRow>(
       `select id,
               source,
@@ -229,18 +257,37 @@ export async function getAdminDashboard({
               )::text as needs_review_applications
          from grant_applications ga`
     ),
+    query<ApplicationStatusOptionRow>(
+      `select normalized_status,
+              count(*)::text as application_count
+         from grant_applications
+        group by normalized_status
+        order by case normalized_status
+                   when 'submitted' then 10
+                   when 'under_review' then 20
+                   when 'approved' then 30
+                   when 'active' then 40
+                   when 'completed' then 50
+                   when 'closed' then 60
+                   when 'cancelled' then 70
+                   when 'declined' then 80
+                   when 'unknown' then 90
+                   else 100
+                 end,
+                 normalized_status`
+    ),
     query<{ total_results: string }>(
       `select count(*)::text as total_results
          from grant_applications ga
         where ${applicationWhereClause}`,
-      searchWhere.values
+      applicationWhereValues
     )
   ]);
   const totalResults = applicationResultCount.rows[0]?.total_results ?? "0";
   const totalPages = Math.max(1, Math.ceil(Number(totalResults) / applicationPageSize));
   const boundedPage = Math.min(page, totalPages);
   const offset = (boundedPage - 1) * applicationPageSize;
-  const applicationQueryValues = [...searchWhere.values, applicationPageSize, offset];
+  const applicationQueryValues = [...applicationWhereValues, applicationPageSize, offset];
   const applications = await query<GrantApplicationRow>(
     `select ga.id::text,
             ga.title,
@@ -271,13 +318,15 @@ export async function getAdminDashboard({
     sourceCounts: sourceCounts.rows,
     reconciliationSummary: reconciliationSummary.rows,
     applicationTotals: applicationTotals.rows[0] ?? emptyApplicationTotals,
+    applicationStatusOptions: applicationStatusOptions.rows,
     activeApplicationFilter: applicationFilter,
     applicationPagination: {
       page: boundedPage,
       pageSize: applicationPageSize,
       totalResults,
       totalPages,
-      search
+      search,
+      status
     } satisfies ApplicationPagination,
     applications: applications.rows
   };
