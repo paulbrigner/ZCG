@@ -442,6 +442,7 @@ See:
 - [AWS account portability](docs/deployment/aws-account-portability.md)
 - [Amplify target](docs/deployment/amplify-zcg-target.md)
 - [Backend connection spike](docs/deployment/backend-connection-spike.md)
+- [Deployment cost modes](docs/deployment/cost-modes.md)
 
 ## Documentation Map
 
@@ -455,6 +456,7 @@ See:
 - [AWS account portability](docs/deployment/aws-account-portability.md)
 - [Amplify target](docs/deployment/amplify-zcg-target.md)
 - [Backend connection spike](docs/deployment/backend-connection-spike.md)
+- [Deployment cost modes](docs/deployment/cost-modes.md)
 
 ## Stewardship Case
 

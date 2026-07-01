@@ -20,6 +20,8 @@ The Phase 0 portable deployment path is CDK-managed AWS infrastructure:
 
 This is intentionally more complete than a static hosting setup. The prototype needs a private relational database, worker execution, secrets, and audit/security foundations from day one. Keeping those resources in one CDK stack makes the system easier to reproduce in another AWS account.
 
+The stack is stage-aware. Use `costMode=prototype-low-cost` while the system is idle or limited to internal prototype use, and `costMode=production-ready` when the full ECS/ALB/private-service posture is needed. See [Deployment cost modes](cost-modes.md) for the current low-cost and production-ready commands, pause/resume scripts, NAT tradeoffs, and cost estimates.
+
 The repository also includes `amplify.yml` because Amplify remains a familiar sibling-system hosting pattern and is the intended web-tier target for `zcg.pgpz.org`. For DB-backed Phase 0 routes, CDK/ECS remains the safest complete runtime because it can live in the same VPC boundary as private Aurora PostgreSQL.
 
 See [Amplify target for zcg.pgpz.org](amplify-zcg-target.md) for the current target-account/domain assessment and the web-tier/backend split.
@@ -61,6 +63,7 @@ Use explicit context values so the same repo can deploy repeatably into differen
 
 ```bash
 npm run infra:deploy -- \
+  -c costMode=production-ready \
   --profile TARGET_PROFILE \
   -c appName=zcg-prototype \
   -c environment=prototype \
@@ -73,6 +76,17 @@ npm run infra:deploy -- \
 For an initial throwaway sandbox, use `-c removalPolicy=destroy -c deletionProtection=false`. Do not use that combination for a stakeholder demo or any environment holding useful data.
 
 If no custom domain is ready, omit `-c betterAuthUrl=...`; the ECS task will use the generated ALB URL emitted as `AppUrl`. When a custom domain is attached later, redeploy with the final URL so Better Auth cookies and redirects use the durable hostname.
+
+For the low-cost prototype posture in the `zodldashboard` account:
+
+```bash
+AWS_PROFILE=zodldashboard AWS_REGION=us-east-1 npm run infra:deploy:prototype-low-cost
+```
+
+The checked-in deployment helper defaults `SES_FROM_EMAIL` to
+`no-reply@pgpz.org` for the current `zodldashboard` prototype account so the
+Amplify SSR compute role keeps its SES send permission. Override
+`SES_FROM_EMAIL` when deploying into another account or sender identity.
 
 ## Run migrations in the deployed account
 

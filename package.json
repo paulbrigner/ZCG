@@ -22,7 +22,14 @@
     "infra:synth": "cdk synth --app \"npx tsx infra/app.ts\"",
     "infra:diff": "cdk diff --app \"npx tsx infra/app.ts\"",
     "infra:deploy": "cdk deploy --app \"npx tsx infra/app.ts\"",
-    "infra:destroy": "cdk destroy --app \"npx tsx infra/app.ts\""
+    "infra:destroy": "cdk destroy --app \"npx tsx infra/app.ts\"",
+    "infra:diff:prototype-low-cost": "bash scripts/diff-prototype-low-cost.sh",
+    "infra:deploy:prototype-low-cost": "bash scripts/deploy-prototype-low-cost.sh",
+    "infra:diff:production-ready": "bash scripts/diff-production-ready.sh",
+    "infra:deploy:production-ready": "bash scripts/deploy-production-ready.sh",
+    "infra:pause-web": "bash scripts/pause-web-service.sh",
+    "infra:resume-web": "bash scripts/resume-web-service.sh",
+    "infra:web-task-url": "bash scripts/ecs-public-task-url.sh"
   },
   "dependencies": {
     "@aws-sdk/client-rds-data": "^3.1075.0",
