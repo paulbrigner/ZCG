@@ -253,6 +253,39 @@ function mergeForumLinks(records: RawSourceRecord[]) {
   return [...links.values()];
 }
 
+function gitHubCommentIssueSourceId(record: RawSourceRecord) {
+  const metadata = parseJsonRecord(record.metadata);
+  const issueSourceId = stringValue(metadata.issueSourceId);
+
+  if (issueSourceId) {
+    return issueSourceId;
+  }
+
+  const owner = stringValue(metadata.owner);
+  const repo = stringValue(metadata.repo);
+  const issueNumber = numberValue(metadata.issueNumber) ?? numberValue(metadata.number);
+
+  return owner && repo && issueNumber ? `${owner}/${repo}#${issueNumber}` : null;
+}
+
+function buildGitHubCommentsByIssue(records: RawSourceRecord[]) {
+  const byIssue = new Map<string, RawSourceRecord[]>();
+
+  for (const record of records) {
+    const issueSourceId = gitHubCommentIssueSourceId(record);
+
+    if (!issueSourceId) {
+      continue;
+    }
+
+    const comments = byIssue.get(issueSourceId) ?? [];
+    comments.push(record);
+    byIssue.set(issueSourceId, comments);
+  }
+
+  return byIssue;
+}
+
 function normalizeTitle(value: string | null | undefined) {
   return (value ?? "")
     .normalize("NFKD")
@@ -469,7 +502,7 @@ function bestSheetMatch(app: GitHubApplication, sheetGroups: Map<string, SheetPr
   return best && best.confidence >= 0.72 ? best : null;
 }
 
-async function fetchSourceRecords(sourceKind: "github_issue" | "google_sheet_row") {
+async function fetchSourceRecords(sourceKind: "github_issue" | "github_issue_comment" | "google_sheet_row") {
   const records: RawSourceRecord[] = [];
   let offset = 0;
 
@@ -754,14 +787,16 @@ async function bulkCreateIssues(issues: ReconciliationIssueInput[]) {
 }
 
 export async function runGrantReconciliation(): Promise<ReconciliationRunResult> {
-  const [githubRecords, sheetRecords] = await Promise.all([
+  const [githubRecords, githubCommentRecords, sheetRecords] = await Promise.all([
     fetchSourceRecords("github_issue"),
+    fetchSourceRecords("github_issue_comment"),
     fetchSourceRecords("google_sheet_row")
   ]);
 
   const githubApplications = githubRecords
     .map(parseGitHubApplication)
     .filter((app): app is GitHubApplication => Boolean(app));
+  const githubCommentsByIssue = buildGitHubCommentsByIssue(githubCommentRecords);
   const sheetGroups = buildSheetGroups(sheetRecords);
   const matchedSheetKeys = new Set<string>();
 
@@ -794,6 +829,7 @@ export async function runGrantReconciliation(): Promise<ReconciliationRunResult>
 
   for (const app of githubApplications) {
     const match = bestSheetMatch(app, sheetGroups);
+    const githubComments = githubCommentsByIssue.get(app.sourceRecord.source_id) ?? [];
     const sheetStatus = match?.group.status ? statusFromSheet(match.group.status) : null;
     const normalizedStatus = sheetStatus && sheetStatus !== "unknown" ? sheetStatus : statusFromGitHub(app);
     const requestedAmountUsd = app.requestedAmountUsd ?? match?.group.requestedAmountUsd ?? null;
@@ -811,14 +847,18 @@ export async function runGrantReconciliation(): Promise<ReconciliationRunResult>
         sourceSummary: {
           githubSourceId: app.sourceRecord.source_id,
           githubLabels: app.labels,
+          githubCommentCount: githubComments.length,
           sheetProject: match?.group.project ?? null,
           sheetRowCount: match?.group.rows.length ?? 0,
           sheetCategory: match?.group.category ?? null,
           sheetPaidAmountUsd: match?.group.paidAmountUsd ?? null
         }
       },
-      links: [{ sourceRecordId: app.sourceRecord.id, confidence: 1 }],
-      forumLinks: forumLinksFromRecord(app.sourceRecord),
+      links: [
+        { sourceRecordId: app.sourceRecord.id, confidence: 1 },
+        ...githubComments.map((record) => ({ sourceRecordId: record.id, confidence: 1 }))
+      ],
+      forumLinks: mergeForumLinks([app.sourceRecord, ...githubComments]),
       grant: null,
       issues: []
     };
@@ -828,7 +868,7 @@ export async function runGrantReconciliation(): Promise<ReconciliationRunResult>
     if (match) {
       matchedSheetKeys.add(match.group.key);
       counts.matchedApplications += 1;
-      planned.forumLinks = mergeForumLinks([app.sourceRecord, ...match.group.rows]);
+      planned.forumLinks = mergeForumLinks([app.sourceRecord, ...githubComments, ...match.group.rows]);
 
       for (const row of match.group.rows) {
         planned.links.push({ sourceRecordId: row.id, confidence: match.confidence });

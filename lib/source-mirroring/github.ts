@@ -10,6 +10,8 @@ type GitHubIssue = {
   title: string;
   body: string | null;
   state: string;
+  comments?: number;
+  comments_url?: string;
   created_at: string;
   updated_at: string;
   closed_at: string | null;
@@ -19,6 +21,19 @@ type GitHubIssue = {
   };
   labels?: GitHubLabel[];
   pull_request?: unknown;
+};
+
+type GitHubIssueComment = {
+  id: number;
+  html_url: string;
+  body: string | null;
+  created_at: string;
+  updated_at: string;
+  author_association?: string;
+  user?: {
+    login?: string;
+    html_url?: string;
+  };
 };
 
 const DEFAULT_OWNER = "ZcashCommunityGrants";
@@ -35,13 +50,70 @@ function issueSummary(issue: GitHubIssue) {
   return body.length > 240 ? `${body.slice(0, 237)}...` : body;
 }
 
+function commentSummary(comment: GitHubIssueComment) {
+  const body = comment.body?.replace(/\s+/g, " ").trim() ?? "";
+  return body.length > 240 ? `${body.slice(0, 237)}...` : body;
+}
+
+function githubHeaders(token?: string) {
+  return {
+    accept: "application/vnd.github+json",
+    "user-agent": "zcg-grants-prototype",
+    ...(token ? { authorization: `Bearer ${token}` } : {})
+  };
+}
+
+async function fetchIssueComments(params: {
+  issue: GitHubIssue;
+  owner: string;
+  repo: string;
+  token?: string;
+  maxPages: number;
+}) {
+  if (!params.issue.comments) {
+    return [] as GitHubIssueComment[];
+  }
+
+  const comments: GitHubIssueComment[] = [];
+
+  for (let page = 1; page <= params.maxPages; page += 1) {
+    const url = new URL(
+      params.issue.comments_url ??
+        `https://api.github.com/repos/${params.owner}/${params.repo}/issues/${params.issue.number}/comments`
+    );
+    url.searchParams.set("per_page", "100");
+    url.searchParams.set("page", String(page));
+
+    const response = await fetch(url, {
+      headers: githubHeaders(params.token)
+    });
+
+    if (!response.ok) {
+      throw new Error(
+        `GitHub issue comment mirror failed for #${params.issue.number}: ${response.status} ${response.statusText}`
+      );
+    }
+
+    const pageComments = (await response.json()) as GitHubIssueComment[];
+    comments.push(...pageComments);
+
+    if (pageComments.length < 100) {
+      break;
+    }
+  }
+
+  return comments;
+}
+
 export async function mirrorGitHubIssues(config: GitHubMirrorConfig = {}): Promise<SourceMirrorResult> {
   const owner = config.owner ?? process.env.ZCG_GITHUB_OWNER ?? DEFAULT_OWNER;
   const repo = config.repo ?? process.env.ZCG_GITHUB_REPO ?? DEFAULT_REPO;
   const token = config.token ?? process.env.GITHUB_TOKEN ?? process.env.ZCG_GITHUB_TOKEN;
   const maxPages = Number(config.maxPages ?? process.env.ZCG_GITHUB_MAX_PAGES ?? 10);
+  const commentMaxPages = Number(config.commentMaxPages ?? process.env.ZCG_GITHUB_COMMENT_MAX_PAGES ?? 10);
   const fetchedAt = new Date().toISOString();
   const issues: GitHubIssue[] = [];
+  const commentsByIssueNumber = new Map<number, GitHubIssueComment[]>();
 
   for (let page = 1; page <= maxPages; page += 1) {
     const url = new URL(`https://api.github.com/repos/${owner}/${repo}/issues`);
@@ -52,11 +124,7 @@ export async function mirrorGitHubIssues(config: GitHubMirrorConfig = {}): Promi
     url.searchParams.set("page", String(page));
 
     const response = await fetch(url, {
-      headers: {
-        accept: "application/vnd.github+json",
-        "user-agent": "zcg-grants-prototype",
-        ...(token ? { authorization: `Bearer ${token}` } : {})
-      }
+      headers: githubHeaders(token)
     });
 
     if (!response.ok) {
@@ -72,7 +140,12 @@ export async function mirrorGitHubIssues(config: GitHubMirrorConfig = {}): Promi
     }
   }
 
-  const records: SourceMirrorRecord[] = issues.map((issue) => ({
+  for (const issue of issues) {
+    const comments = await fetchIssueComments({ issue, owner, repo, token, maxPages: commentMaxPages });
+    commentsByIssueNumber.set(issue.number, comments);
+  }
+
+  const issueRecords: SourceMirrorRecord[] = issues.map((issue) => ({
     sourceKind: "github_issue",
     sourceId: `${owner}/${repo}#${issue.number}`,
     sourceUrl: issue.html_url,
@@ -87,9 +160,43 @@ export async function mirrorGitHubIssues(config: GitHubMirrorConfig = {}): Promi
       state: issue.state,
       labels: labelsFor(issue),
       author: issue.user?.login ?? null,
+      commentCount: issue.comments ?? 0,
       closedAt: issue.closed_at
     }
   }));
+  const commentRecords: SourceMirrorRecord[] = issues.flatMap((issue) => {
+    const issueSourceId = `${owner}/${repo}#${issue.number}`;
+    return (commentsByIssueNumber.get(issue.number) ?? []).map((comment) => ({
+      sourceKind: "github_issue_comment",
+      sourceId: `${issueSourceId}:comment:${comment.id}`,
+      sourceUrl: comment.html_url,
+      sourceUpdatedAt: comment.updated_at,
+      title: `Comment on #${issue.number}: ${issue.title}`,
+      summary: commentSummary(comment),
+      rawPayload: {
+        ...comment,
+        parentIssue: {
+          number: issue.number,
+          title: issue.title,
+          html_url: issue.html_url,
+          source_id: issueSourceId
+        }
+      } as Record<string, unknown>,
+      metadata: {
+        owner,
+        repo,
+        number: issue.number,
+        issueNumber: issue.number,
+        issueSourceId,
+        issueUrl: issue.html_url,
+        commentId: comment.id,
+        author: comment.user?.login ?? null,
+        authorAssociation: comment.author_association ?? null,
+        createdAt: comment.created_at
+      }
+    }));
+  });
+  const records = [...issueRecords, ...commentRecords];
 
   return {
     sourceKind: "github_issues",
@@ -99,15 +206,19 @@ export async function mirrorGitHubIssues(config: GitHubMirrorConfig = {}): Promi
       fetchedAt,
       owner,
       repo,
-      issueCount: records.length,
-      issues
+      issueCount: issueRecords.length,
+      commentCount: commentRecords.length,
+      issues,
+      issueComments: Object.fromEntries(commentsByIssueNumber.entries())
     },
     records,
     metadata: {
       fetchedAt,
       owner,
       repo,
-      issueCount: records.length
+      issueCount: issueRecords.length,
+      commentCount: commentRecords.length,
+      recordCount: records.length
     }
   };
 }

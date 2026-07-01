@@ -7,6 +7,8 @@ Phase 1 begins the sync-first plan by importing read-only evidence from current 
 ## Implemented sources
 
 - GitHub issues from `ZcashCommunityGrants/zcashcommunitygrants`.
+- GitHub issue comments from those grant issues, including follow-up comments
+  that often contain the corresponding forum thread link.
 - Google Sheet CSV exports from configured tab gids, defaulting to gid `803214474` from the known ZCG sheet.
 
 ## What the worker records
@@ -82,10 +84,13 @@ Environment variables and matching CDK context:
 - `ZCG_GITHUB_OWNER` / `-c githubOwner=...`
 - `ZCG_GITHUB_REPO` / `-c githubRepo=...`
 - `ZCG_GITHUB_MAX_PAGES` / `-c githubMaxPages=...`
+- `ZCG_GITHUB_COMMENT_MAX_PAGES`
 - `ZCG_GOOGLE_SHEET_ID` / `-c googleSheetId=...`
 - `ZCG_GOOGLE_SHEET_TABS` / `-c googleSheetTabs=name:gid,name2:gid2`
 
-`GITHUB_TOKEN` or `ZCG_GITHUB_TOKEN` can be supplied later if anonymous GitHub API rate limits become a blocker.
+`GITHUB_TOKEN` or `ZCG_GITHUB_TOKEN` should be supplied for reliable GitHub
+comment mirroring, since comments require one API request per issue with
+comments and anonymous GitHub API rate limits are low.
 
 ## Admin inspection
 
@@ -113,4 +118,4 @@ Against a disposable local Postgres database:
 - Add a Discourse topic/post mirror.
 - Add reconciliation issue generation for missing forum links, unmatched Sheet rows, stale statuses, and label/status conflicts.
 - Add an admin source-mirror UI instead of API-only inspection.
-- Define the first canonical grant/application projection from mirrored GitHub issues and Sheet rows.
+- Continue expanding the canonical grant/application projection from mirrored GitHub issues, comments, and Sheet rows.

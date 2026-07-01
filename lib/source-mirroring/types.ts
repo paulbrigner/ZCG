@@ -23,6 +23,7 @@ export type GitHubMirrorConfig = {
   repo?: string;
   token?: string;
   maxPages?: number;
+  commentMaxPages?: number;
 };
 
 export type GoogleSheetTabConfig = {

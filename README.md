@@ -224,16 +224,19 @@ Current capabilities include:
 - Aurora PostgreSQL 16.13 with pgvector for semantic retrieval.
 - Source mirroring from:
   - GitHub issues.
+  - GitHub issue comments, including follow-up comments that link forum posts
+    back to grant applications.
   - Public Google Sheet CSV exports.
 - Reconciliation engine that:
   - normalizes GitHub application issues into canonical application records,
+  - links GitHub issue comments to their parent canonical application,
   - groups Google Sheet grant rows by project,
   - matches GitHub issues to Sheet projects by title confidence,
   - creates canonical grants,
   - attaches source evidence,
   - surfaces reconciliation issues,
   - extracts and associates Zcash Community Forum links already present in
-    mirrored sources.
+    mirrored issues, issue comments, and Sheet rows.
 - Admin dashboard with:
   - source record counts,
   - canonical application and grant counts,
@@ -244,7 +247,8 @@ Current capabilities include:
   - application detail pages with source evidence and reconciliation issues.
 - Grounded grant knowledge retrieval at `/admin/knowledge`:
   - canonical application summary documents,
-  - source-evidence documents from GitHub, Sheets, and discovered forum links,
+  - source-evidence documents from GitHub issues, GitHub comments, Sheets, and
+    discovered forum links,
   - keyword retrieval through Postgres full-text search,
   - semantic retrieval through `text-embedding-bge-m3` embeddings,
   - hybrid retrieval that blends keyword and embedding rank,
@@ -480,6 +484,8 @@ Knowledge retrieval environment variables are documented in `.env.example`.
 Important knobs include `ZCG_KNOWLEDGE_AI_API_KEY`,
 `ZCG_KNOWLEDGE_AI_MODEL`, `ZCG_KNOWLEDGE_SEMANTIC_ENABLED`,
 `ZCG_KNOWLEDGE_EMBEDDING_MODEL`, and `ZCG_KNOWLEDGE_EMBEDDING_DIMS`.
+GitHub source mirroring also supports `ZCG_GITHUB_COMMENT_MAX_PAGES` for the
+per-issue comment pagination pass.
 
 ## Deployment Posture
 
