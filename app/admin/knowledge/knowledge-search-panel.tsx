@@ -1,0 +1,214 @@
+"use client";
+
+import { useMemo, useState } from "react";
+import type { GrantKnowledgeSearchResponse } from "@/lib/knowledge/search";
+
+type KnowledgeSearchPanelProps = {
+  canComposeAi: boolean;
+  canIndex: boolean;
+  initialAiConfigured: boolean;
+};
+
+type IndexState = {
+  status: "idle" | "running" | "done" | "error";
+  message: string;
+};
+
+function moneyText(value: string | null) {
+  if (!value) {
+    return null;
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed)
+    ? parsed.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 })
+    : null;
+}
+
+export function KnowledgeSearchPanel({
+  canComposeAi,
+  canIndex,
+  initialAiConfigured
+}: KnowledgeSearchPanelProps) {
+  const [query, setQuery] = useState("");
+  const [limit, setLimit] = useState("8");
+  const [answerMode, setAnswerMode] = useState<"evidence" | "ai">("evidence");
+  const [isSearching, setIsSearching] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<GrantKnowledgeSearchResponse | null>(null);
+  const [indexState, setIndexState] = useState<IndexState>({ status: "idle", message: "" });
+  const aiAvailable = canComposeAi && initialAiConfigured;
+  const answerModeNote = useMemo(() => {
+    if (answerMode !== "ai") {
+      return null;
+    }
+
+    if (!canComposeAi) {
+      return "AI answers require an authenticated role with compose access.";
+    }
+
+    if (!initialAiConfigured) {
+      return "AI answers need ZCG_KNOWLEDGE_AI_API_KEY or VENICE_API_KEY.";
+    }
+
+    return null;
+  }, [answerMode, canComposeAi, initialAiConfigured]);
+
+  async function submitSearch(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setIsSearching(true);
+    setError(null);
+
+    try {
+      const response = await fetch("/api/admin/knowledge/search", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ query, limit: Number(limit), answerMode })
+      });
+      const body = await response.json();
+
+      if (!response.ok) {
+        throw new Error(typeof body?.error === "string" ? body.error : "Search failed.");
+      }
+
+      setResult(body as GrantKnowledgeSearchResponse);
+    } catch (searchError) {
+      setError(searchError instanceof Error ? searchError.message : "Search failed.");
+    } finally {
+      setIsSearching(false);
+    }
+  }
+
+  async function rebuildIndex() {
+    setIndexState({ status: "running", message: "Indexing grant knowledge." });
+
+    try {
+      const response = await fetch("/api/admin/knowledge/index", { method: "POST" });
+      const body = await response.json();
+
+      if (!response.ok) {
+        throw new Error(typeof body?.error === "string" ? body.error : "Indexing failed.");
+      }
+
+      setIndexState({
+        status: "done",
+        message: `${body.documentsIndexed.toLocaleString()} documents indexed from ${body.applicationsSeen.toLocaleString()} applications.`
+      });
+    } catch (indexError) {
+      setIndexState({
+        status: "error",
+        message: indexError instanceof Error ? indexError.message : "Indexing failed."
+      });
+    }
+  }
+
+  return (
+    <div className="knowledge-workspace">
+      <form className="knowledge-query-panel panel" onSubmit={submitSearch}>
+        <div className="section-heading">
+          <h2>Grant knowledge retrieval</h2>
+          {canIndex ? (
+            <button disabled={indexState.status === "running"} onClick={rebuildIndex} type="button">
+              {indexState.status === "running" ? "Indexing" : "Rebuild index"}
+            </button>
+          ) : null}
+        </div>
+        <label className="knowledge-query-field">
+          <span>Search</span>
+          <textarea
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="similar grants for event sponsorship, wallets, infrastructure, education..."
+            rows={4}
+            value={query}
+          />
+        </label>
+        <div className="table-controls knowledge-controls">
+          <label className="search-field compact-field">
+            <span>Results</span>
+            <select onChange={(event) => setLimit(event.target.value)} value={limit}>
+              <option value="5">5</option>
+              <option value="8">8</option>
+              <option value="12">12</option>
+              <option value="20">20</option>
+            </select>
+          </label>
+          <label className="search-field compact-field">
+            <span>Answer</span>
+            <select onChange={(event) => setAnswerMode(event.target.value as "evidence" | "ai")} value={answerMode}>
+              <option value="evidence">Evidence summary</option>
+              <option disabled={!aiAvailable} value="ai">
+                AI grounded answer
+              </option>
+            </select>
+          </label>
+          <button disabled={isSearching || !query.trim()} type="submit">
+            {isSearching ? "Searching" : "Search"}
+          </button>
+        </div>
+        {answerModeNote ? <p className="form-status neutral-status">{answerModeNote}</p> : null}
+        {indexState.message ? (
+          <p className={indexState.status === "error" ? "form-error" : "form-status"}>{indexState.message}</p>
+        ) : null}
+        {error ? <p className="form-error">{error}</p> : null}
+      </form>
+
+      {result ? (
+        <section className="panel knowledge-results">
+          <div className="section-heading">
+            <div>
+              <h2>Grounded answer</h2>
+              <span className="section-count">
+                {result.retrievalStats.resultCount.toLocaleString()} evidence matches
+              </span>
+            </div>
+            <span className={`badge ${result.answerStatus === "generated" ? "green" : "neutral"}`}>
+              {result.answerStatus === "generated" ? "AI" : "Grounded"}
+            </span>
+          </div>
+          {result.answerText ? <pre className="knowledge-answer">{result.answerText}</pre> : null}
+          <div className="evidence-list knowledge-citations">
+            {result.results.map((item, index) => (
+              <article className="evidence-item" key={item.id}>
+                <div className="issue-heading">
+                  <span className="badge neutral">[{index + 1}]</span>
+                  {item.sourceKind ? <span className="badge">{item.sourceKind}</span> : null}
+                  {item.normalizedStatus ? <span className={`badge ${item.normalizedStatus}`}>{item.normalizedStatus}</span> : null}
+                </div>
+                <h3>{item.title}</h3>
+                <p>{item.excerpt}</p>
+                <dl className="evidence-meta">
+                  <div>
+                    <dt>Applicant</dt>
+                    <dd>{item.applicantName ?? "Unknown"}</dd>
+                  </div>
+                  <div>
+                    <dt>Requested</dt>
+                    <dd>{moneyText(item.requestedAmountUsd) ?? "-"}</dd>
+                  </div>
+                  <div>
+                    <dt>Source</dt>
+                    <dd>{item.sourceId ?? item.documentKind}</dd>
+                  </div>
+                  <div>
+                    <dt>Rank</dt>
+                    <dd>{Number.isFinite(item.rank) ? item.rank.toFixed(3) : "-"}</dd>
+                  </div>
+                </dl>
+                <div className="result-actions">
+                  <a className="table-link" href={`/admin/grants/${item.applicationId}`}>
+                    Open application
+                  </a>
+                  {item.sourceUrl ? (
+                    <a className="table-link" href={item.sourceUrl} rel="noreferrer" target="_blank">
+                      Open source
+                    </a>
+                  ) : null}
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      ) : null}
+    </div>
+  );
+}

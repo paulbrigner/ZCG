@@ -19,6 +19,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
             </Link>
             <nav className="nav" aria-label="Primary">
               <a href="/admin">Admin</a>
+              <a href="/admin/knowledge">Knowledge</a>
               <a href="/api/health">Health</a>
               <a href="/api/public/grants">Public API</a>
               <SessionNav />
