@@ -64,8 +64,19 @@ export type GrantApplicationRow = {
   github_issue_number: string | null;
   github_issue_url: string | null;
   source_count: string;
+  forum_link_count: string;
   open_issue_count: string;
   updated_at: string;
+};
+
+export type ForumLinkRow = {
+  id: string;
+  source_id: string;
+  source_url: string | null;
+  title: string | null;
+  summary: string | null;
+  confidence: string;
+  metadata: string;
 };
 
 export type SourceEvidenceRow = {
@@ -299,11 +310,13 @@ export async function getAdminDashboard({
             ga.github_issue_number::text,
             ga.github_issue_url,
             count(distinct sl.source_record_id)::text as source_count,
+            count(distinct sl.source_record_id) filter (where sr.source_kind = 'forum_link')::text as forum_link_count,
             count(distinct ri.id) filter (where ri.status = 'open')::text as open_issue_count,
             ga.updated_at::text
        from grant_applications ga
        left join source_links sl on sl.canonical_type = 'grant_application'
                                 and sl.canonical_id = ga.id
+       left join source_records sr on sr.id = sl.source_record_id
        left join reconciliation_issues ri on ri.canonical_type = 'grant_application'
                                          and ri.canonical_id = ga.id
       where ${applicationWhereClause}
@@ -333,7 +346,7 @@ export async function getAdminDashboard({
 }
 
 export async function getGrantApplicationDetail(id: string) {
-  const [application, sources, issues] = await Promise.all([
+  const [application, forumLinks, sources, issues] = await Promise.all([
     query<GrantApplicationRow>(
       `select ga.id::text,
               ga.title,
@@ -345,15 +358,33 @@ export async function getGrantApplicationDetail(id: string) {
               ga.github_issue_number::text,
               ga.github_issue_url,
               count(distinct sl.source_record_id)::text as source_count,
+              count(distinct sl.source_record_id) filter (where sr.source_kind = 'forum_link')::text as forum_link_count,
               count(distinct ri.id) filter (where ri.status = 'open')::text as open_issue_count,
               ga.updated_at::text
          from grant_applications ga
          left join source_links sl on sl.canonical_type = 'grant_application'
                                   and sl.canonical_id = ga.id
+         left join source_records sr on sr.id = sl.source_record_id
          left join reconciliation_issues ri on ri.canonical_type = 'grant_application'
                                            and ri.canonical_id = ga.id
         where ga.id = $1
         group by ga.id`,
+      [id]
+    ),
+    query<ForumLinkRow>(
+      `select sr.id::text,
+              sr.source_id,
+              sr.source_url,
+              sr.title,
+              sr.summary,
+              sl.confidence::text,
+              sr.metadata::text
+         from source_links sl
+         join source_records sr on sr.id = sl.source_record_id
+        where sl.canonical_type = 'grant_application'
+          and sl.canonical_id = $1
+          and sr.source_kind = 'forum_link'
+        order by sr.source_url`,
       [id]
     ),
     query<SourceEvidenceRow>(
@@ -391,6 +422,7 @@ export async function getGrantApplicationDetail(id: string) {
 
   return {
     application: application.rows[0] ?? null,
+    forumLinks: forumLinks.rows,
     sources: sources.rows,
     issues: issues.rows
   };

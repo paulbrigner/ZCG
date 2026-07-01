@@ -433,6 +433,7 @@ export default async function AdminPage({
                 <th>Amount</th>
                 <th>GitHub-Sheet match</th>
                 <th>Sources</th>
+                <th>Forum</th>
                 <th>Issues</th>
               </tr>
             </thead>
@@ -455,12 +456,13 @@ export default async function AdminPage({
                     <td>{moneyText(application.requested_amount_usd)}</td>
                     <td>{matchText(application)}</td>
                     <td>{numberText(application.source_count)}</td>
+                    <td>{numberText(application.forum_link_count)}</td>
                     <td>{numberText(application.open_issue_count)}</td>
                   </tr>
                 ))
               ) : (
                 <tr>
-                  <td colSpan={7}>No application records match this filter.</td>
+                  <td colSpan={8}>No application records match this filter.</td>
                 </tr>
               )}
             </tbody>

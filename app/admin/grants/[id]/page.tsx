@@ -19,6 +19,11 @@ function percentText(value: string | null) {
   return Number.isFinite(parsed) ? `${Math.round(parsed * 100)}%` : "0%";
 }
 
+function numberText(value: string | number) {
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed.toLocaleString("en-US") : "0";
+}
+
 function sourceProfileLabel(profile: GrantApplicationRow["source_profile"]) {
   switch (profile) {
     case "matched":
@@ -87,6 +92,7 @@ export default async function GrantApplicationPage({
   }
 
   const application = detail.application;
+  const sourceEvidence = detail.sources.filter((source) => source.source_kind !== "forum_link");
 
   return (
     <main className="admin-shell">
@@ -123,15 +129,61 @@ export default async function GrantApplicationPage({
           <span className="metric-label">GitHub-Sheet match</span>
           <strong>{matchText(application)}</strong>
         </article>
+        <article className="metric-card">
+          <span className="metric-label">Forum links</span>
+          <strong>{numberText(application.forum_link_count)}</strong>
+        </article>
+      </section>
+
+      <section className="panel">
+        <div className="section-heading">
+          <div>
+            <h2>Forum links</h2>
+            <span className="section-count">
+              {numberText(application.forum_link_count)} forum thread{application.forum_link_count === "1" ? "" : "s"} associated with this application
+            </span>
+          </div>
+        </div>
+        <div className="evidence-list">
+          {detail.forumLinks.length ? (
+            detail.forumLinks.map((forumLink) => (
+              <article className="evidence-item" key={forumLink.id}>
+                <div>
+                  <span className="badge neutral">Forum thread</span>
+                  <h3>{forumLink.title ?? forumLink.source_id}</h3>
+                  <p>{forumLink.summary ?? "Forum link discovered during source reconciliation."}</p>
+                </div>
+                <dl className="evidence-meta">
+                  <div>
+                    <dt>Confidence</dt>
+                    <dd>{percentText(forumLink.confidence)}</dd>
+                  </div>
+                  <div>
+                    <dt>Forum URL</dt>
+                    <dd>{forumLink.source_id}</dd>
+                  </div>
+                </dl>
+                {forumLink.source_url ? (
+                  <a className="table-link" href={forumLink.source_url} rel="noreferrer" target="_blank">
+                    Open forum thread
+                  </a>
+                ) : null}
+                <p className="subtle">{compactJson(forumLink.metadata)}</p>
+              </article>
+            ))
+          ) : (
+            <p>No forum links identified for this application yet.</p>
+          )}
+        </div>
       </section>
 
       <section className="admin-grid two-column">
         <article className="panel">
           <div className="section-heading">
-            <h2>Source evidence</h2>
+            <h2>Other source evidence</h2>
           </div>
           <div className="evidence-list">
-            {detail.sources.map((source) => (
+            {sourceEvidence.map((source) => (
               <article className="evidence-item" key={source.id}>
                 <div>
                   <span className="badge neutral">{source.source_kind}</span>
@@ -149,13 +201,14 @@ export default async function GrantApplicationPage({
                   </div>
                 </dl>
                 {source.source_url ? (
-                  <a className="table-link" href={source.source_url}>
+                  <a className="table-link" href={source.source_url} rel="noreferrer" target="_blank">
                     Open source record
                   </a>
                 ) : null}
                 <p className="subtle">{compactJson(source.metadata)}</p>
               </article>
             ))}
+            {sourceEvidence.length ? null : <p>No non-forum source evidence recorded.</p>}
           </div>
         </article>
 
