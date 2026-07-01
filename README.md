@@ -22,6 +22,13 @@ making public/private boundaries explicit before any cutover.
 
 Prototype deployment: https://zcg.pgpz.org
 
+Useful public prototype routes:
+
+- [Source mirror and reconciliation dashboard](https://zcg.pgpz.org/admin)
+- [Grounded grant knowledge search](https://zcg.pgpz.org/admin/knowledge)
+- [Health check](https://zcg.pgpz.org/api/health)
+- [Public grants API](https://zcg.pgpz.org/api/public/grants)
+
 > Status: independent prototype and architecture proposal. This is not an
 > official ZCG production system unless and until the Zcash ecosystem and the
 > relevant operating stakeholders adopt it.
@@ -193,9 +200,10 @@ operational ambiguity a better system must expose.
 
 ## What Has Been Built
 
-The current prototype is focused on Phase 0 and the beginning of Phase 1/2:
-deployment packaging, authentication, source mirroring, canonical
-reconciliation, and an internal admin view.
+The current prototype now covers Phase 0 foundation work and meaningful Phase 1
+and Phase 2 slices: deployment packaging, authentication, source mirroring,
+canonical reconciliation, administrator access management, public read-only
+prototype browsing, and grounded grant knowledge retrieval.
 
 Current capabilities include:
 
@@ -203,15 +211,17 @@ Current capabilities include:
 - Node 24 local/container/runtime posture.
 - Better Auth email one-time-code authentication.
 - Server-side role and permission checks.
-- Admin user-access utility for granting and revoking app-owned roles by email.
+- Dedicated admin user-access page for granting and revoking app-owned roles by
+  email.
 - Email-based role grants that can pre-authorize users before their first sign-in
   and attach roles to their Better Auth principal after authentication.
 - Postgres data model for principals, roles, permissions, audit events, source
   snapshots, source records, source links, sync runs, reconciliation issues,
-  canonical applications, and grants.
+  canonical applications, grants, grant knowledge documents, and query logs.
 - AWS CDK infrastructure for portable deployment packaging.
 - AWS Amplify SSR deployment for `zcg.pgpz.org`.
 - RDS Data API backend connection for Amplify-hosted SSR routes.
+- Aurora PostgreSQL 16.13 with pgvector for semantic retrieval.
 - Source mirroring from:
   - GitHub issues.
   - Public Google Sheet CSV exports.
@@ -232,20 +242,34 @@ Current capabilities include:
   - server-side search,
   - pagination,
   - application detail pages with source evidence and reconciliation issues.
+- Grounded grant knowledge retrieval at `/admin/knowledge`:
+  - canonical application summary documents,
+  - source-evidence documents from GitHub, Sheets, and discovered forum links,
+  - keyword retrieval through Postgres full-text search,
+  - semantic retrieval through `text-embedding-bge-m3` embeddings,
+  - hybrid retrieval that blends keyword and embedding rank,
+  - optional Venice-backed grounded answer composition with citations.
+- Public read-only prototype access for source browsing and keyword/evidence
+  search.
+- Administrator-only maintenance controls for rebuilding the knowledge index,
+  embedding the next batch, and managing user access.
 - Public grants API with allowlisted public projection.
 
-At the time of this README update, the live prototype reconciliation has
+At the time of this README update on July 1, 2026, the live prototype has
 produced:
 
 | Metric | Count |
 | --- | ---: |
+| Total mirrored source records | 1,272 |
 | GitHub issue source records | 319 |
 | Google Sheet row source records | 810 |
 | Canonical application records | 400 |
 | Canonical grant records | 173 |
 | Forum links associated from mirrored sources | 142 |
-| Canonical applications with forum-link evidence | 63 |
 | Open generated reconciliation issues | 336 |
+| Grant knowledge documents | 1,713 |
+| Knowledge applications covered | 400 |
+| Embedded knowledge documents | 1,713 |
 
 These numbers are prototype reconciliation outputs, not final ZCG production
 truth. They are useful because they show both the value and the messiness of the
@@ -263,6 +287,8 @@ The prototype demonstrates that it is possible to:
 - Build a canonical grant model incrementally.
 - Show cross-source match quality instead of pretending the data is clean.
 - Identify missing or mismatched source relationships.
+- Search historical grants through grounded evidence before the migration is
+  complete.
 - Keep public projection separate from admin workflows.
 - Deploy with repeatable AWS packaging rather than a one-off local demo.
 
@@ -297,13 +323,16 @@ Status: started.
 
 ### Phase 2 - Reconciliation Console
 
-Status: started.
+Status: started and usable as a public read-only prototype.
 
 - Canonical application and grant model.
 - GitHub-to-Sheet matching.
 - Forum link association from existing source payloads.
 - Admin filters, search, pagination, and application detail pages.
 - Reconciliation issue generation.
+- Grounded grant knowledge index built from canonical applications and source
+  evidence.
+- Keyword, semantic, and hybrid retrieval over historical grant material.
 
 Next work:
 
@@ -312,10 +341,13 @@ Next work:
 - Add manual reconciliation workflow for resolving unmatched records.
 - Add status normalization review UI.
 - Add application/grant timeline.
+- Improve role-specific retrieval workflows for ZCG, FPF operations, and
+  reviewers.
 
 ### Phase 3 - Public Transparency Prototype
 
-Planned.
+Partially started through the public read-only dashboard, grant detail pages, and
+public grants API. Still planned as a dedicated public transparency surface.
 
 - Public grant directory.
 - Public grant detail pages.
@@ -354,19 +386,24 @@ The prototype separates three layers:
    timestamps, checksums, and metadata.
 3. Canonical grants model: normalized applications, grants, source links,
    reconciliation issues, and future workflow objects.
+4. Knowledge retrieval layer: grounded documents, Postgres full-text search,
+   pgvector embeddings, query logs, and citation-bearing answer composition.
 
 Key local areas:
 
 | Path | Purpose |
 | --- | --- |
 | `app/` | Next.js application routes and UI |
-| `app/admin/` | Protected admin dashboard and application detail pages |
+| `app/admin/` | Source dashboard, grant detail pages, knowledge search, and user access UI |
 | `app/api/` | Health, auth, admin, sync, and public API routes |
 | `lib/source-mirroring/` | GitHub and Google Sheet mirror collectors |
 | `lib/reconciliation/` | Canonical grant reconciliation engine |
+| `lib/knowledge/` | Grant knowledge indexing, keyword/semantic retrieval, and answer composition |
 | `lib/admin/` | Dashboard and admin data access |
 | `lib/auth.ts` | Better Auth configuration |
 | `lib/authorization.ts` | Server-side permission enforcement |
+| `scripts/index-knowledge.ts` | Rebuild the grant knowledge document index |
+| `scripts/embed-knowledge.ts` | Embed unembedded grant knowledge documents |
 | `migrations/` | Database schema migrations |
 | `workers/` | Sync worker and migration runner |
 | `infra/` | AWS CDK stack |
@@ -383,11 +420,21 @@ Current rules:
 - `.env` and `.env.*` are ignored except `.env.example`.
 - `cdk.context.json` is ignored because it can include account-specific context.
 - `PUBLIC_PROTOTYPE_READONLY=true` can temporarily expose the server-rendered
-  reconciliation dashboard and application detail pages as read-only prototype
-  views while keeping Better Auth and protected admin APIs in place.
+  reconciliation dashboard, application detail pages, and keyword grant
+  knowledge search as read-only prototype views while keeping Better Auth and
+  protected admin APIs in place.
 - User access is managed in app-owned Postgres tables, not inside Better Auth
   itself. Better Auth establishes identity; ZCG roles and permissions determine
   application access.
+- User access management lives on `/admin/users` and requires
+  `role:assignment:manage`.
+- Rebuilding grant knowledge documents and embedding new batches requires the
+  Administrator role and `knowledge:index`.
+- Semantic and hybrid retrieval require `knowledge:semantic`; AI grounded answer
+  composition requires `knowledge:compose`.
+- The public prototype can use keyword/evidence retrieval, but it cannot run
+  semantic, hybrid, AI compose, user-management, indexing, embedding, sync, or
+  write operations.
 - Private KYC, agreements, payment instructions, treasury custody operations,
   and internal deliberation are out of scope for public commits.
 - Public APIs should be generated from explicit allowlisted projections.
@@ -402,6 +449,8 @@ Requirements:
 - npm 11.
 - PostgreSQL for local database work, or RDS Data API configuration for the
   deployed environment.
+- A Venice API key or compatible OpenAI-style endpoint only if using semantic
+  retrieval or grounded AI answer composition.
 
 Setup:
 
@@ -419,11 +468,18 @@ Useful commands:
 npm run check
 npm run worker:sync
 npm run reconcile:grants
+npm run knowledge:index
+npm run knowledge:embed
 npm run infra:synth
 ```
 
 The deployed prototype uses AWS-managed secrets and environment variables. Do
 not copy production secrets into local files or commits.
+
+Knowledge retrieval environment variables are documented in `.env.example`.
+Important knobs include `ZCG_KNOWLEDGE_AI_API_KEY`,
+`ZCG_KNOWLEDGE_AI_MODEL`, `ZCG_KNOWLEDGE_SEMANTIC_ENABLED`,
+`ZCG_KNOWLEDGE_EMBEDDING_MODEL`, and `ZCG_KNOWLEDGE_EMBEDDING_DIMS`.
 
 ## Deployment Posture
 
@@ -435,7 +491,20 @@ The repository includes both:
 
 The current deployment target is `zcg.pgpz.org`, with Amplify handling the
 web-tier deployment and custom domain. Backend state is private and accessed
-through the selected backend boundary.
+from Amplify SSR through the CDK-created compute role, RDS Data API, and
+Secrets Manager rather than a public database endpoint.
+
+Current backend posture:
+
+- Aurora PostgreSQL 16.13.
+- Aurora Serverless v2 with the cost-mode settings documented under
+  `docs/deployment/`.
+- RDS Data API enabled for Amplify-hosted SSR routes.
+- pgvector enabled for `text-embedding-bge-m3` semantic retrieval.
+- GitHub push-triggered Amplify deployment on the `main` branch.
+- Deployment package designed so the repo can be moved into another AWS account
+  with low friction once account, domain, bootstrap-admin, and secret values are
+  supplied.
 
 See:
 
