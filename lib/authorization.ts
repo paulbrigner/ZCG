@@ -63,6 +63,7 @@ export async function getCurrentPrincipal(): Promise<Principal | null> {
 
   if (principal) {
     await ensureBootstrapAdmin(principal);
+    await ensureEmailRoleAssignments(principal);
   }
 
   return principal;
@@ -86,6 +87,29 @@ async function ensureBootstrapAdmin(principal: Principal) {
      on conflict (principal_id, role_id) do nothing`,
     [principal.id]
   );
+}
+
+async function ensureEmailRoleAssignments(principal: Principal) {
+  try {
+    await query(
+      `insert into role_assignments (principal_id, role_id, granted_by_principal_id, reason, expires_at)
+       select $1, era.role_id, era.granted_by_principal_id, coalesce(era.reason, 'Email role grant'), era.expires_at
+         from email_role_assignments era
+        where era.email = lower($2)
+          and (era.expires_at is null or era.expires_at > now())
+       on conflict (principal_id, role_id)
+       do update set reason = excluded.reason,
+                     granted_by_principal_id = excluded.granted_by_principal_id,
+                     expires_at = excluded.expires_at`,
+      [principal.id, principal.email]
+    );
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "42P01") {
+      return;
+    }
+
+    throw error;
+  }
 }
 
 export async function principalHasPermission(principalId: string, permissionKey: string) {

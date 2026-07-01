@@ -7,7 +7,9 @@ import {
   type ApplicationFilter,
   type GrantApplicationRow
 } from "@/lib/admin/dashboard";
-import { isPublicPrototypePrincipal, requirePermission } from "@/lib/authorization";
+import { getUserAccessOverview } from "@/lib/admin/users";
+import { isPublicPrototypePrincipal, principalHasPermission, requirePermission } from "@/lib/authorization";
+import { UserManagementPanel } from "./user-management-panel";
 
 function numberText(value: string | number | null | undefined) {
   const parsed = Number(value ?? 0);
@@ -169,6 +171,10 @@ export default async function AdminPage({
     applicationSearch: pagination.search,
     applicationPage: pagination.page + 1
   });
+  const canManageUsers =
+    !isPublicPrototypePrincipal(principal) &&
+    (await principalHasPermission(principal.id, "role:assignment:manage"));
+  const userAccessOverview = canManageUsers ? await getUserAccessOverview() : null;
 
   return (
     <main className="admin-shell">
@@ -310,6 +316,8 @@ export default async function AdminPage({
           </div>
         </article>
       </section>
+
+      {userAccessOverview ? <UserManagementPanel initialOverview={userAccessOverview} /> : null}
 
       <section className="panel">
         <div className="section-heading">

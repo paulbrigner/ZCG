@@ -203,6 +203,9 @@ Current capabilities include:
 - Node 24 local/container/runtime posture.
 - Better Auth email one-time-code authentication.
 - Server-side role and permission checks.
+- Admin user-access utility for granting and revoking app-owned roles by email.
+- Email-based role grants that can pre-authorize users before their first sign-in
+  and attach roles to their Better Auth principal after authentication.
 - Postgres data model for principals, roles, permissions, audit events, source
   snapshots, source records, source links, sync runs, reconciliation issues,
   canonical applications, and grants.
@@ -382,6 +385,9 @@ Current rules:
 - `PUBLIC_PROTOTYPE_READONLY=true` can temporarily expose the server-rendered
   reconciliation dashboard and application detail pages as read-only prototype
   views while keeping Better Auth and protected admin APIs in place.
+- User access is managed in app-owned Postgres tables, not inside Better Auth
+  itself. Better Auth establishes identity; ZCG roles and permissions determine
+  application access.
 - Private KYC, agreements, payment instructions, treasury custody operations,
   and internal deliberation are out of scope for public commits.
 - Public APIs should be generated from explicit allowlisted projections.

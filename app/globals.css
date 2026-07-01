@@ -390,7 +390,8 @@ button:disabled {
   text-transform: uppercase;
 }
 
-.search-field input {
+.search-field input,
+.search-field select {
   background: #ffffff;
   border: 1px solid var(--line);
   border-radius: 7px;
@@ -401,9 +402,14 @@ button:disabled {
   width: 100%;
 }
 
-.search-field input:focus {
+.search-field input:focus,
+.search-field select:focus {
   border-color: var(--blue);
   outline: 3px solid rgba(37, 99, 235, 0.18);
+}
+
+.compact-field {
+  min-width: min(220px, 100%);
 }
 
 .ghost-link,
@@ -620,6 +626,50 @@ button:disabled {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+
+.user-management {
+  display: grid;
+  gap: 14px;
+}
+
+.user-access-form {
+  margin-bottom: 0;
+}
+
+.role-list {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.role-chip {
+  align-items: center;
+  background: #f8fafc;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: #273244;
+  display: inline-flex;
+  gap: 7px;
+  max-width: 100%;
+  min-height: 30px;
+  overflow-wrap: anywhere;
+  padding: 4px 6px 4px 9px;
+}
+
+.inline-danger {
+  background: #ffffff;
+  border-color: #fecaca;
+  color: var(--red);
+  font-size: 12px;
+  min-height: 26px;
+  padding: 4px 7px;
+}
+
+.pending-grants {
+  display: grid;
+  gap: 10px;
 }
 
 @media (max-width: 860px) {
