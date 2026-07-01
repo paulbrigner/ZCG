@@ -61,7 +61,7 @@ export class ZcgPrototypeStack extends Stack {
 
     const database = new rds.DatabaseCluster(this, "Database", {
       engine: rds.DatabaseClusterEngine.auroraPostgres({
-        version: rds.AuroraPostgresEngineVersion.of("16.6", "16")
+        version: rds.AuroraPostgresEngineVersion.of("16.13", "16")
       }),
       writer: rds.ClusterInstance.serverlessV2("writer", {
         publiclyAccessible: false
