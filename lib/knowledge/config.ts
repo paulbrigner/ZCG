@@ -3,6 +3,8 @@ const defaultAiModel = "openai-gpt-55";
 const defaultEmbeddingModel = "text-embedding-bge-m3";
 const defaultEmbeddingDims = 1024;
 const defaultAiTimeoutMs = 20000;
+const defaultEmbeddingTimeoutMs = 20000;
+const defaultEmbeddingBatchSize = 8;
 
 function stringValue(value: string | undefined) {
   const trimmed = value?.trim();
@@ -60,14 +62,36 @@ export function knowledgeEmbeddingDims() {
   return positiveInteger(process.env.ZCG_KNOWLEDGE_EMBEDDING_DIMS, defaultEmbeddingDims);
 }
 
+export function knowledgeEmbeddingApiKey() {
+  return stringValue(process.env.ZCG_KNOWLEDGE_EMBEDDING_API_KEY) ?? knowledgeAiApiKey();
+}
+
+export function knowledgeEmbeddingBaseUrl() {
+  return (stringValue(process.env.ZCG_KNOWLEDGE_EMBEDDING_BASE_URL) ?? knowledgeAiBaseUrl()).replace(/\/+$/, "");
+}
+
+export function knowledgeEmbeddingTimeoutMs() {
+  return positiveInteger(process.env.ZCG_KNOWLEDGE_EMBEDDING_TIMEOUT_MS, defaultEmbeddingTimeoutMs);
+}
+
+export function knowledgeEmbeddingBatchSize() {
+  return Math.min(16, positiveInteger(process.env.ZCG_KNOWLEDGE_EMBEDDING_BATCH_SIZE, defaultEmbeddingBatchSize));
+}
+
+export function knowledgeSemanticEnabled() {
+  return booleanValue(process.env.ZCG_KNOWLEDGE_SEMANTIC_ENABLED, true) && Boolean(knowledgeEmbeddingApiKey());
+}
+
 export function knowledgeProviderStatus() {
   return {
     aiAnswerEnabled: knowledgeAiEnabled(),
     aiConfigured: Boolean(knowledgeAiApiKey()),
     aiBaseUrl: knowledgeAiBaseUrl(),
     aiModel: knowledgeAiModel(),
+    embeddingConfigured: Boolean(knowledgeEmbeddingApiKey()),
+    embeddingBaseUrl: knowledgeEmbeddingBaseUrl(),
     embeddingModel: knowledgeEmbeddingModel(),
     embeddingDims: knowledgeEmbeddingDims(),
-    semanticSearchEnabled: false
+    semanticSearchEnabled: knowledgeSemanticEnabled()
   };
 }

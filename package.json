@@ -18,6 +18,7 @@
     "db:migrate": "tsx scripts/migrate.ts",
     "db:seed": "tsx scripts/seed.ts",
     "knowledge:index": "tsx scripts/index-knowledge.ts",
+    "knowledge:embed": "tsx scripts/embed-knowledge.ts",
     "reconcile:grants": "tsx scripts/reconcile.ts",
     "worker:sync": "tsx workers/sync-worker.ts",
     "infra:synth": "cdk synth --app \"npx tsx infra/app.ts\"",

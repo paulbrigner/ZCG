@@ -1,9 +1,11 @@
 import { query } from "@/lib/db";
 import { recordAuditEvent } from "@/lib/audit";
-import { knowledgeAiEnabled, knowledgeProviderStatus } from "@/lib/knowledge/config";
+import { knowledgeAiEnabled, knowledgeEmbeddingDims, knowledgeEmbeddingModel, knowledgeProviderStatus } from "@/lib/knowledge/config";
 import { composeGrantKnowledgeAnswer } from "@/lib/knowledge/compose";
+import { createQueryEmbedding, vectorLiteral } from "@/lib/knowledge/embeddings";
 
 export type KnowledgeAnswerMode = "evidence" | "ai";
+export type KnowledgeRetrievalMode = "keyword" | "semantic" | "hybrid";
 
 export type GrantKnowledgeSearchResult = {
   id: string;
@@ -39,6 +41,7 @@ type GrantKnowledgeSearchRow = {
 type GrantKnowledgeOverviewRow = {
   document_count: string;
   application_count: string;
+  embedding_count: string;
   latest_indexed_at: string | null;
 };
 
@@ -50,6 +53,7 @@ type GrantKnowledgeSourceKindRow = {
 export type GrantKnowledgeOverview = {
   documentCount: number;
   applicationCount: number;
+  embeddingCount: number;
   latestIndexedAt: string | null;
   sourceKinds: Array<{ sourceKind: string; documentCount: number }>;
 };
@@ -58,12 +62,14 @@ export type GrantKnowledgeSearchResponse = {
   ok: true;
   query: string;
   answerMode: KnowledgeAnswerMode;
+  retrievalMode: KnowledgeRetrievalMode;
   answerText: string | null;
   answerStatus: "evidence" | "generated" | "disabled" | "not_requested";
   results: GrantKnowledgeSearchResult[];
   retrievalStats: {
     resultCount: number;
     limit: number;
+    mode: KnowledgeRetrievalMode;
     semanticSearchEnabled: boolean;
   };
   providerStatus: ReturnType<typeof knowledgeProviderStatus>;
@@ -88,6 +94,14 @@ export function normalizeKnowledgeLimit(value: unknown) {
 
 export function normalizeAnswerMode(value: unknown): KnowledgeAnswerMode {
   return value === "ai" ? "ai" : "evidence";
+}
+
+export function normalizeRetrievalMode(value: unknown): KnowledgeRetrievalMode {
+  if (value === "semantic" || value === "hybrid") {
+    return value;
+  }
+
+  return "keyword";
 }
 
 function plainExcerpt(content: string, searchText: string) {
@@ -156,8 +170,15 @@ export async function getGrantKnowledgeOverview(): Promise<GrantKnowledgeOvervie
     query<GrantKnowledgeOverviewRow>(
       `select count(*)::text as document_count,
               count(distinct application_id)::text as application_count,
+              count(*) filter (
+                where embedding is not null
+                  and embedding_model = $1
+                  and embedding_dims = $2
+                  and embedding_content_hash = content_hash
+              )::text as embedding_count,
               max(indexed_at)::text as latest_indexed_at
-         from grant_knowledge_documents`
+         from grant_knowledge_documents`,
+      [knowledgeEmbeddingModel(), knowledgeEmbeddingDims()]
     ),
     query<GrantKnowledgeSourceKindRow>(
       `select coalesce(source_kind, document_kind) as source_kind,
@@ -172,6 +193,7 @@ export async function getGrantKnowledgeOverview(): Promise<GrantKnowledgeOvervie
   return {
     documentCount: Number(row?.document_count ?? 0),
     applicationCount: Number(row?.application_count ?? 0),
+    embeddingCount: Number(row?.embedding_count ?? 0),
     latestIndexedAt: row?.latest_indexed_at ?? null,
     sourceKinds: sourceKinds.rows.map((sourceKind) => ({
       sourceKind: sourceKind.source_kind,
@@ -181,6 +203,26 @@ export async function getGrantKnowledgeOverview(): Promise<GrantKnowledgeOvervie
 }
 
 export async function searchGrantKnowledge({
+  searchText,
+  limit,
+  retrievalMode = "keyword"
+}: {
+  searchText: string;
+  limit: number;
+  retrievalMode?: KnowledgeRetrievalMode;
+}) {
+  if (retrievalMode === "semantic") {
+    return searchSemanticGrantKnowledge({ searchText, limit });
+  }
+
+  if (retrievalMode === "hybrid") {
+    return searchHybridGrantKnowledge({ searchText, limit });
+  }
+
+  return searchKeywordGrantKnowledge({ searchText, limit });
+}
+
+async function searchKeywordGrantKnowledge({
   searchText,
   limit
 }: {
@@ -224,20 +266,139 @@ export async function searchGrantKnowledge({
   return result.rows.map((row) => mapSearchRow(row, searchText));
 }
 
+async function searchSemanticGrantKnowledge({
+  searchText,
+  limit
+}: {
+  searchText: string;
+  limit: number;
+}) {
+  const embedding = await createQueryEmbedding(searchText);
+  const result = await query<GrantKnowledgeSearchRow>(
+    `select d.id::text,
+            d.application_id::text,
+            d.document_kind,
+            d.title,
+            d.applicant_name,
+            d.source_kind,
+            d.source_id,
+            d.source_url,
+            d.normalized_status,
+            d.requested_amount_usd::text,
+            (1 - (d.embedding <=> ($1)::vector)) as rank,
+            d.content
+       from grant_knowledge_documents d
+      where d.embedding is not null
+        and d.embedding_model = $2
+        and d.embedding_dims = $3
+        and d.embedding_content_hash = d.content_hash
+      order by d.embedding <=> ($1)::vector
+      limit $4`,
+    [vectorLiteral(embedding), knowledgeEmbeddingModel(), knowledgeEmbeddingDims(), limit]
+  );
+
+  return result.rows.map((row) => mapSearchRow(row, searchText));
+}
+
+function normalizeRank(value: number, max: number) {
+  if (!Number.isFinite(value) || value <= 0 || max <= 0) {
+    return 0;
+  }
+
+  return value / max;
+}
+
+function searchResultKey(result: GrantKnowledgeSearchResult) {
+  return result.id;
+}
+
+async function searchHybridGrantKnowledge({
+  searchText,
+  limit
+}: {
+  searchText: string;
+  limit: number;
+}) {
+  const expandedLimit = Math.min(60, Math.max(limit * 4, limit));
+  const [keywordResults, semanticResults] = await Promise.all([
+    searchKeywordGrantKnowledge({ searchText, limit: expandedLimit }),
+    searchSemanticGrantKnowledge({ searchText, limit: expandedLimit })
+  ]);
+  const maxKeywordRank = Math.max(...keywordResults.map((result) => result.rank), 0);
+  const maxSemanticRank = Math.max(...semanticResults.map((result) => result.rank), 0);
+  const merged = new Map<
+    string,
+    {
+      result: GrantKnowledgeSearchResult;
+      keywordRank: number;
+      semanticRank: number;
+    }
+  >();
+
+  for (const result of keywordResults) {
+    merged.set(searchResultKey(result), {
+      result,
+      keywordRank: result.rank,
+      semanticRank: 0
+    });
+  }
+
+  for (const result of semanticResults) {
+    const key = searchResultKey(result);
+    const existing = merged.get(key);
+
+    if (existing) {
+      existing.semanticRank = result.rank;
+      continue;
+    }
+
+    merged.set(key, {
+      result,
+      keywordRank: 0,
+      semanticRank: result.rank
+    });
+  }
+
+  return [...merged.values()]
+    .map(({ result, keywordRank, semanticRank }) => {
+      const appearsInBoth = keywordRank > 0 && semanticRank > 0;
+      const hybridRank =
+        normalizeRank(keywordRank, maxKeywordRank) * 0.45 +
+        normalizeRank(semanticRank, maxSemanticRank) * 0.55 +
+        (appearsInBoth ? 0.08 : 0);
+
+      return {
+        ...result,
+        rank: hybridRank
+      };
+    })
+    .sort((left, right) => right.rank - left.rank)
+    .slice(0, limit);
+}
+
 export async function runGrantKnowledgeSearch({
   searchText,
   limit,
   answerMode,
+  retrievalMode,
   allowAiAnswer,
+  allowSemanticSearch,
   principalId
 }: {
   searchText: string;
   limit: number;
   answerMode: KnowledgeAnswerMode;
+  retrievalMode: KnowledgeRetrievalMode;
   allowAiAnswer: boolean;
+  allowSemanticSearch: boolean;
   principalId?: string | null;
 }): Promise<GrantKnowledgeSearchResponse> {
-  const results = await searchGrantKnowledge({ searchText, limit });
+  const effectiveRetrievalMode = allowSemanticSearch ? retrievalMode : "keyword";
+  const results = await searchGrantKnowledge({
+    searchText,
+    limit,
+    retrievalMode: effectiveRetrievalMode
+  });
   const providerStatus = knowledgeProviderStatus();
   let answerText: string | null = null;
   let answerStatus: GrantKnowledgeSearchResponse["answerStatus"] = "not_requested";
@@ -265,6 +426,7 @@ export async function runGrantKnowledgeSearch({
         query: searchText,
         limit,
         answerMode,
+        retrievalMode: effectiveRetrievalMode,
         answerStatus,
         resultCount: results.length
       }
@@ -283,11 +445,12 @@ export async function runGrantKnowledgeSearch({
       [
         principalId,
         searchText,
-        "postgres_full_text",
+        effectiveRetrievalMode === "keyword" ? "postgres_full_text" : effectiveRetrievalMode,
         results.length,
         answerMode,
         JSON.stringify({
           answerStatus,
+          retrievalMode: effectiveRetrievalMode,
           provider: providerStatus.aiConfigured ? "configured" : "not_configured"
         })
       ]
@@ -298,12 +461,14 @@ export async function runGrantKnowledgeSearch({
     ok: true,
     query: searchText,
     answerMode,
+    retrievalMode: effectiveRetrievalMode,
     answerText,
     answerStatus,
     results,
     retrievalStats: {
       resultCount: results.length,
       limit,
+      mode: effectiveRetrievalMode,
       semanticSearchEnabled: providerStatus.semanticSearchEnabled
     },
     providerStatus

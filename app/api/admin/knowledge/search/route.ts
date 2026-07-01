@@ -3,6 +3,7 @@ import {
   normalizeAnswerMode,
   normalizeKnowledgeLimit,
   normalizeKnowledgeQuery,
+  normalizeRetrievalMode,
   runGrantKnowledgeSearch
 } from "@/lib/knowledge/search";
 import { isPublicPrototypePrincipal, principalHasPermission, requirePermission } from "@/lib/authorization";
@@ -19,17 +20,27 @@ export async function POST(request: NextRequest) {
   }
 
   const answerMode = normalizeAnswerMode(body?.answerMode);
+  const retrievalMode = normalizeRetrievalMode(body?.retrievalMode);
   const limit = normalizeKnowledgeLimit(body?.limit);
   const canUseAiAnswer =
     !isPublicPrototypePrincipal(principal) &&
     (await principalHasPermission(principal.id, "knowledge:compose"));
+  const canUseSemanticSearch =
+    !isPublicPrototypePrincipal(principal) &&
+    (await principalHasPermission(principal.id, "knowledge:semantic"));
+
+  if (retrievalMode !== "keyword" && !canUseSemanticSearch) {
+    return NextResponse.json({ error: "Semantic retrieval requires authenticated access." }, { status: 403 });
+  }
 
   try {
     const result = await runGrantKnowledgeSearch({
       searchText,
       limit,
       answerMode,
+      retrievalMode,
       allowAiAnswer: canUseAiAnswer,
+      allowSemanticSearch: canUseSemanticSearch,
       principalId: isPublicPrototypePrincipal(principal) ? null : principal.id
     });
 

@@ -41,6 +41,9 @@ export default async function GrantKnowledgePage() {
   const canIndex =
     !isPublicPrototypePrincipal(principal) &&
     (await principalHasPermission(principal.id, "knowledge:index"));
+  const canUseSemantic =
+    !isPublicPrototypePrincipal(principal) &&
+    (await principalHasPermission(principal.id, "knowledge:semantic"));
 
   return (
     <main className="admin-shell">
@@ -76,6 +79,11 @@ export default async function GrantKnowledgePage() {
           <strong>{dateText(overview.latestIndexedAt)}</strong>
         </article>
         <article className="metric-card">
+          <span className="metric-label">Embeddings</span>
+          <strong>{numberText(overview.embeddingCount)}</strong>
+          <span className="metric-note">{providerStatus.embeddingModel}</span>
+        </article>
+        <article className="metric-card">
           <span className="metric-label">AI answers</span>
           <strong>{providerStatus.aiConfigured ? "Configured" : "Not set"}</strong>
           <span className="metric-note">{providerStatus.aiModel}</span>
@@ -103,7 +111,9 @@ export default async function GrantKnowledgePage() {
       <KnowledgeSearchPanel
         canComposeAi={canComposeAi}
         canIndex={canIndex}
+        canUseSemantic={canUseSemantic}
         initialAiConfigured={providerStatus.aiConfigured}
+        initialSemanticEnabled={providerStatus.semanticSearchEnabled}
       />
     </main>
   );

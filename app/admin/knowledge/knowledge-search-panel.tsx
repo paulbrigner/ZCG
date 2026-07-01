@@ -6,7 +6,9 @@ import type { GrantKnowledgeSearchResponse } from "@/lib/knowledge/search";
 type KnowledgeSearchPanelProps = {
   canComposeAi: boolean;
   canIndex: boolean;
+  canUseSemantic: boolean;
   initialAiConfigured: boolean;
+  initialSemanticEnabled: boolean;
 };
 
 type IndexState = {
@@ -28,16 +30,23 @@ function moneyText(value: string | null) {
 export function KnowledgeSearchPanel({
   canComposeAi,
   canIndex,
-  initialAiConfigured
+  canUseSemantic,
+  initialAiConfigured,
+  initialSemanticEnabled
 }: KnowledgeSearchPanelProps) {
   const [query, setQuery] = useState("");
   const [limit, setLimit] = useState("8");
+  const [retrievalMode, setRetrievalMode] = useState<"keyword" | "semantic" | "hybrid">(
+    canUseSemantic && initialSemanticEnabled ? "hybrid" : "keyword"
+  );
   const [answerMode, setAnswerMode] = useState<"evidence" | "ai">("evidence");
   const [isSearching, setIsSearching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<GrantKnowledgeSearchResponse | null>(null);
   const [indexState, setIndexState] = useState<IndexState>({ status: "idle", message: "" });
+  const [embeddingState, setEmbeddingState] = useState<IndexState>({ status: "idle", message: "" });
   const aiAvailable = canComposeAi && initialAiConfigured;
+  const semanticAvailable = canUseSemantic && initialSemanticEnabled;
   const answerModeNote = useMemo(() => {
     if (answerMode !== "ai") {
       return null;
@@ -53,6 +62,21 @@ export function KnowledgeSearchPanel({
 
     return null;
   }, [answerMode, canComposeAi, initialAiConfigured]);
+  const retrievalModeNote = useMemo(() => {
+    if (retrievalMode === "keyword") {
+      return null;
+    }
+
+    if (!canUseSemantic) {
+      return "Semantic retrieval requires an authenticated role with semantic access.";
+    }
+
+    if (!initialSemanticEnabled) {
+      return "Semantic retrieval needs a configured embedding key.";
+    }
+
+    return null;
+  }, [retrievalMode, canUseSemantic, initialSemanticEnabled]);
 
   async function submitSearch(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -63,7 +87,7 @@ export function KnowledgeSearchPanel({
       const response = await fetch("/api/admin/knowledge/search", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ query, limit: Number(limit), answerMode })
+        body: JSON.stringify({ query, limit: Number(limit), retrievalMode, answerMode })
       });
       const body = await response.json();
 
@@ -102,15 +126,48 @@ export function KnowledgeSearchPanel({
     }
   }
 
+  async function rebuildEmbeddings() {
+    setEmbeddingState({ status: "running", message: "Embedding the next grant knowledge batch with BGE-M3." });
+
+    try {
+      const response = await fetch("/api/admin/knowledge/embeddings", { method: "POST" });
+      const body = await response.json();
+
+      if (!response.ok) {
+        throw new Error(typeof body?.error === "string" ? body.error : "Embedding failed.");
+      }
+
+      setEmbeddingState({
+        status: "done",
+        message: `${body.documentsEmbedded.toLocaleString()} documents embedded with ${body.model}.`
+      });
+    } catch (embeddingError) {
+      setEmbeddingState({
+        status: "error",
+        message: embeddingError instanceof Error ? embeddingError.message : "Embedding failed."
+      });
+    }
+  }
+
   return (
     <div className="knowledge-workspace">
       <form className="knowledge-query-panel panel" onSubmit={submitSearch}>
         <div className="section-heading">
           <h2>Grant knowledge retrieval</h2>
           {canIndex ? (
-            <button disabled={indexState.status === "running"} onClick={rebuildIndex} type="button">
-              {indexState.status === "running" ? "Indexing" : "Rebuild index"}
-            </button>
+            <div className="result-actions">
+              <button disabled={indexState.status === "running"} onClick={rebuildIndex} type="button">
+                {indexState.status === "running" ? "Indexing" : "Rebuild index"}
+              </button>
+              <button
+                className="ghost-button"
+                disabled={embeddingState.status === "running"}
+                onClick={rebuildEmbeddings}
+                type="button"
+              >
+                {embeddingState.status === "running" ? "Embedding" : "Embed next batch"}
+              </button>
+            </div>
           ) : null}
         </div>
         <label className="knowledge-query-field">
@@ -123,6 +180,21 @@ export function KnowledgeSearchPanel({
           />
         </label>
         <div className="table-controls knowledge-controls">
+          <label className="search-field compact-field">
+            <span>Retrieval</span>
+            <select
+              onChange={(event) => setRetrievalMode(event.target.value as "keyword" | "semantic" | "hybrid")}
+              value={retrievalMode}
+            >
+              <option value="keyword">Keyword</option>
+              <option disabled={!semanticAvailable} value="semantic">
+                Semantic
+              </option>
+              <option disabled={!semanticAvailable} value="hybrid">
+                Hybrid
+              </option>
+            </select>
+          </label>
           <label className="search-field compact-field">
             <span>Results</span>
             <select onChange={(event) => setLimit(event.target.value)} value={limit}>
@@ -145,9 +217,13 @@ export function KnowledgeSearchPanel({
             {isSearching ? "Searching" : "Search"}
           </button>
         </div>
+        {retrievalModeNote ? <p className="form-status neutral-status">{retrievalModeNote}</p> : null}
         {answerModeNote ? <p className="form-status neutral-status">{answerModeNote}</p> : null}
         {indexState.message ? (
           <p className={indexState.status === "error" ? "form-error" : "form-status"}>{indexState.message}</p>
+        ) : null}
+        {embeddingState.message ? (
+          <p className={embeddingState.status === "error" ? "form-error" : "form-status"}>{embeddingState.message}</p>
         ) : null}
         {error ? <p className="form-error">{error}</p> : null}
       </form>
@@ -159,6 +235,8 @@ export function KnowledgeSearchPanel({
               <h2>Grounded answer</h2>
               <span className="section-count">
                 {result.retrievalStats.resultCount.toLocaleString()} evidence matches
+                {" | "}
+                {result.retrievalStats.mode} retrieval
               </span>
             </div>
             <span className={`badge ${result.answerStatus === "generated" ? "green" : "neutral"}`}>
