@@ -277,7 +277,7 @@ async function fetchApplicationRows() {
                                   and sl.canonical_id = ga.id
          left join source_records sr on sr.id = sl.source_record_id
         group by ga.id
-        order by ga.updated_at desc
+        order by ga.updated_at desc, ga.id desc
         limit $1 offset $2`,
       [sourceRecordBatchSize, offset]
     );
