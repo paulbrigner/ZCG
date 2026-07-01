@@ -273,7 +273,7 @@ export function KnowledgeSearchPanel({
                   </div>
                 </dl>
                 <div className="result-actions">
-                  <a className="table-link" href={`/admin/grants/${item.applicationId}`}>
+                  <a className="table-link" href={`/admin/grants/${item.applicationId}`} rel="noreferrer" target="_blank">
                     Open application
                   </a>
                   {item.sourceUrl ? (
