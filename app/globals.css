@@ -568,6 +568,67 @@ button:disabled {
   color: var(--amber);
 }
 
+.github-label-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+  min-width: 0;
+}
+
+.github-label-chip {
+  background: #eef2f7;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: #121820;
+  display: inline-flex;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.1;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  padding: 5px 8px;
+}
+
+.github-label-chip.review,
+.github-label-chip.compliance {
+  color: #134e4a;
+}
+
+.github-label-chip.decision,
+.github-label-chip.completion {
+  color: #14532d;
+}
+
+.github-label-chip.terminal {
+  color: #7f1d1d;
+}
+
+.github-label-chip.milestone,
+.github-label-chip.payment {
+  color: #312e81;
+}
+
+.github-label-chip.overflow {
+  background: #f8fafc;
+  color: var(--muted);
+}
+
+.github-label-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.github-label-card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 14px;
+}
+
 .source-counts {
   display: grid;
   gap: 10px;
@@ -784,6 +845,7 @@ button:disabled {
   .grid,
   .metric-grid,
   .two-column,
+  .github-label-grid,
   .compact-source-counts {
     grid-template-columns: 1fr;
   }

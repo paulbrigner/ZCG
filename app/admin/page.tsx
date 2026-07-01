@@ -1,3 +1,4 @@
+import type { CSSProperties } from "react";
 import Link from "next/link";
 import {
   getAdminDashboard,
@@ -9,6 +10,17 @@ import {
   type GrantApplicationRow
 } from "@/lib/admin/dashboard";
 import { isPublicPrototypePrincipal, principalHasRole, requirePermission } from "@/lib/authorization";
+
+type GitHubLabelSummary = {
+  labelName: string;
+  labelSlug: string;
+  labelColor: string | null;
+  labelDescription: string | null;
+  labelCategory: string;
+  labelStatus: string | null;
+  milestoneNumber: number | null;
+  labelOrder: number;
+};
 
 function numberText(value: string | number | null | undefined) {
   const parsed = Number(value ?? 0);
@@ -82,6 +94,55 @@ function statusLabel(value: string) {
     .filter(Boolean)
     .map((part) => part.slice(0, 1).toUpperCase() + part.slice(1))
     .join(" ");
+}
+
+function parseGitHubLabels(value: string | null | undefined): GitHubLabelSummary[] {
+  if (!value) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? (parsed as GitHubLabelSummary[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function githubLabelStyle(label: { labelColor?: string | null }): CSSProperties | undefined {
+  if (!label.labelColor || !/^[0-9a-f]{6}$/i.test(label.labelColor)) {
+    return undefined;
+  }
+
+  return {
+    backgroundColor: `#${label.labelColor}2b`,
+    borderColor: `#${label.labelColor}`
+  };
+}
+
+function GitHubLabelChips({ labels, limit }: { labels: GitHubLabelSummary[]; limit?: number }) {
+  const visibleLabels = typeof limit === "number" ? labels.slice(0, limit) : labels;
+  const hiddenCount = typeof limit === "number" ? Math.max(0, labels.length - limit) : 0;
+
+  if (!labels.length) {
+    return null;
+  }
+
+  return (
+    <div className="github-label-list">
+      {visibleLabels.map((label) => (
+        <span
+          className={`github-label-chip ${label.labelCategory}`}
+          key={label.labelName}
+          style={githubLabelStyle(label)}
+          title={label.labelDescription ?? label.labelStatus ?? label.labelCategory}
+        >
+          {label.labelName}
+        </span>
+      ))}
+      {hiddenCount ? <span className="github-label-chip overflow">+{numberText(hiddenCount)}</span> : null}
+    </div>
+  );
 }
 
 function adminHref(params: {
@@ -439,27 +500,32 @@ export default async function AdminPage({
             </thead>
             <tbody>
               {dashboard.applications.length ? (
-                dashboard.applications.map((application) => (
-                  <tr key={application.id}>
-                    <td>
-                      <Link className="table-link" href={`/admin/grants/${application.id}`}>
-                        {application.title}
-                      </Link>
-                      <span className="subtle">{application.applicant_name ?? "Unknown applicant"}</span>
-                    </td>
-                    <td>
-                      <span className={`badge ${application.source_profile}`}>{sourceProfileLabel(application.source_profile)}</span>
-                    </td>
-                    <td>
-                      <span className={`badge ${application.normalized_status}`}>{application.normalized_status}</span>
-                    </td>
-                    <td>{moneyText(application.requested_amount_usd)}</td>
-                    <td>{matchText(application)}</td>
-                    <td>{numberText(application.source_count)}</td>
-                    <td>{numberText(application.forum_link_count)}</td>
-                    <td>{numberText(application.open_issue_count)}</td>
-                  </tr>
-                ))
+                dashboard.applications.map((application) => {
+                  const githubLabels = parseGitHubLabels(application.github_labels);
+
+                  return (
+                    <tr key={application.id}>
+                      <td>
+                        <Link className="table-link" href={`/admin/grants/${application.id}`}>
+                          {application.title}
+                        </Link>
+                        <span className="subtle">{application.applicant_name ?? "Unknown applicant"}</span>
+                        <GitHubLabelChips labels={githubLabels} limit={5} />
+                      </td>
+                      <td>
+                        <span className={`badge ${application.source_profile}`}>{sourceProfileLabel(application.source_profile)}</span>
+                      </td>
+                      <td>
+                        <span className={`badge ${application.normalized_status}`}>{application.normalized_status}</span>
+                      </td>
+                      <td>{moneyText(application.requested_amount_usd)}</td>
+                      <td>{matchText(application)}</td>
+                      <td>{numberText(application.source_count)}</td>
+                      <td>{numberText(application.forum_link_count)}</td>
+                      <td>{numberText(application.open_issue_count)}</td>
+                    </tr>
+                  );
+                })
               ) : (
                 <tr>
                   <td colSpan={8}>No application records match this filter.</td>

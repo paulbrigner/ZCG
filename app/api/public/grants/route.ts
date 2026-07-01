@@ -10,6 +10,7 @@ export async function GET() {
     title: string;
     publicApplicantName: string | null;
     status: string;
+    githubLabels: unknown;
     requestedAmountUsd: string | null;
     approvedAmountUsd: string | null;
     sourceLinks: unknown;
@@ -19,6 +20,22 @@ export async function GET() {
             ga.title,
             ga.applicant_name as "publicApplicantName",
             ga.normalized_status as status,
+            (
+              select coalesce(
+                jsonb_agg(
+                  jsonb_build_object(
+                    'name', gal.label_name,
+                    'category', gal.label_category,
+                    'status', gal.label_status,
+                    'milestoneNumber', gal.milestone_number
+                  )
+                  order by gal.label_order, gal.label_name
+                ),
+                '[]'::jsonb
+              )::text
+                from grant_application_github_labels gal
+               where gal.application_id = ga.id
+            ) as "githubLabels",
             ga.requested_amount_usd::text as "requestedAmountUsd",
             g.approved_amount_usd::text as "approvedAmountUsd",
             coalesce(
@@ -46,6 +63,7 @@ export async function GET() {
     grants: result.rows.map((row) =>
       projectPublicGrant({
         ...row,
+        githubLabels: typeof row.githubLabels === "string" ? JSON.parse(row.githubLabels) : row.githubLabels,
         sourceLinks: typeof row.sourceLinks === "string" ? JSON.parse(row.sourceLinks) : row.sourceLinks
       })
     ),

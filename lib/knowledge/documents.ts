@@ -27,6 +27,7 @@ type GrantKnowledgeApplicationRow = {
   github_issue_number: string | null;
   github_issue_url: string | null;
   source_summary: string | null;
+  github_labels: string | null;
   updated_at: string;
   sources: string;
 };
@@ -148,10 +149,12 @@ function sourceLabel(source: GrantKnowledgeSourceRecord) {
 
 function buildApplicationSummaryDocument(row: GrantKnowledgeApplicationRow): KnowledgeDocumentInput {
   const sourceSummary = parseJsonRecord(row.source_summary);
+  const githubLabels = collectStringValues(JSON.parse(row.github_labels ?? "[]"));
   const lines = uniqueLines([
     `Grant application: ${row.title}`,
     row.applicant_name ? `Applicant: ${row.applicant_name}` : null,
     `Status: ${row.normalized_status}`,
+    githubLabels.length ? `GitHub labels: ${githubLabels.join(" | ")}` : null,
     row.requested_amount_usd ? `Requested amount USD: ${row.requested_amount_usd}` : null,
     row.github_issue_number ? `GitHub issue: ${row.github_issue_number}` : null,
     row.github_issue_url ? `GitHub URL: ${row.github_issue_url}` : null,
@@ -255,6 +258,22 @@ async function fetchApplicationRows() {
               ga.github_issue_number::text,
               ga.github_issue_url,
               ga.source_summary::text,
+              (
+                select coalesce(
+                  jsonb_agg(
+                    jsonb_build_object(
+                      'name', gal.label_name,
+                      'category', gal.label_category,
+                      'status', gal.label_status,
+                      'milestoneNumber', gal.milestone_number
+                    )
+                    order by gal.label_order, gal.label_name
+                  ),
+                  '[]'::jsonb
+                )::text
+                  from grant_application_github_labels gal
+                 where gal.application_id = ga.id
+              ) as github_labels,
               ga.updated_at::text,
               coalesce(
                 jsonb_agg(

@@ -3,6 +3,7 @@ export const publicGrantProjectionFields = [
   "title",
   "publicApplicantName",
   "status",
+  "githubLabels",
   "category",
   "requestedAmountUsd",
   "approvedAmountUsd",

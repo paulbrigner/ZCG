@@ -1,6 +1,7 @@
+import type { CSSProperties } from "react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getGrantApplicationDetail, type GrantApplicationRow } from "@/lib/admin/dashboard";
+import { getGrantApplicationDetail, type GitHubLabelRow, type GrantApplicationRow } from "@/lib/admin/dashboard";
 import { requirePermission } from "@/lib/authorization";
 
 function moneyText(value: string | null) {
@@ -19,9 +20,32 @@ function percentText(value: string | null) {
   return Number.isFinite(parsed) ? `${Math.round(parsed * 100)}%` : "0%";
 }
 
+function statusLabel(value: string | null) {
+  if (!value) {
+    return "-";
+  }
+
+  return value
+    .split("_")
+    .filter(Boolean)
+    .map((part) => part.slice(0, 1).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
 function numberText(value: string | number) {
   const parsed = typeof value === "number" ? value : Number(value);
   return Number.isFinite(parsed) ? parsed.toLocaleString("en-US") : "0";
+}
+
+function githubLabelStyle(label: GitHubLabelRow): CSSProperties | undefined {
+  if (!label.label_color || !/^[0-9a-f]{6}$/i.test(label.label_color)) {
+    return undefined;
+  }
+
+  return {
+    backgroundColor: `#${label.label_color}2b`,
+    borderColor: `#${label.label_color}`
+  };
 }
 
 function sourceProfileLabel(profile: GrantApplicationRow["source_profile"]) {
@@ -133,6 +157,61 @@ export default async function GrantApplicationPage({
           <span className="metric-label">Forum links</span>
           <strong>{numberText(application.forum_link_count)}</strong>
         </article>
+        <article className="metric-card">
+          <span className="metric-label">GitHub labels</span>
+          <strong>{numberText(application.github_label_count)}</strong>
+        </article>
+      </section>
+
+      <section className="panel">
+        <div className="section-heading">
+          <div>
+            <h2>GitHub workflow labels</h2>
+            <span className="section-count">
+              {numberText(application.github_label_count)} label{application.github_label_count === "1" ? "" : "s"} captured as structured grant attributes
+            </span>
+          </div>
+        </div>
+        {detail.githubLabels.length ? (
+          <div className="github-label-grid">
+            {detail.githubLabels.map((label) => (
+              <article className="github-label-card" key={label.label_name}>
+                <span
+                  className={`github-label-chip ${label.label_category}`}
+                  style={githubLabelStyle(label)}
+                  title={label.label_description ?? label.label_status ?? label.label_category}
+                >
+                  {label.label_name}
+                </span>
+                <dl className="evidence-meta">
+                  <div>
+                    <dt>Category</dt>
+                    <dd>{statusLabel(label.label_category)}</dd>
+                  </div>
+                  <div>
+                    <dt>Status</dt>
+                    <dd>{statusLabel(label.label_status)}</dd>
+                  </div>
+                  <div>
+                    <dt>Milestone</dt>
+                    <dd>{label.milestone_number ? numberText(label.milestone_number) : "-"}</dd>
+                  </div>
+                  <div>
+                    <dt>Observed</dt>
+                    <dd>{label.observed_at ? new Date(label.observed_at).toLocaleDateString("en-US") : "-"}</dd>
+                  </div>
+                </dl>
+                {label.source_url ? (
+                  <a className="table-link" href={label.source_url} rel="noreferrer" target="_blank">
+                    Open GitHub issue
+                  </a>
+                ) : null}
+              </article>
+            ))}
+          </div>
+        ) : (
+          <p>No GitHub labels captured for this application yet.</p>
+        )}
       </section>
 
       <section className="panel">

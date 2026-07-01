@@ -2,6 +2,8 @@ import type { GitHubMirrorConfig, SourceMirrorResult, SourceMirrorRecord } from 
 
 type GitHubLabel = {
   name?: string;
+  color?: string | null;
+  description?: string | null;
 };
 
 type GitHubIssue = {
@@ -43,6 +45,18 @@ function labelsFor(issue: GitHubIssue) {
   return (issue.labels ?? [])
     .map((label) => label.name)
     .filter((label): label is string => Boolean(label));
+}
+
+function labelDetailsFor(issue: GitHubIssue) {
+  return (issue.labels ?? [])
+    .map((label) => ({
+      name: label.name,
+      color: label.color ?? null,
+      description: label.description ?? null
+    }))
+    .filter((label): label is { name: string; color: string | null; description: string | null } =>
+      Boolean(label.name)
+    );
 }
 
 function issueSummary(issue: GitHubIssue) {
@@ -159,6 +173,7 @@ export async function mirrorGitHubIssues(config: GitHubMirrorConfig = {}): Promi
       number: issue.number,
       state: issue.state,
       labels: labelsFor(issue),
+      labelDetails: labelDetailsFor(issue),
       author: issue.user?.login ?? null,
       commentCount: issue.comments ?? 0,
       closedAt: issue.closed_at

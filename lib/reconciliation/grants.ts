@@ -23,6 +23,13 @@ type GitHubApplication = {
   state: string | null;
   requestedAmountUsd: number | null;
   labels: string[];
+  labelDetails: GitHubApplicationLabel[];
+};
+
+type GitHubApplicationLabel = {
+  name: string;
+  color: string | null;
+  description: string | null;
 };
 
 type SheetProjectGroup = {
@@ -57,6 +64,24 @@ type GrantInput = {
   approvedAmountUsd: number | null;
 };
 
+type GitHubLabelInput = {
+  labelName: string;
+  labelSlug: string;
+  labelColor: string | null;
+  labelDescription: string | null;
+  labelCategory: string;
+  labelStatus: string | null;
+  milestoneNumber: number | null;
+  labelOrder: number;
+  sourceRecordId: string;
+  sourceUrl: string | null;
+  observedAt: string | null;
+};
+
+type ApplicationGitHubLabelInput = GitHubLabelInput & {
+  applicationId: string;
+};
+
 type SourceLinkInput = {
   sourceRecordId: string;
   canonicalId: string;
@@ -82,6 +107,7 @@ type ForumLinkInput = {
 type PlannedApplication = {
   application: ApplicationInput;
   links: Omit<SourceLinkInput, "canonicalId">[];
+  githubLabels: GitHubLabelInput[];
   forumLinks: ForumLinkInput[];
   grant: Omit<GrantInput, "applicationId"> | null;
   issues: Omit<ReconciliationIssueInput, "canonicalId">[];
@@ -94,6 +120,7 @@ export type ReconciliationRunResult = {
   linksCreated: number;
   issuesCreated: number;
   forumLinksCreatedOrUpdated: number;
+  githubLabelsCreatedOrUpdated: number;
   matchedApplications: number;
   unmatchedGitHubApplications: number;
   unmatchedSheetProjects: number;
@@ -331,6 +358,183 @@ function chunkArray<T>(items: T[], size: number) {
   return chunks;
 }
 
+function labelSlug(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 120);
+}
+
+function classifyGitHubLabel(labelName: string) {
+  const normalized = labelName.toLowerCase();
+  const milestone = normalized.match(/milestone\s+(\d+)\s+complete/);
+
+  if (milestone) {
+    return {
+      labelCategory: "milestone",
+      labelStatus: "milestone_complete",
+      milestoneNumber: Number(milestone[1]),
+      labelOrder: 100 + Number(milestone[1])
+    };
+  }
+
+  if (normalized.includes("pending grant application")) {
+    return {
+      labelCategory: "intake",
+      labelStatus: "pending_application",
+      milestoneNumber: null,
+      labelOrder: 5
+    };
+  }
+
+  if (normalized.includes("grant application")) {
+    return {
+      labelCategory: "intake",
+      labelStatus: "grant_application",
+      milestoneNumber: null,
+      labelOrder: 10
+    };
+  }
+
+  if (normalized.includes("ready for zcg review")) {
+    return {
+      labelCategory: "review",
+      labelStatus: "ready_for_zcg_review",
+      milestoneNumber: null,
+      labelOrder: 20
+    };
+  }
+
+  if (normalized.includes("kyc required")) {
+    return {
+      labelCategory: "compliance",
+      labelStatus: "kyc_required",
+      milestoneNumber: null,
+      labelOrder: 30
+    };
+  }
+
+  if (normalized.includes("kyc verified")) {
+    return {
+      labelCategory: "compliance",
+      labelStatus: "kyc_verified",
+      milestoneNumber: null,
+      labelOrder: 31
+    };
+  }
+
+  if (normalized.includes("changes pending review")) {
+    return {
+      labelCategory: "change_request",
+      labelStatus: "changes_pending_review",
+      milestoneNumber: null,
+      labelOrder: 40
+    };
+  }
+
+  if (normalized.includes("changes approved")) {
+    return {
+      labelCategory: "change_request",
+      labelStatus: "changes_approved",
+      milestoneNumber: null,
+      labelOrder: 41
+    };
+  }
+
+  if (normalized.includes("startup payment completed")) {
+    return {
+      labelCategory: "payment",
+      labelStatus: "startup_payment_completed",
+      milestoneNumber: null,
+      labelOrder: 50
+    };
+  }
+
+  if (normalized.includes("bounty payment completed")) {
+    return {
+      labelCategory: "payment",
+      labelStatus: "bounty_payment_completed",
+      milestoneNumber: null,
+      labelOrder: 51
+    };
+  }
+
+  if (normalized.includes("grant approved")) {
+    return {
+      labelCategory: "decision",
+      labelStatus: "approved",
+      milestoneNumber: null,
+      labelOrder: 60
+    };
+  }
+
+  if (normalized.includes("grant declined")) {
+    return {
+      labelCategory: "decision",
+      labelStatus: "declined",
+      milestoneNumber: null,
+      labelOrder: 80
+    };
+  }
+
+  if (normalized.includes("does not meet criteria")) {
+    return {
+      labelCategory: "decision",
+      labelStatus: "does_not_meet_criteria",
+      milestoneNumber: null,
+      labelOrder: 81
+    };
+  }
+
+  if (normalized.includes("withdrawn")) {
+    return {
+      labelCategory: "terminal",
+      labelStatus: "withdrawn_by_submitter",
+      milestoneNumber: null,
+      labelOrder: 90
+    };
+  }
+
+  if (normalized.includes("cancelled")) {
+    return {
+      labelCategory: "terminal",
+      labelStatus: "cancelled_before_completion",
+      milestoneNumber: null,
+      labelOrder: 91
+    };
+  }
+
+  if (normalized.includes("grant complete")) {
+    return {
+      labelCategory: "completion",
+      labelStatus: "grant_complete",
+      milestoneNumber: null,
+      labelOrder: 92
+    };
+  }
+
+  return {
+    labelCategory: "other",
+    labelStatus: null,
+    milestoneNumber: null,
+    labelOrder: 1000
+  };
+}
+
+function githubLabelsFromApplication(app: GitHubApplication): GitHubLabelInput[] {
+  return app.labelDetails.map((label) => ({
+    labelName: label.name,
+    labelSlug: labelSlug(label.name),
+    labelColor: label.color,
+    labelDescription: label.description,
+    ...classifyGitHubLabel(label.name),
+    sourceRecordId: app.sourceRecord.id,
+    sourceUrl: app.issueUrl,
+    observedAt: app.sourceRecord.source_updated_at
+  }));
+}
+
 function statusFromGitHub(app: GitHubApplication) {
   const labelText = app.labels.join(" ").toLowerCase();
 
@@ -390,14 +594,58 @@ function extractMarkdownSection(body: string | null, heading: string) {
   return match?.[1]?.trim() ?? null;
 }
 
+function githubLabelDetails(raw: Record<string, unknown>, metadata: Record<string, unknown>) {
+  const labels = new Map<string, GitHubApplicationLabel>();
+
+  function addLabel(value: unknown) {
+    if (typeof value === "string" && value.trim()) {
+      if (!labels.has(value.trim())) {
+        labels.set(value.trim(), { name: value.trim(), color: null, description: null });
+      }
+
+      return;
+    }
+
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return;
+    }
+
+    const record = value as Record<string, unknown>;
+    const name = stringValue(record.name);
+
+    if (!name) {
+      return;
+    }
+
+    labels.set(name, {
+      name,
+      color: stringValue(record.color),
+      description: stringValue(record.description)
+    });
+  }
+
+  if (Array.isArray(raw.labels)) {
+    raw.labels.forEach(addLabel);
+  }
+
+  if (Array.isArray(metadata.labelDetails)) {
+    metadata.labelDetails.forEach(addLabel);
+  }
+
+  if (Array.isArray(metadata.labels)) {
+    metadata.labels.forEach(addLabel);
+  }
+
+  return [...labels.values()];
+}
+
 function parseGitHubApplication(record: RawSourceRecord): GitHubApplication | null {
   const raw = parseJsonRecord(record.raw_payload);
   const metadata = parseJsonRecord(record.metadata);
   const title = stringValue(raw.title) ?? record.title ?? "";
   const normalized = normalizeTitle(title);
-  const labels = Array.isArray(metadata.labels)
-    ? metadata.labels.filter((label): label is string => typeof label === "string")
-    : [];
+  const labelDetails = githubLabelDetails(raw, metadata);
+  const labels = labelDetails.map((label) => label.name);
 
   if (!normalized || (!title.toLowerCase().includes("grant") && !labels.some((label) => label.includes("Grant")))) {
     return null;
@@ -421,7 +669,8 @@ function parseGitHubApplication(record: RawSourceRecord): GitHubApplication | nu
     issueUrl: stringValue(raw.html_url) ?? record.source_url,
     state: stringValue(metadata.state),
     requestedAmountUsd,
-    labels
+    labels,
+    labelDetails
   };
 }
 
@@ -653,6 +902,96 @@ async function bulkUpsertGrants(grants: GrantInput[]) {
   return grants.length;
 }
 
+async function replaceApplicationGithubLabels(applicationIds: string[], labels: ApplicationGitHubLabelInput[]) {
+  for (const batch of chunkArray(applicationIds, writeBatchSize)) {
+    await query(
+      `delete from grant_application_github_labels
+        where application_id in (
+          select application_id
+            from jsonb_to_recordset($1::jsonb) as x(application_id uuid)
+        )`,
+      [JSON.stringify(batch.map((applicationId) => ({ application_id: applicationId })))]
+    );
+  }
+
+  for (const batch of chunkArray(labels, writeBatchSize)) {
+    const payload = batch.map((label) => ({
+      application_id: label.applicationId,
+      label_name: label.labelName,
+      label_slug: label.labelSlug,
+      label_color: label.labelColor,
+      label_description: label.labelDescription,
+      label_category: label.labelCategory,
+      label_status: label.labelStatus,
+      milestone_number: label.milestoneNumber,
+      label_order: label.labelOrder,
+      source_record_id: label.sourceRecordId,
+      source_url: label.sourceUrl,
+      observed_at: label.observedAt
+    }));
+
+    await query(
+      `insert into grant_application_github_labels (
+         application_id,
+         label_name,
+         label_slug,
+         label_color,
+         label_description,
+         label_category,
+         label_status,
+         milestone_number,
+         label_order,
+         source_record_id,
+         source_url,
+         observed_at,
+         updated_at
+       )
+       select application_id,
+              label_name,
+              label_slug,
+              label_color,
+              label_description,
+              label_category,
+              label_status,
+              milestone_number,
+              label_order,
+              source_record_id,
+              source_url,
+              observed_at,
+              now()
+         from jsonb_to_recordset($1::jsonb) as x(
+           application_id uuid,
+           label_name text,
+           label_slug text,
+           label_color text,
+           label_description text,
+           label_category text,
+           label_status text,
+           milestone_number integer,
+           label_order integer,
+           source_record_id uuid,
+           source_url text,
+           observed_at timestamptz
+         )
+       on conflict (application_id, label_name)
+       do update set label_slug = excluded.label_slug,
+                     label_color = excluded.label_color,
+                     label_description = excluded.label_description,
+                     label_category = excluded.label_category,
+                     label_status = excluded.label_status,
+                     milestone_number = excluded.milestone_number,
+                     label_order = excluded.label_order,
+                     source_record_id = excluded.source_record_id,
+                     source_url = excluded.source_url,
+                     observed_at = excluded.observed_at,
+                     updated_at = now()`,
+      [JSON.stringify(payload)]
+    );
+  }
+
+  return labels.length;
+}
+
 async function bulkUpsertForumSourceRecords(forumLinks: ForumLinkInput[]) {
   const idsByUrl = new Map<string, string>();
   const uniqueLinks = [...new Map(forumLinks.map((link) => [link.url, link])).values()];
@@ -821,6 +1160,7 @@ export async function runGrantReconciliation(): Promise<ReconciliationRunResult>
     linksCreated: 0,
     issuesCreated: 0,
     forumLinksCreatedOrUpdated: 0,
+    githubLabelsCreatedOrUpdated: 0,
     matchedApplications: 0,
     unmatchedGitHubApplications: 0,
     unmatchedSheetProjects: 0
@@ -858,6 +1198,7 @@ export async function runGrantReconciliation(): Promise<ReconciliationRunResult>
         { sourceRecordId: app.sourceRecord.id, confidence: 1 },
         ...githubComments.map((record) => ({ sourceRecordId: record.id, confidence: 1 }))
       ],
+      githubLabels: githubLabelsFromApplication(app),
       forumLinks: mergeForumLinks([app.sourceRecord, ...githubComments]),
       grant: null,
       issues: []
@@ -950,6 +1291,7 @@ export async function runGrantReconciliation(): Promise<ReconciliationRunResult>
         }
       },
       links: group.rows.map((row) => ({ sourceRecordId: row.id, confidence: 1 })),
+      githubLabels: [],
       forumLinks: mergeForumLinks(group.rows),
       grant: {
         title: group.project,
@@ -984,6 +1326,7 @@ export async function runGrantReconciliation(): Promise<ReconciliationRunResult>
   );
   const grants: GrantInput[] = [];
   const links: SourceLinkInput[] = [];
+  const githubLabels: ApplicationGitHubLabelInput[] = [];
   const issues: ReconciliationIssueInput[] = [];
   counts.forumLinksCreatedOrUpdated = forumSourceIds.size;
 
@@ -996,6 +1339,10 @@ export async function runGrantReconciliation(): Promise<ReconciliationRunResult>
 
     for (const link of planned.links) {
       links.push({ ...link, canonicalId: applicationId });
+    }
+
+    for (const label of planned.githubLabels) {
+      githubLabels.push({ ...label, applicationId });
     }
 
     for (const forumLink of planned.forumLinks) {
@@ -1016,6 +1363,10 @@ export async function runGrantReconciliation(): Promise<ReconciliationRunResult>
   }
 
   counts.grantsCreatedOrUpdated = await bulkUpsertGrants(grants);
+  counts.githubLabelsCreatedOrUpdated = await replaceApplicationGithubLabels(
+    [...applicationIds.values()],
+    githubLabels
+  );
   counts.linksCreated = await bulkLinkSources(links);
   counts.issuesCreated = await bulkCreateIssues(issues);
 

@@ -65,8 +65,24 @@ export type GrantApplicationRow = {
   github_issue_url: string | null;
   source_count: string;
   forum_link_count: string;
+  github_label_count: string;
+  github_labels: string;
   open_issue_count: string;
   updated_at: string;
+};
+
+export type GitHubLabelRow = {
+  application_id: string;
+  label_name: string;
+  label_slug: string;
+  label_color: string | null;
+  label_description: string | null;
+  label_category: string;
+  label_status: string | null;
+  milestone_number: string | null;
+  label_order: string;
+  source_url: string | null;
+  observed_at: string | null;
 };
 
 export type ForumLinkRow = {
@@ -166,6 +182,16 @@ function applicationSearchWhere(search: string) {
       or ga.normalized_status ilike $1
       or ga.github_issue_number::text = $2
       or ga.github_issue_url ilike $1
+      or exists (
+        select 1
+          from grant_application_github_labels gal_search
+         where gal_search.application_id = ga.id
+           and (
+             gal_search.label_name ilike $1
+             or gal_search.label_category ilike $1
+             or gal_search.label_status ilike $1
+           )
+      )
       or exists (
         select 1
           from source_links sl_search
@@ -311,6 +337,31 @@ export async function getAdminDashboard({
             ga.github_issue_url,
             count(distinct sl.source_record_id)::text as source_count,
             count(distinct sl.source_record_id) filter (where sr.source_kind = 'forum_link')::text as forum_link_count,
+            (
+              select count(*)::text
+                from grant_application_github_labels gal_count
+               where gal_count.application_id = ga.id
+            ) as github_label_count,
+            (
+              select coalesce(
+                jsonb_agg(
+                  jsonb_build_object(
+                    'labelName', gal.label_name,
+                    'labelSlug', gal.label_slug,
+                    'labelColor', gal.label_color,
+                    'labelDescription', gal.label_description,
+                    'labelCategory', gal.label_category,
+                    'labelStatus', gal.label_status,
+                    'milestoneNumber', gal.milestone_number,
+                    'labelOrder', gal.label_order
+                  )
+                  order by gal.label_order, gal.label_name
+                ),
+                '[]'::jsonb
+              )::text
+                from grant_application_github_labels gal
+               where gal.application_id = ga.id
+            ) as github_labels,
             count(distinct ri.id) filter (where ri.status = 'open')::text as open_issue_count,
             ga.updated_at::text
        from grant_applications ga
@@ -346,7 +397,7 @@ export async function getAdminDashboard({
 }
 
 export async function getGrantApplicationDetail(id: string) {
-  const [application, forumLinks, sources, issues] = await Promise.all([
+  const [application, githubLabels, forumLinks, sources, issues] = await Promise.all([
     query<GrantApplicationRow>(
       `select ga.id::text,
               ga.title,
@@ -359,6 +410,31 @@ export async function getGrantApplicationDetail(id: string) {
               ga.github_issue_url,
               count(distinct sl.source_record_id)::text as source_count,
               count(distinct sl.source_record_id) filter (where sr.source_kind = 'forum_link')::text as forum_link_count,
+              (
+                select count(*)::text
+                  from grant_application_github_labels gal_count
+                 where gal_count.application_id = ga.id
+              ) as github_label_count,
+              (
+                select coalesce(
+                  jsonb_agg(
+                    jsonb_build_object(
+                      'labelName', gal.label_name,
+                      'labelSlug', gal.label_slug,
+                      'labelColor', gal.label_color,
+                      'labelDescription', gal.label_description,
+                      'labelCategory', gal.label_category,
+                      'labelStatus', gal.label_status,
+                      'milestoneNumber', gal.milestone_number,
+                      'labelOrder', gal.label_order
+                    )
+                    order by gal.label_order, gal.label_name
+                  ),
+                  '[]'::jsonb
+                )::text
+                  from grant_application_github_labels gal
+                 where gal.application_id = ga.id
+              ) as github_labels,
               count(distinct ri.id) filter (where ri.status = 'open')::text as open_issue_count,
               ga.updated_at::text
          from grant_applications ga
@@ -369,6 +445,23 @@ export async function getGrantApplicationDetail(id: string) {
                                            and ri.canonical_id = ga.id
         where ga.id = $1
         group by ga.id`,
+      [id]
+    ),
+    query<GitHubLabelRow>(
+      `select application_id::text,
+              label_name,
+              label_slug,
+              label_color,
+              label_description,
+              label_category,
+              label_status,
+              milestone_number::text,
+              label_order::text,
+              source_url,
+              observed_at::text
+         from grant_application_github_labels
+        where application_id = $1
+        order by label_order, label_name`,
       [id]
     ),
     query<ForumLinkRow>(
@@ -422,6 +515,7 @@ export async function getGrantApplicationDetail(id: string) {
 
   return {
     application: application.rows[0] ?? null,
+    githubLabels: githubLabels.rows,
     forumLinks: forumLinks.rows,
     sources: sources.rows,
     issues: issues.rows
