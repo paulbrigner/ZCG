@@ -5,7 +5,7 @@ import {
   grantEmailRole,
   revokeEmailRole
 } from "@/lib/admin/users";
-import { requirePermission } from "@/lib/authorization";
+import { principalHasRole, requirePermission } from "@/lib/authorization";
 
 export const dynamic = "force-dynamic";
 
@@ -23,13 +23,23 @@ function errorResponse(error: unknown) {
 }
 
 export async function GET() {
-  await requirePermission("role:assignment:manage");
+  const principal = await requirePermission("role:assignment:manage");
+  const isAdmin = await principalHasRole(principal.id, "admin");
+
+  if (!isAdmin) {
+    return NextResponse.json({ error: "User access management requires the Administrator role." }, { status: 403 });
+  }
 
   return NextResponse.json(await getUserAccessOverview());
 }
 
 export async function POST(request: NextRequest) {
   const principal = await requirePermission("role:assignment:manage");
+  const isAdmin = await principalHasRole(principal.id, "admin");
+
+  if (!isAdmin) {
+    return NextResponse.json({ error: "User access management requires the Administrator role." }, { status: 403 });
+  }
 
   try {
     const body = await request.json().catch(() => ({}));

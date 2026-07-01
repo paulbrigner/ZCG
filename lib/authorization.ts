@@ -137,6 +137,22 @@ export async function principalHasPermission(principalId: string, permissionKey:
   return result.rows[0]?.allowed ?? false;
 }
 
+export async function principalHasRole(principalId: string, roleKey: string) {
+  const result = await query<{ allowed: boolean }>(
+    `select exists (
+       select 1
+         from role_assignments ra
+         join roles r on r.id = ra.role_id
+        where ra.principal_id = $1
+          and r.role_key = $2
+          and (ra.expires_at is null or ra.expires_at > now())
+     ) as allowed`,
+    [principalId, roleKey]
+  );
+
+  return result.rows[0]?.allowed ?? false;
+}
+
 export async function requirePermission(
   permissionKey: string,
   options?: RequirePermissionOptions

@@ -7,9 +7,7 @@ import {
   type ApplicationFilter,
   type GrantApplicationRow
 } from "@/lib/admin/dashboard";
-import { getUserAccessOverview } from "@/lib/admin/users";
-import { isPublicPrototypePrincipal, principalHasPermission, requirePermission } from "@/lib/authorization";
-import { UserManagementPanel } from "./user-management-panel";
+import { isPublicPrototypePrincipal, principalHasRole, requirePermission } from "@/lib/authorization";
 
 function numberText(value: string | number | null | undefined) {
   const parsed = Number(value ?? 0);
@@ -173,8 +171,7 @@ export default async function AdminPage({
   });
   const canManageUsers =
     !isPublicPrototypePrincipal(principal) &&
-    (await principalHasPermission(principal.id, "role:assignment:manage"));
-  const userAccessOverview = canManageUsers ? await getUserAccessOverview() : null;
+    (await principalHasRole(principal.id, "admin"));
 
   return (
     <main className="admin-shell">
@@ -315,9 +312,24 @@ export default async function AdminPage({
             </p>
           </div>
         </article>
-      </section>
 
-      {userAccessOverview ? <UserManagementPanel initialOverview={userAccessOverview} /> : null}
+        {canManageUsers ? (
+          <article className="panel">
+            <div className="section-heading">
+              <h2>Admin tools</h2>
+            </div>
+            <div className="status-list">
+              <p className="status-item">
+                <span className="dot blue" />
+                User access management
+                <Link className="table-link" href="/admin/users">
+                  Open
+                </Link>
+              </p>
+            </div>
+          </article>
+        ) : null}
+      </section>
 
       <section className="panel">
         <div className="section-heading">

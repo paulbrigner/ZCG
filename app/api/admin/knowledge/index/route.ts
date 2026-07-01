@@ -1,12 +1,17 @@
 import { NextResponse } from "next/server";
 import { recordAuditEvent } from "@/lib/audit";
-import { requirePermission } from "@/lib/authorization";
+import { principalHasRole, requirePermission } from "@/lib/authorization";
 import { refreshGrantKnowledgeDocuments } from "@/lib/knowledge/documents";
 
 export const dynamic = "force-dynamic";
 
 export async function POST() {
   const principal = await requirePermission("knowledge:index");
+  const isAdmin = await principalHasRole(principal.id, "admin");
+
+  if (!isAdmin) {
+    return NextResponse.json({ error: "Knowledge indexing requires the Administrator role." }, { status: 403 });
+  }
 
   try {
     const result = await refreshGrantKnowledgeDocuments();

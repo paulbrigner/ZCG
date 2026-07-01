@@ -1,6 +1,7 @@
 import Link from "next/link";
 import {
   isPublicPrototypePrincipal,
+  principalHasRole,
   principalHasPermission,
   requirePermission
 } from "@/lib/authorization";
@@ -40,7 +41,7 @@ export default async function GrantKnowledgePage() {
     (await principalHasPermission(principal.id, "knowledge:compose"));
   const canIndex =
     !isPublicPrototypePrincipal(principal) &&
-    (await principalHasPermission(principal.id, "knowledge:index"));
+    (await principalHasRole(principal.id, "admin"));
   const canUseSemantic =
     !isPublicPrototypePrincipal(principal) &&
     (await principalHasPermission(principal.id, "knowledge:semantic"));
