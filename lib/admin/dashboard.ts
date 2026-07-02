@@ -1,9 +1,11 @@
 import { query } from "@/lib/db";
 
 export const applicationFilters = ["all", "matched", "github_only", "sheet_only", "needs_review"] as const;
+export const githubIssueStates = ["open", "closed", "none"] as const;
 const applicationPageSize = 20;
 
 export type ApplicationFilter = (typeof applicationFilters)[number];
+export type GitHubIssueStateFilter = (typeof githubIssueStates)[number];
 
 export type SyncRunRow = {
   id: string;
@@ -46,6 +48,7 @@ export type ApplicationPagination = {
   totalPages: number;
   search: string;
   status: string;
+  githubIssueState: string;
   labels: string[];
   excludedLabels: string[];
 };
@@ -64,6 +67,11 @@ export type ApplicationLabelOptionRow = {
   application_count: string;
 };
 
+export type GitHubIssueStateOptionRow = {
+  github_issue_state: GitHubIssueStateFilter;
+  application_count: string;
+};
+
 export type GrantApplicationRow = {
   id: string;
   title: string;
@@ -74,6 +82,7 @@ export type GrantApplicationRow = {
   source_profile: "matched" | "github_only" | "sheet_only" | "unknown";
   github_issue_number: string | null;
   github_issue_url: string | null;
+  github_state: string | null;
   source_count: string;
   forum_link_count: string;
   github_label_count: string;
@@ -166,6 +175,12 @@ export function normalizeApplicationStatus(value: string | string[] | undefined)
   return (candidate ?? "").trim().toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 80);
 }
 
+export function normalizeGitHubIssueState(value: string | string[] | undefined) {
+  const candidate = Array.isArray(value) ? value[0] : value;
+  const normalized = (candidate ?? "").trim().toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "");
+  return githubIssueStates.includes(normalized as GitHubIssueStateFilter) ? normalized : "";
+}
+
 export function normalizeApplicationLabels(value: string | string[] | undefined) {
   const values = Array.isArray(value) ? value : value ? [value] : [];
   return [...new Set(
@@ -240,6 +255,24 @@ function applicationStatusWhere(status: string, parameterIndex: number) {
   };
 }
 
+function githubIssueStateWhere(githubIssueState: string, parameterIndex: number) {
+  if (!githubIssueState) {
+    return { sql: "", values: [] as string[] };
+  }
+
+  if (githubIssueState === "none") {
+    return {
+      sql: "and ga.github_issue_number is null",
+      values: [] as string[]
+    };
+  }
+
+  return {
+    sql: `and ga.github_state = $${parameterIndex}`,
+    values: [githubIssueState]
+  };
+}
+
 function applicationLabelsWhere(labels: string[], excludedLabels: string[], parameterIndex: number) {
   if (!labels.length && !excludedLabels.length) {
     return { sql: "", values: [] as string[] };
@@ -280,6 +313,7 @@ export async function getAdminDashboard({
   applicationPage = 1,
   applicationSearch = "",
   applicationStatus = "",
+  githubIssueState = "",
   applicationLabels = [],
   excludedApplicationLabels = []
 }: {
@@ -287,20 +321,27 @@ export async function getAdminDashboard({
   applicationPage?: number;
   applicationSearch?: string;
   applicationStatus?: string;
+  githubIssueState?: string;
   applicationLabels?: string[];
   excludedApplicationLabels?: string[];
 } = {}) {
   const whereClause = applicationFilterWhere[applicationFilter];
   const search = normalizeApplicationSearch(applicationSearch);
   const status = normalizeApplicationStatus(applicationStatus);
+  const issueState = normalizeGitHubIssueState(githubIssueState);
   const excludedLabels = normalizeApplicationLabels(excludedApplicationLabels);
   const labels = normalizeApplicationLabels(applicationLabels).filter((label) => !excludedLabels.includes(label));
   const page = Math.max(1, applicationPage);
   const searchWhere = applicationSearchWhere(search);
   const statusWhere = applicationStatusWhere(status, searchWhere.values.length + 1);
-  const labelWhere = applicationLabelsWhere(labels, excludedLabels, searchWhere.values.length + statusWhere.values.length + 1);
-  const applicationWhereValues = [...searchWhere.values, ...statusWhere.values, ...labelWhere.values];
-  const applicationWhereClause = `${whereClause} ${searchWhere.sql} ${statusWhere.sql} ${labelWhere.sql}`;
+  const issueStateWhere = githubIssueStateWhere(issueState, searchWhere.values.length + statusWhere.values.length + 1);
+  const labelWhere = applicationLabelsWhere(
+    labels,
+    excludedLabels,
+    searchWhere.values.length + statusWhere.values.length + issueStateWhere.values.length + 1
+  );
+  const applicationWhereValues = [...searchWhere.values, ...statusWhere.values, ...issueStateWhere.values, ...labelWhere.values];
+  const applicationWhereClause = `${whereClause} ${searchWhere.sql} ${statusWhere.sql} ${issueStateWhere.sql} ${labelWhere.sql}`;
   const applicationLimitParam = applicationWhereValues.length + 1;
   const applicationOffsetParam = applicationWhereValues.length + 2;
   const [
@@ -309,6 +350,7 @@ export async function getAdminDashboard({
     reconciliationSummary,
     applicationTotals,
     applicationStatusOptions,
+    githubIssueStateOptions,
     applicationLabelOptions,
     applicationResultCount
   ] =
@@ -383,6 +425,27 @@ export async function getAdminDashboard({
                  end,
                  normalized_status`
     ),
+    query<GitHubIssueStateOptionRow>(
+      `select github_issue_state,
+              application_count
+         from (
+               select 'open'::text as github_issue_state,
+                      count(*) filter (where github_state = 'open')::text as application_count,
+                      10 as sort_order
+                 from grant_applications
+                union all
+               select 'closed'::text as github_issue_state,
+                      count(*) filter (where github_state = 'closed')::text as application_count,
+                      20 as sort_order
+                 from grant_applications
+                union all
+               select 'none'::text as github_issue_state,
+                      count(*) filter (where github_issue_number is null)::text as application_count,
+                      30 as sort_order
+                 from grant_applications
+              ) options
+        order by sort_order`
+    ),
     query<ApplicationLabelOptionRow>(
       `select label_name,
               label_slug,
@@ -416,6 +479,7 @@ export async function getAdminDashboard({
             ${sourceProfileSql()} as source_profile,
             ga.github_issue_number::text,
             ga.github_issue_url,
+            ga.github_state,
             count(distinct sl.source_record_id)::text as source_count,
             count(distinct sl.source_record_id) filter (where sr.source_kind = 'forum_link')::text as forum_link_count,
             (
@@ -464,6 +528,7 @@ export async function getAdminDashboard({
     reconciliationSummary: reconciliationSummary.rows,
     applicationTotals: applicationTotals.rows[0] ?? emptyApplicationTotals,
     applicationStatusOptions: applicationStatusOptions.rows,
+    githubIssueStateOptions: githubIssueStateOptions.rows,
     applicationLabelOptions: applicationLabelOptions.rows,
     activeApplicationFilter: applicationFilter,
     applicationPagination: {
@@ -473,6 +538,7 @@ export async function getAdminDashboard({
       totalPages,
       search,
       status,
+      githubIssueState: issueState,
       labels,
       excludedLabels
     } satisfies ApplicationPagination,
@@ -492,6 +558,7 @@ export async function getGrantApplicationDetail(id: string) {
               ${sourceProfileSql()} as source_profile,
               ga.github_issue_number::text,
               ga.github_issue_url,
+              ga.github_state,
               count(distinct sl.source_record_id)::text as source_count,
               count(distinct sl.source_record_id) filter (where sr.source_kind = 'forum_link')::text as forum_link_count,
               (

@@ -7,6 +7,7 @@ import {
   normalizeApplicationPage,
   normalizeApplicationSearch,
   normalizeApplicationStatus,
+  normalizeGitHubIssueState,
   type ApplicationFilter,
   type GrantApplicationRow
 } from "@/lib/admin/dashboard";
@@ -97,6 +98,20 @@ function statusLabel(value: string) {
     .join(" ");
 }
 
+function githubIssueStateLabel(value: string) {
+  return value === "none" ? "No GitHub issue" : statusLabel(value);
+}
+
+function githubIssueStateText(application: GrantApplicationRow) {
+  if (!application.github_issue_number) {
+    return "No GitHub issue";
+  }
+
+  return application.github_state
+    ? `GitHub #${application.github_issue_number} ${statusLabel(application.github_state)}`
+    : `GitHub #${application.github_issue_number}`;
+}
+
 function parseGitHubLabels(value: string | null | undefined): GitHubLabelSummary[] {
   if (!value) {
     return [];
@@ -150,6 +165,7 @@ function adminHref(params: {
   applicationFilter?: ApplicationFilter;
   applicationSearch?: string;
   applicationStatus?: string;
+  githubIssueState?: string;
   applicationLabels?: string[];
   excludedApplicationLabels?: string[];
   applicationPage?: number;
@@ -166,6 +182,10 @@ function adminHref(params: {
 
   if (params.applicationStatus) {
     searchParams.set("applicationStatus", params.applicationStatus);
+  }
+
+  if (params.githubIssueState) {
+    searchParams.set("githubIssueState", params.githubIssueState);
   }
 
   for (const label of params.applicationLabels ?? []) {
@@ -211,6 +231,7 @@ export default async function AdminPage({
     applicationFilter?: string | string[];
     applicationSearch?: string | string[];
     applicationStatus?: string | string[];
+    githubIssueState?: string | string[];
     applicationLabels?: string | string[];
     excludedApplicationLabels?: string | string[];
     applicationPage?: string | string[];
@@ -225,6 +246,7 @@ export default async function AdminPage({
   const activeApplicationFilter = normalizeApplicationFilter(resolvedSearchParams.applicationFilter);
   const activeApplicationSearch = normalizeApplicationSearch(resolvedSearchParams.applicationSearch);
   const activeApplicationStatus = normalizeApplicationStatus(resolvedSearchParams.applicationStatus);
+  const activeGitHubIssueState = normalizeGitHubIssueState(resolvedSearchParams.githubIssueState);
   const activeApplicationLabels = normalizeApplicationLabels(resolvedSearchParams.applicationLabels);
   const activeExcludedApplicationLabels = normalizeApplicationLabels(resolvedSearchParams.excludedApplicationLabels);
   const activeApplicationPage = normalizeApplicationPage(resolvedSearchParams.applicationPage);
@@ -232,6 +254,7 @@ export default async function AdminPage({
     applicationFilter: activeApplicationFilter,
     applicationSearch: activeApplicationSearch,
     applicationStatus: activeApplicationStatus,
+    githubIssueState: activeGitHubIssueState,
     applicationLabels: activeApplicationLabels,
     excludedApplicationLabels: activeExcludedApplicationLabels,
     applicationPage: activeApplicationPage
@@ -258,6 +281,7 @@ export default async function AdminPage({
     applicationFilter: activeApplicationFilter,
     applicationSearch: pagination.search,
     applicationStatus: pagination.status,
+    githubIssueState: pagination.githubIssueState,
     applicationLabels: pagination.labels,
     excludedApplicationLabels: pagination.excludedLabels,
     applicationPage: pagination.page - 1
@@ -266,6 +290,7 @@ export default async function AdminPage({
     applicationFilter: activeApplicationFilter,
     applicationSearch: pagination.search,
     applicationStatus: pagination.status,
+    githubIssueState: pagination.githubIssueState,
     applicationLabels: pagination.labels,
     excludedApplicationLabels: pagination.excludedLabels,
     applicationPage: pagination.page + 1
@@ -276,6 +301,11 @@ export default async function AdminPage({
   const activeResultQualifiers = [
     pagination.search ? `"${pagination.search}"` : null,
     pagination.status ? `status ${statusLabel(pagination.status)}` : null,
+    pagination.githubIssueState
+      ? pagination.githubIssueState === "none"
+        ? "no GitHub issue"
+        : `GitHub issue ${githubIssueStateLabel(pagination.githubIssueState)}`
+      : null,
     activeLabelNames.length ? `labels ${activeLabelNames.join(" or ")}` : null,
     excludedLabelNames.length ? `without ${excludedLabelNames.join(" or ")}` : null
   ].filter(Boolean);
@@ -468,6 +498,7 @@ export default async function AdminPage({
               applicationFilter: option.key,
               applicationSearch: pagination.search,
               applicationStatus: pagination.status,
+              githubIssueState: pagination.githubIssueState,
               applicationLabels: pagination.labels,
               excludedApplicationLabels: pagination.excludedLabels
             });
@@ -501,6 +532,17 @@ export default async function AdminPage({
               {dashboard.applicationStatusOptions.map((option) => (
                 <option key={option.normalized_status} value={option.normalized_status}>
                   {statusLabel(option.normalized_status)} ({numberText(option.application_count)})
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="search-field compact-field">
+            <span>GitHub issue</span>
+            <select defaultValue={pagination.githubIssueState} name="githubIssueState">
+              <option value="">Any</option>
+              {dashboard.githubIssueStateOptions.map((option) => (
+                <option key={option.github_issue_state} value={option.github_issue_state}>
+                  {githubIssueStateLabel(option.github_issue_state)} ({numberText(option.application_count)})
                 </option>
               ))}
             </select>
@@ -545,7 +587,7 @@ export default async function AdminPage({
             </div>
           </div>
           <button type="submit">Search</button>
-          {pagination.search || pagination.status || pagination.labels.length || pagination.excludedLabels.length ? (
+          {pagination.search || pagination.status || pagination.githubIssueState || pagination.labels.length || pagination.excludedLabels.length ? (
             <Link className="ghost-link" href={adminHref({ applicationFilter: activeApplicationFilter })}>
               Clear
             </Link>
@@ -581,6 +623,7 @@ export default async function AdminPage({
                       </td>
                       <td>
                         <span className={`badge ${application.source_profile}`}>{sourceProfileLabel(application.source_profile)}</span>
+                        <span className="subtle">{githubIssueStateText(application)}</span>
                       </td>
                       <td>
                         <span className={`badge ${application.normalized_status}`}>{application.normalized_status}</span>
