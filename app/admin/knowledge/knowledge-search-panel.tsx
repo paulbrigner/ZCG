@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import type { GrantKnowledgeSearchResponse } from "@/lib/knowledge/search";
+import { MetricHelp } from "../metric-help";
 
 type KnowledgeSearchPanelProps = {
   canComposeAi: boolean;
@@ -14,6 +15,13 @@ type KnowledgeSearchPanelProps = {
 type IndexState = {
   status: "idle" | "running" | "done" | "error";
   message: string;
+};
+
+const knowledgeSearchHelp = {
+  resultLimit:
+    "Maximum number of evidence documents returned for the query. These are grant_knowledge_documents rows, not unique grant applications.",
+  evidenceMatches:
+    "Number of retrieved evidence documents returned for this query after the selected keyword, semantic, or hybrid retrieval mode runs."
 };
 
 function moneyText(value: string | null) {
@@ -196,7 +204,10 @@ export function KnowledgeSearchPanel({
             </select>
           </label>
           <label className="search-field compact-field">
-            <span>Results</span>
+            <span>
+              Results
+              <MetricHelp align="left" body={knowledgeSearchHelp.resultLimit} label="Search result limit" />
+            </span>
             <select onChange={(event) => setLimit(event.target.value)} value={limit}>
               <option value="5">5</option>
               <option value="8">8</option>
@@ -235,6 +246,7 @@ export function KnowledgeSearchPanel({
               <h2>Grounded answer</h2>
               <span className="section-count">
                 {result.retrievalStats.resultCount.toLocaleString()} evidence matches
+                <MetricHelp align="left" body={knowledgeSearchHelp.evidenceMatches} label="Evidence matches" />
                 {" | "}
                 {result.retrievalStats.mode} retrieval
               </span>

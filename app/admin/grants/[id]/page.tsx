@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getGrantApplicationDetail, type GitHubLabelRow, type GrantApplicationRow } from "@/lib/admin/dashboard";
 import { requirePermission } from "@/lib/authorization";
+import { MetricHelp, MetricLabel } from "../../metric-help";
 
 function moneyText(value: string | null) {
   if (!value) {
@@ -98,6 +99,27 @@ function compactJson(value: string) {
     .join(" | ");
 }
 
+const detailHelp = {
+  applicant:
+    "Applicant name stored on the canonical grant_applications row after reconciliation chooses the best available value from source evidence.",
+  status:
+    "Normalized status stored on the canonical application after interpreting GitHub labels, Sheet status fields, and reconciliation logic.",
+  requested:
+    "Requested amount on the canonical application, usually sourced from Sheet registry/payment fields or structured application evidence when available.",
+  sourceState:
+    "How the canonical application is currently supported by source evidence: matched GitHub + Sheet, GitHub only, Sheet only, or unknown.",
+  match:
+    "Reconciliation confidence for the GitHub-to-Sheet match. GitHub-only and Sheet-only records show the missing side instead of a percentage.",
+  forumLinks:
+    "Count of linked forum_link source_records associated with this canonical application through source_links.",
+  githubLabels:
+    "Count of GitHub issue labels captured as first-class grant_application_github_labels rows for this application.",
+  githubLabelSection:
+    "Structured labels copied from the GitHub issue during source mirroring and reconciliation. These are used for workflow/status filtering.",
+  forumLinkSection:
+    "Forum threads discovered from GitHub comments, source payloads, or Sheet fields and linked to this application during reconciliation."
+};
+
 export default async function GrantApplicationPage({
   params
 }: {
@@ -134,31 +156,31 @@ export default async function GrantApplicationPage({
 
       <section className="metric-grid" aria-label="Application summary">
         <article className="metric-card">
-          <span className="metric-label">Applicant</span>
+          <MetricLabel body={detailHelp.applicant} label="Applicant" text="Applicant" />
           <strong>{application.applicant_name ?? "Unknown"}</strong>
         </article>
         <article className="metric-card">
-          <span className="metric-label">Status</span>
+          <MetricLabel body={detailHelp.status} label="Status" text="Status" />
           <strong>{application.normalized_status}</strong>
         </article>
         <article className="metric-card">
-          <span className="metric-label">Requested</span>
+          <MetricLabel body={detailHelp.requested} label="Requested" text="Requested" />
           <strong>{moneyText(application.requested_amount_usd)}</strong>
         </article>
         <article className="metric-card">
-          <span className="metric-label">Source state</span>
+          <MetricLabel body={detailHelp.sourceState} label="Source state" text="Source state" />
           <strong>{sourceProfileLabel(application.source_profile)}</strong>
         </article>
         <article className="metric-card">
-          <span className="metric-label">GitHub-Sheet match</span>
+          <MetricLabel body={detailHelp.match} label="GitHub-Sheet match" text="GitHub-Sheet match" />
           <strong>{matchText(application)}</strong>
         </article>
         <article className="metric-card">
-          <span className="metric-label">Forum links</span>
+          <MetricLabel body={detailHelp.forumLinks} label="Forum links" text="Forum links" />
           <strong>{numberText(application.forum_link_count)}</strong>
         </article>
         <article className="metric-card">
-          <span className="metric-label">GitHub labels</span>
+          <MetricLabel body={detailHelp.githubLabels} label="GitHub labels" text="GitHub labels" />
           <strong>{numberText(application.github_label_count)}</strong>
         </article>
       </section>
@@ -169,6 +191,7 @@ export default async function GrantApplicationPage({
             <h2>GitHub workflow labels</h2>
             <span className="section-count">
               {numberText(application.github_label_count)} label{application.github_label_count === "1" ? "" : "s"} captured as structured grant attributes
+              <MetricHelp align="left" body={detailHelp.githubLabelSection} label="GitHub workflow label count" />
             </span>
           </div>
         </div>
@@ -220,6 +243,7 @@ export default async function GrantApplicationPage({
             <h2>Forum links</h2>
             <span className="section-count">
               {numberText(application.forum_link_count)} forum thread{application.forum_link_count === "1" ? "" : "s"} associated with this application
+              <MetricHelp align="left" body={detailHelp.forumLinkSection} label="Forum link count" />
             </span>
           </div>
         </div>

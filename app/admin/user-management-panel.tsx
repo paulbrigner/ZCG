@@ -2,6 +2,7 @@
 
 import { FormEvent, useState } from "react";
 import type { UserAccessOverview, UserRoleGrant } from "@/lib/admin/users";
+import { MetricHelp } from "./metric-help";
 
 type UserManagementPanelProps = {
   initialOverview: UserAccessOverview;
@@ -29,6 +30,9 @@ async function postUserAccess(body: Record<string, unknown>) {
 function roleLabel(role: UserRoleGrant) {
   return role.source === "email" ? `${role.roleName} (email grant)` : role.roleName;
 }
+
+const userAccessHelp =
+  "Signed-in users are principals created by Better Auth login activity. Pending email grants are role grants assigned to email addresses before that person signs in.";
 
 export function UserManagementPanel({ initialOverview }: UserManagementPanelProps) {
   const [overview, setOverview] = useState(initialOverview);
@@ -95,6 +99,7 @@ export function UserManagementPanel({ initialOverview }: UserManagementPanelProp
           <h2>User access</h2>
           <span className="section-count">
             {overview.users.length} signed-in users | {overview.pendingEmailGrants.length} pending email grants
+            <MetricHelp align="left" body={userAccessHelp} label="User access counts" />
           </span>
         </div>
       </div>
