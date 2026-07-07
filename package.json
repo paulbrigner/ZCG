@@ -19,6 +19,8 @@
     "db:seed": "tsx scripts/seed.ts",
     "knowledge:index": "tsx scripts/index-knowledge.ts",
     "knowledge:embed": "tsx scripts/embed-knowledge.ts",
+    "reconciliation:export": "tsx scripts/export-reconciliation-decisions.ts",
+    "reconciliation:import": "tsx scripts/import-reconciliation-decisions.ts",
     "reconcile:grants": "tsx scripts/reconcile.ts",
     "worker:sync": "tsx workers/sync-worker.ts",
     "infra:synth": "cdk synth --app \"npx tsx infra/app.ts\"",

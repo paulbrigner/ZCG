@@ -524,6 +524,13 @@ export default async function AdminPage({
                 <MetricHelp align="left" body={metricHelp.forumLinks} label="Forum links associated" />
               </strong>
             </p>
+            <p className="status-item">
+              <span className="dot blue" />
+              Manual reconciliation workspace
+              <Link className="table-link" href="/admin/reconciliations">
+                Open
+              </Link>
+            </p>
           </div>
         </article>
 

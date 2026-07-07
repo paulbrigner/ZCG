@@ -508,7 +508,8 @@ button:disabled {
 }
 
 .search-field input,
-.search-field select {
+.search-field select,
+.search-field textarea {
   background: #ffffff;
   border: 1px solid var(--line);
   border-radius: 7px;
@@ -519,8 +520,15 @@ button:disabled {
   width: 100%;
 }
 
+.search-field textarea {
+  line-height: 1.45;
+  min-height: 96px;
+  resize: vertical;
+}
+
 .search-field input:focus,
-.search-field select:focus {
+.search-field select:focus,
+.search-field textarea:focus {
   border-color: var(--blue);
   outline: 3px solid rgba(37, 99, 235, 0.18);
 }
@@ -935,6 +943,101 @@ button:disabled {
   gap: 10px;
 }
 
+.reconciliation-workspace,
+.reconciliation-list {
+  display: grid;
+  gap: 16px;
+}
+
+.reconciliation-list.compact {
+  gap: 12px;
+}
+
+.reconciliation-decision-form {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.reconciliation-rationale-field {
+  grid-column: 1 / -1;
+}
+
+.reconciliation-card {
+  background: #ffffff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.reconciliation-card.compact {
+  gap: 10px;
+  padding: 12px;
+}
+
+.reconciliation-card h3 {
+  font-size: 18px;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.reconciliation-card p {
+  margin: 0;
+}
+
+.reconciliation-card-header {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.reconciliation-card-header > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.reconciliation-facts {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0;
+}
+
+.reconciliation-facts div {
+  min-width: 0;
+}
+
+.reconciliation-facts dt {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.reconciliation-facts dd {
+  font-size: 13px;
+  margin: 3px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.json-block {
+  background: #f8fafc;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: #273244;
+  font-size: 12px;
+  line-height: 1.45;
+  margin: 8px 0 0;
+  max-height: 260px;
+  overflow: auto;
+  padding: 10px;
+  white-space: pre-wrap;
+}
+
 .knowledge-workspace {
   display: grid;
   gap: 16px;
@@ -1022,7 +1125,9 @@ button:disabled {
   .metric-grid,
   .two-column,
   .github-label-grid,
-  .compact-source-counts {
+  .compact-source-counts,
+  .reconciliation-decision-form,
+  .reconciliation-facts {
     grid-template-columns: 1fr;
   }
 

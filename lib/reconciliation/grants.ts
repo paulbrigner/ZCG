@@ -1,4 +1,9 @@
 import { query } from "../db";
+import {
+  applyManualReconciliationDecisions,
+  getActiveManualSourceLinkKeys,
+  manualSourceLinkKey
+} from "./decisions";
 
 type RawSourceRecord = {
   id: string;
@@ -139,6 +144,7 @@ export type ReconciliationRunResult = {
   grantsCreatedOrUpdated: number;
   linksCreated: number;
   issuesCreated: number;
+  manualDecisionsApplied: number;
   forumLinksCreatedOrUpdated: number;
   githubLabelsCreatedOrUpdated: number;
   matchedApplications: number;
@@ -150,6 +156,7 @@ const generatedBy = "grant_reconciliation_v1";
 const sourceRecordBatchSize = 10;
 const writeBatchSize = 100;
 const allGrantsTrackingGid = "1164534734";
+const githubIssueSourceIdPrefix = "ZcashCommunityGrants/zcashcommunitygrants#";
 const forumUrlPattern = /https?:\/\/forum\.zcashcommunity\.com\/t\/[^\s)"'<\]}]+/gi;
 const genericForumTopicSlugs = new Set(["zcg-code-of-conduct", "zcg-communication-guidelines"]);
 
@@ -1386,6 +1393,7 @@ export async function runGrantReconciliation(): Promise<ReconciliationRunResult>
   const historicalByGitHubIssueNumber = buildHistoricalApplicationsByGitHubIssue(historicalGroups.values());
   const paymentDetailGroups = buildPaymentDetailGroups(sheetRecords);
   const hasHistoricalRegistry = historicalGroups.size > 0;
+  const manualSourceLinkKeys = await getActiveManualSourceLinkKeys();
   const matchedHistoricalKeys = new Set<string>();
   const matchedPaymentDetailKeys = new Set<string>();
 
@@ -1413,6 +1421,7 @@ export async function runGrantReconciliation(): Promise<ReconciliationRunResult>
     grantsCreatedOrUpdated: 0,
     linksCreated: 0,
     issuesCreated: 0,
+    manualDecisionsApplied: 0,
     forumLinksCreatedOrUpdated: 0,
     githubLabelsCreatedOrUpdated: 0,
     matchedApplications: 0,
@@ -1652,7 +1661,17 @@ export async function runGrantReconciliation(): Promise<ReconciliationRunResult>
       issues: []
     };
 
-    if (group.githubIssueNumber !== null) {
+    const manualGitHubIssueSourceLink =
+      group.githubIssueNumber !== null &&
+      manualSourceLinkKeys.has(
+        manualSourceLinkKey({
+          sourceKind: "github_issue",
+          sourceId: `${githubIssueSourceIdPrefix}${group.githubIssueNumber}`,
+          canonicalKey: planned.application.canonicalKey
+        })
+      );
+
+    if (group.githubIssueNumber !== null && !manualGitHubIssueSourceLink) {
       planned.issues.push({
         issueType: "missing_github_source_mirror",
         severity: "warning",
@@ -1798,6 +1817,13 @@ export async function runGrantReconciliation(): Promise<ReconciliationRunResult>
   );
   counts.linksCreated = await bulkLinkSources(links);
   counts.issuesCreated = await bulkCreateIssues(issues);
+  const manualApplyResult = await applyManualReconciliationDecisions();
+  counts.manualDecisionsApplied =
+    manualApplyResult.linkedSources +
+    manualApplyResult.unlinkedSources +
+    manualApplyResult.relationships +
+    manualApplyResult.directlyResolvedIssues +
+    manualApplyResult.inferredResolvedIssues;
 
   await query(
     `insert into audit_events (action, target_type, metadata)
