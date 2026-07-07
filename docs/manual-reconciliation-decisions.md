@@ -35,7 +35,7 @@ To recreate a reconciled prototype database in another AWS account:
 3. Import manual decisions:
 
    ```bash
-   npm --silent run reconciliation:import -- ./reconciliation-decisions.json
+   npm --silent run reconciliation:import -- ./data/reconciliation-decisions.json
    ```
 
 4. Run grant reconciliation.
@@ -44,7 +44,7 @@ To recreate a reconciled prototype database in another AWS account:
 Export decisions from an existing environment:
 
 ```bash
-npm --silent run reconciliation:export > reconciliation-decisions.json
+npm --silent run reconciliation:export > data/reconciliation-decisions.json
 ```
 
 The export uses stable `decision_key` values and source/canonical keys rather

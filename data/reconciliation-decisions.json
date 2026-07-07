@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "exportedAt": "2026-07-07T14:28:25.866Z",
+  "decisions": [
+    {
+      "decision_key": "manual:link_source:2875f6353baa01fabfd4bef3",
+      "decision_type": "link_source",
+      "status": "active",
+      "source_kind": "github_issue",
+      "source_id": "ZcashCommunityGrants/zcashcommunitygrants#82",
+      "canonical_type": "grant_application",
+      "canonical_key": "sheet-all-grants:fanmuse zcash club:fanmuse zcash club:9 3 2025",
+      "related_canonical_key": null,
+      "relationship_type": null,
+      "field_name": null,
+      "field_value": null,
+      "rationale": "Manual review confirms All Grants Tracking row 373 explicitly links to GitHub issue #82 as the platform record for the Fanmuse zcash club filtered application, even though the GitHub issue body is empty.",
+      "confidence": "1.0000",
+      "evidence": {
+        "sheetRow": "1FQ28rDCyRW0TiNxrm3rgD8ai2KGUsXAjPieQmI1kKKg:1164534734:row:373",
+        "githubIssue": "ZcashCommunityGrants/zcashcommunitygrants#82",
+        "linkedIssue": {
+          "id": "388e346c-bcc6-428a-a40c-687fe5eea328",
+          "details": {
+            "generatedBy": "grant_reconciliation_v1",
+            "githubIssueUrl": "https://github.com/ZcashCommunityGrants/zcashcommunitygrants/issues/82",
+            "githubIssueNumber": 82,
+            "historicalRegistryTitle": "Fanmuse zcash club"
+          },
+          "summary": "All Grants registry links to GitHub issue #82, but no mirrored GitHub issue matched",
+          "issueType": "missing_github_source_mirror"
+        },
+        "reviewedCase": "Fanmuse #82 source linkage"
+      },
+      "created_at": "2026-07-07 14:27:04.367496+00",
+      "updated_at": "2026-07-07 14:27:04.367496+00"
+    }
+  ]
+}

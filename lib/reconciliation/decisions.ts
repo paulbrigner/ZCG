@@ -166,6 +166,18 @@ function optionalString(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
+function jsonValue(value: unknown) {
+  if (typeof value !== "string") {
+    return value ?? null;
+  }
+
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+}
+
 function normalizeDecisionType(value: unknown): ReconciliationDecisionType {
   const decisionType = stringValue(value);
 
@@ -818,7 +830,11 @@ export async function exportReconciliationDecisions() {
   return {
     schemaVersion: 1,
     exportedAt: new Date().toISOString(),
-    decisions: result.rows
+    decisions: result.rows.map((decision) => ({
+      ...decision,
+      field_value: jsonValue(decision.field_value),
+      evidence: jsonValue(decision.evidence)
+    }))
   };
 }
 
