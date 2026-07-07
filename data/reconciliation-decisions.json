@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "exportedAt": "2026-07-07T14:28:25.866Z",
+  "exportedAt": "2026-07-07T15:28:51.006Z",
   "decisions": [
     {
       "decision_key": "manual:link_source:2875f6353baa01fabfd4bef3",
@@ -34,6 +34,332 @@
       },
       "created_at": "2026-07-07 14:27:04.367496+00",
       "updated_at": "2026-07-07 14:27:04.367496+00"
+    },
+    {
+      "decision_key": "manual:link_source:26fe376a524791a993f17892",
+      "decision_type": "link_source",
+      "status": "active",
+      "source_kind": "github_issue",
+      "source_id": "ZcashCommunityGrants/zcashcommunitygrants#111",
+      "canonical_type": "grant_application",
+      "canonical_key": "sheet-all-grants:seeking 175k to build a confidential bridge enabling private zec transfers on ethereum via zk proof powered wzec token core circom circuit w merkle tree for shielded balances transfers 22wks circuit contracts relayer audit release:otr437:10",
+      "related_canonical_key": null,
+      "relationship_type": "related_attempt",
+      "field_name": null,
+      "field_value": null,
+      "rationale": "Sheet row 403 directly links to GitHub issue #111 via Grant Platform Link. The proposal title and applicant otr437 align. GitHub issue body is minimal, so automatic parsing skipped it, but manual review confirms this is the same application.",
+      "confidence": "1.0000",
+      "evidence": {
+        "linkedIssue": {
+          "id": "cd2673e2-e83d-4389-a7dc-6a2ca10ef52e",
+          "details": {
+            "generatedBy": "grant_reconciliation_v1",
+            "githubIssueUrl": "https://github.com/ZcashCommunityGrants/zcashcommunitygrants/issues/111",
+            "githubIssueNumber": 111,
+            "historicalRegistryTitle": "Seeking $175K to build a confidential bridge enabling private ZEC transfers on Ethereum via ZK-proof-powered wZEC token. Core: Circom circuit w/Merkle tree for shielded balances/transfers. 22wks: circuit, contracts, relayer, audit, release."
+          },
+          "summary": "All Grants registry links to GitHub issue #111, but no mirrored GitHub issue matched",
+          "issueType": "missing_github_source_mirror"
+        }
+      },
+      "created_at": "2026-07-07 15:12:52.28418+00",
+      "updated_at": "2026-07-07 15:12:52.28418+00"
+    },
+    {
+      "decision_key": "manual:link_source:414aa09692dc013737e0263d",
+      "decision_type": "link_source",
+      "status": "active",
+      "source_kind": "github_issue",
+      "source_id": "ZcashCommunityGrants/zcashcommunitygrants#138",
+      "canonical_type": "grant_application",
+      "canonical_key": "sheet-all-grants:zecdev mini one command zebra regtest pr smoke action solo:charles emmanuel:11 18 2025",
+      "related_canonical_key": null,
+      "relationship_type": "related_attempt",
+      "field_name": null,
+      "field_value": null,
+      "rationale": "Sheet row 428 directly links to GitHub issue #138 via Grant Platform Link. The proposal title matches exactly. The sheet applicant Charles Emmanuel aligns with the GitHub issue content, where the application owner is CodexEmmzy and the organization/proposer is Charles Emmanuel. Manual review confirms this is the same application; the warning appears to be an automatic reconciliation miss rather than a distinct record.",
+      "confidence": "1.0000",
+      "evidence": {
+        "linkedIssue": {
+          "id": "764b5d91-ef0d-4197-8cd5-04055b465e97",
+          "details": {
+            "generatedBy": "grant_reconciliation_v1",
+            "githubIssueUrl": "https://github.com/ZcashCommunityGrants/zcashcommunitygrants/issues/138",
+            "githubIssueNumber": 138,
+            "historicalRegistryTitle": "ZecDev Mini: One-Command Zebra Regtest + PR Smoke Action (solo)"
+          },
+          "summary": "All Grants registry links to GitHub issue #138, but no mirrored GitHub issue matched",
+          "issueType": "missing_github_source_mirror"
+        }
+      },
+      "created_at": "2026-07-07 15:25:07.523665+00",
+      "updated_at": "2026-07-07 15:25:07.523665+00"
+    },
+    {
+      "decision_key": "manual:link_source:858f4a196890c124facb31f9",
+      "decision_type": "link_source",
+      "status": "active",
+      "source_kind": "github_issue",
+      "source_id": "ZcashCommunityGrants/zcashcommunitygrants#22",
+      "canonical_type": "grant_application",
+      "canonical_key": "sheet-all-grants:incomplete draft complete all non zf and non ecc zcashd deprecation:zingo labs:2 27 2025",
+      "related_canonical_key": null,
+      "relationship_type": null,
+      "field_name": null,
+      "field_value": null,
+      "rationale": "Sheet row 320 directly links to GitHub issue #22 via Grant Platform Link. The proposal title matches exactly between the All Grants registry row and the mirrored GitHub issue. Bulk manual review confirms this source belongs with the canonical application; the warning appears to be an automatic reconciliation miss rather than a distinct record.",
+      "confidence": "1.0000",
+      "evidence": {
+        "reviewMode": "bulk-obvious-direct-grant-platform-link",
+        "githubState": "closed",
+        "linkedIssue": {
+          "id": "a08b47ad-ea12-4c2e-becd-e715fb9efac4",
+          "details": {
+            "generatedBy": "grant_reconciliation_v1",
+            "githubIssueUrl": "https://github.com/ZcashCommunityGrants/zcashcommunitygrants/issues/22",
+            "githubIssueNumber": 22,
+            "historicalRegistryTitle": "INCOMPLETE DRAFT: Complete All Non-ZF and Non-ECC ZcashD Deprecation"
+          },
+          "summary": "All Grants registry links to GitHub issue #22, but no mirrored GitHub issue matched",
+          "issueType": "missing_github_source_mirror"
+        },
+        "githubAuthor": "zancas",
+        "sheetSourceId": "1FQ28rDCyRW0TiNxrm3rgD8ai2KGUsXAjPieQmI1kKKg:1164534734:row:320",
+        "sheetApplicant": "Zingo Labs",
+        "exactTitleMatch": true,
+        "githubBodyLength": 9182,
+        "grantPlatformLink": "https://github.com/ZcashCommunityGrants/zcashcommunitygrants/issues/22"
+      },
+      "created_at": "2026-07-07 15:27:56.511475+00",
+      "updated_at": "2026-07-07 15:27:56.511475+00"
+    },
+    {
+      "decision_key": "manual:link_source:bbfef5012ec4dd7ba0919f4c",
+      "decision_type": "link_source",
+      "status": "active",
+      "source_kind": "github_issue",
+      "source_id": "ZcashCommunityGrants/zcashcommunitygrants#37",
+      "canonical_type": "grant_application",
+      "canonical_key": "sheet-all-grants:z property tokenized real estate with ai managed revenue sharing:daltonic llc:4 16 2025",
+      "related_canonical_key": null,
+      "relationship_type": null,
+      "field_name": null,
+      "field_value": null,
+      "rationale": "Sheet row 334 directly links to GitHub issue #37 via Grant Platform Link. The proposal title matches exactly between the All Grants registry row and the mirrored GitHub issue. Bulk manual review confirms this source belongs with the canonical application; the warning appears to be an automatic reconciliation miss rather than a distinct record.",
+      "confidence": "1.0000",
+      "evidence": {
+        "reviewMode": "bulk-obvious-direct-grant-platform-link",
+        "githubState": "closed",
+        "linkedIssue": {
+          "id": "12cbae72-d4dc-4d7b-bd29-7eae36a91ea3",
+          "details": {
+            "generatedBy": "grant_reconciliation_v1",
+            "githubIssueUrl": "https://github.com/ZcashCommunityGrants/zcashcommunitygrants/issues/37",
+            "githubIssueNumber": 37,
+            "historicalRegistryTitle": "Z-Property: Tokenized Real Estate with AI-Managed Revenue Sharing"
+          },
+          "summary": "All Grants registry links to GitHub issue #37, but no mirrored GitHub issue matched",
+          "issueType": "missing_github_source_mirror"
+        },
+        "githubAuthor": "Daltonic",
+        "sheetSourceId": "1FQ28rDCyRW0TiNxrm3rgD8ai2KGUsXAjPieQmI1kKKg:1164534734:row:334",
+        "sheetApplicant": "Daltonic LLC",
+        "exactTitleMatch": true,
+        "githubBodyLength": 9289,
+        "grantPlatformLink": "https://github.com/ZcashCommunityGrants/zcashcommunitygrants/issues/37"
+      },
+      "created_at": "2026-07-07 15:27:57.280443+00",
+      "updated_at": "2026-07-07 15:27:57.280443+00"
+    },
+    {
+      "decision_key": "manual:link_source:08ff1d65dc6644b2312542fc",
+      "decision_type": "link_source",
+      "status": "active",
+      "source_kind": "github_issue",
+      "source_id": "ZcashCommunityGrants/zcashcommunitygrants#78",
+      "canonical_type": "grant_application",
+      "canonical_key": "sheet-all-grants:zcash umoja privacy for the people:zcash east africa:8 30 2025",
+      "related_canonical_key": null,
+      "relationship_type": null,
+      "field_name": null,
+      "field_value": null,
+      "rationale": "Sheet row 369 directly links to GitHub issue #78 via Grant Platform Link. The proposal title matches exactly between the All Grants registry row and the mirrored GitHub issue. Bulk manual review confirms this source belongs with the canonical application; the warning appears to be an automatic reconciliation miss rather than a distinct record.",
+      "confidence": "1.0000",
+      "evidence": {
+        "reviewMode": "bulk-obvious-direct-grant-platform-link",
+        "githubState": "closed",
+        "linkedIssue": {
+          "id": "c85d596d-2811-412f-8ae2-f8a290387fc2",
+          "details": {
+            "generatedBy": "grant_reconciliation_v1",
+            "githubIssueUrl": "https://github.com/ZcashCommunityGrants/zcashcommunitygrants/issues/78",
+            "githubIssueNumber": 78,
+            "historicalRegistryTitle": "Zcash Umoja: Privacy for the People"
+          },
+          "summary": "All Grants registry links to GitHub issue #78, but no mirrored GitHub issue matched",
+          "issueType": "missing_github_source_mirror"
+        },
+        "githubAuthor": "EMAKASH",
+        "sheetSourceId": "1FQ28rDCyRW0TiNxrm3rgD8ai2KGUsXAjPieQmI1kKKg:1164534734:row:369",
+        "sheetApplicant": "Zcash East Africa",
+        "exactTitleMatch": true,
+        "githubBodyLength": 16257,
+        "grantPlatformLink": "https://github.com/ZcashCommunityGrants/zcashcommunitygrants/issues/78"
+      },
+      "created_at": "2026-07-07 15:27:58.101815+00",
+      "updated_at": "2026-07-07 15:27:58.101815+00"
+    },
+    {
+      "decision_key": "manual:link_source:038f752450768e2aa55ae52e",
+      "decision_type": "link_source",
+      "status": "active",
+      "source_kind": "github_issue",
+      "source_id": "ZcashCommunityGrants/zcashcommunitygrants#174",
+      "canonical_type": "grant_application",
+      "canonical_key": "sheet-all-grants:onekey x zcash long term recoverable and maintainable zcash hardware wallet support:onekey:12 31 2025",
+      "related_canonical_key": null,
+      "relationship_type": null,
+      "field_name": null,
+      "field_value": null,
+      "rationale": "Sheet row 464 directly links to GitHub issue #174 via Grant Platform Link. The proposal title matches exactly between the All Grants registry row and the mirrored GitHub issue. Bulk manual review confirms this source belongs with the canonical application; the warning appears to be an automatic reconciliation miss rather than a distinct record.",
+      "confidence": "1.0000",
+      "evidence": {
+        "reviewMode": "bulk-obvious-direct-grant-platform-link",
+        "githubState": "closed",
+        "linkedIssue": {
+          "id": "441549d3-1955-4cad-91c1-e0f3f2adb112",
+          "details": {
+            "generatedBy": "grant_reconciliation_v1",
+            "githubIssueUrl": "https://github.com/ZcashCommunityGrants/zcashcommunitygrants/issues/174",
+            "githubIssueNumber": 174,
+            "historicalRegistryTitle": "OneKey x Zcash (Long-Term, Recoverable, and Maintainable Zcash Hardware Wallet Support)"
+          },
+          "summary": "All Grants registry links to GitHub issue #174, but no mirrored GitHub issue matched",
+          "issueType": "missing_github_source_mirror"
+        },
+        "githubAuthor": "Jenny0115",
+        "sheetSourceId": "1FQ28rDCyRW0TiNxrm3rgD8ai2KGUsXAjPieQmI1kKKg:1164534734:row:464",
+        "sheetApplicant": "OneKey",
+        "exactTitleMatch": true,
+        "githubBodyLength": 16389,
+        "grantPlatformLink": "https://github.com/ZcashCommunityGrants/zcashcommunitygrants/issues/174"
+      },
+      "created_at": "2026-07-07 15:27:58.915685+00",
+      "updated_at": "2026-07-07 15:27:58.915685+00"
+    },
+    {
+      "decision_key": "manual:link_source:e04e5317d5f7c3f1f09533e0",
+      "decision_type": "link_source",
+      "status": "active",
+      "source_kind": "github_issue",
+      "source_id": "ZcashCommunityGrants/zcashcommunitygrants#178",
+      "canonical_type": "grant_application",
+      "canonical_key": "sheet-all-grants:protecting zcash brand and ecosystem:chainpatrol:1 5 2026",
+      "related_canonical_key": null,
+      "relationship_type": null,
+      "field_name": null,
+      "field_value": null,
+      "rationale": "Sheet row 467 directly links to GitHub issue #178 via Grant Platform Link. The proposal title matches exactly between the All Grants registry row and the mirrored GitHub issue. Bulk manual review confirms this source belongs with the canonical application; the warning appears to be an automatic reconciliation miss rather than a distinct record.",
+      "confidence": "1.0000",
+      "evidence": {
+        "reviewMode": "bulk-obvious-direct-grant-platform-link",
+        "githubState": "closed",
+        "linkedIssue": {
+          "id": "4d898119-b422-4ee1-921f-bdd238cbabbc",
+          "details": {
+            "generatedBy": "grant_reconciliation_v1",
+            "githubIssueUrl": "https://github.com/ZcashCommunityGrants/zcashcommunitygrants/issues/178",
+            "githubIssueNumber": 178,
+            "historicalRegistryTitle": "Protecting Zcash Brand and Ecosystem"
+          },
+          "summary": "All Grants registry links to GitHub issue #178, but no mirrored GitHub issue matched",
+          "issueType": "missing_github_source_mirror"
+        },
+        "githubAuthor": "DaveyScalz",
+        "sheetSourceId": "1FQ28rDCyRW0TiNxrm3rgD8ai2KGUsXAjPieQmI1kKKg:1164534734:row:467",
+        "sheetApplicant": "ChainPatrol",
+        "exactTitleMatch": true,
+        "githubBodyLength": 15760,
+        "grantPlatformLink": "https://github.com/ZcashCommunityGrants/zcashcommunitygrants/issues/178"
+      },
+      "created_at": "2026-07-07 15:27:59.734141+00",
+      "updated_at": "2026-07-07 15:27:59.734141+00"
+    },
+    {
+      "decision_key": "manual:link_source:8ae4d99860e4f301e1cd360e",
+      "decision_type": "link_source",
+      "status": "active",
+      "source_kind": "github_issue",
+      "source_id": "ZcashCommunityGrants/zcashcommunitygrants#200",
+      "canonical_type": "grant_application",
+      "canonical_key": "sheet-all-grants:axiom geo ai:axiom geo ai:1 24 2026",
+      "related_canonical_key": null,
+      "relationship_type": null,
+      "field_name": null,
+      "field_value": null,
+      "rationale": "Sheet row 481 directly links to GitHub issue #200 via Grant Platform Link. The proposal title matches exactly between the All Grants registry row and the mirrored GitHub issue. Bulk manual review confirms this source belongs with the canonical application; the warning appears to be an automatic reconciliation miss rather than a distinct record.",
+      "confidence": "1.0000",
+      "evidence": {
+        "reviewMode": "bulk-obvious-direct-grant-platform-link",
+        "githubState": "closed",
+        "linkedIssue": {
+          "id": "1f0f2170-6329-41d2-8873-251e73af3f38",
+          "details": {
+            "generatedBy": "grant_reconciliation_v1",
+            "githubIssueUrl": "https://github.com/ZcashCommunityGrants/zcashcommunitygrants/issues/200",
+            "githubIssueNumber": 200,
+            "historicalRegistryTitle": "Axiom geo ai"
+          },
+          "summary": "All Grants registry links to GitHub issue #200, but no mirrored GitHub issue matched",
+          "issueType": "missing_github_source_mirror"
+        },
+        "githubAuthor": "AXIOMGeo",
+        "sheetSourceId": "1FQ28rDCyRW0TiNxrm3rgD8ai2KGUsXAjPieQmI1kKKg:1164534734:row:481",
+        "sheetApplicant": "Axiom geo ai",
+        "exactTitleMatch": true,
+        "githubBodyLength": 3410,
+        "grantPlatformLink": "https://github.com/ZcashCommunityGrants/zcashcommunitygrants/issues/200"
+      },
+      "created_at": "2026-07-07 15:28:00.575123+00",
+      "updated_at": "2026-07-07 15:28:00.575123+00"
+    },
+    {
+      "decision_key": "manual:link_source:cee95ef3538689eecf858328",
+      "decision_type": "link_source",
+      "status": "active",
+      "source_kind": "github_issue",
+      "source_id": "ZcashCommunityGrants/zcashcommunitygrants#232",
+      "canonical_type": "grant_application",
+      "canonical_key": "sheet-all-grants:zero history privacy communication network lac:lightanonchain open source project:3 8 2026",
+      "related_canonical_key": null,
+      "relationship_type": null,
+      "field_name": null,
+      "field_value": null,
+      "rationale": "Sheet row 509 directly links to GitHub issue #232 via Grant Platform Link. The proposal title matches exactly between the All Grants registry row and the mirrored GitHub issue. Bulk manual review confirms this source belongs with the canonical application; the warning appears to be an automatic reconciliation miss rather than a distinct record.",
+      "confidence": "1.0000",
+      "evidence": {
+        "reviewMode": "bulk-obvious-direct-grant-platform-link",
+        "githubState": "closed",
+        "linkedIssue": {
+          "id": "9dd89806-3743-447e-aa82-02eee1264a1a",
+          "details": {
+            "generatedBy": "grant_reconciliation_v1",
+            "githubIssueUrl": "https://github.com/ZcashCommunityGrants/zcashcommunitygrants/issues/232",
+            "githubIssueNumber": 232,
+            "historicalRegistryTitle": "Zero-History Privacy Communication Network (LAC)"
+          },
+          "summary": "All Grants registry links to GitHub issue #232, but no mirrored GitHub issue matched",
+          "issueType": "missing_github_source_mirror"
+        },
+        "githubAuthor": "epidemiaya",
+        "sheetSourceId": "1FQ28rDCyRW0TiNxrm3rgD8ai2KGUsXAjPieQmI1kKKg:1164534734:row:509",
+        "sheetApplicant": "LightAnonChain Open Source Project",
+        "exactTitleMatch": true,
+        "githubBodyLength": 21042,
+        "grantPlatformLink": "https://github.com/ZcashCommunityGrants/zcashcommunitygrants/issues/232"
+      },
+      "created_at": "2026-07-07 15:28:01.397335+00",
+      "updated_at": "2026-07-07 15:28:01.397335+00"
     }
   ]
 }
