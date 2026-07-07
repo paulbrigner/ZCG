@@ -418,7 +418,8 @@ export class ZcgPrototypeStack extends Stack {
       ZCG_GITHUB_COMMENT_MAX_PAGES: String(this.node.tryGetContext("githubCommentMaxPages") ?? 10),
       ZCG_GOOGLE_SHEET_ID:
         this.node.tryGetContext("googleSheetId") ?? "1FQ28rDCyRW0TiNxrm3rgD8ai2KGUsXAjPieQmI1kKKg",
-      ZCG_GOOGLE_SHEET_TABS: this.node.tryGetContext("googleSheetTabs") ?? "default:803214474"
+      ZCG_GOOGLE_SHEET_TABS:
+        this.node.tryGetContext("googleSheetTabs") ?? "all_grants_tracking:1164534734,milestone_details:803214474"
     };
 
     const syncWorkerLogGroup = new logs.LogGroup(this, "SyncWorkerLogGroup", {

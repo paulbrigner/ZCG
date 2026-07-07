@@ -16,7 +16,7 @@ The current public system includes:
 - The issue-intake repo in `ZcashCommunityGrants/zcashcommunitygrants`.
 - GitHub issue labels acting as a workflow state machine.
 - Required Zcash Community Forum application and update threads.
-- A public Google Sheet with grants, milestones, IC payouts, budgets, liquidity, distribution, all-grants tracking, inputs, and archived tabs.
+- A public Google Sheet with grants, milestones, IC payouts, budgets, liquidity, distribution, all-grants tracking, inputs, and archived tabs. The `ZCG All Grants Tracking` tab is now treated as the historical proposal/application registry because it is the most comprehensive list of ZCG grants and proposals considered.
 - Jotform RFP idea intake.
 - FPF and ZCG manual operations for eligibility, KYC, agreements, payments, committee coordination, and private records.
 
@@ -198,7 +198,7 @@ The applicant portal should come after the mirror and admin console prove value:
 ### Source mirror tables
 
 - `github_issues`, `github_issue_labels`, `github_issue_comments`, `github_issue_events`.
-- `sheet_tabs`, `sheet_rows`, `sheet_cell_values`, or tab-specific normalized mirrors for high-value tabs.
+- `sheet_tabs`, `sheet_rows`, `sheet_cell_values`, or tab-specific normalized mirrors for high-value tabs, with `ZCG All Grants Tracking` modeled as the historical proposal/application registry and milestone/payment tabs modeled as detail evidence.
 - `discourse_topics`, `discourse_posts`.
 - `jotform_submissions`, if API/export access is granted.
 - `fpf_private_records`, only after private data boundaries and access rules are approved.
@@ -279,6 +279,9 @@ Build importers:
 
 - GitHub issue template, issues, labels, comments, and issue events.
 - Google Sheet tab discovery plus CSV exports for all public tabs.
+- Named high-value Sheet adapters:
+  - `all_grants_tracking:1164534734` as the comprehensive historical application/proposal registry.
+  - `milestone_details:803214474` as payment, milestone, and grant-detail evidence.
 - Discourse grants and applications topics/posts where public API access allows.
 - Jotform export/import path, gated on owner/API access.
 
@@ -303,7 +306,7 @@ Objective: turn mirrors into a useful grants model.
 
 Build:
 
-- Matching engine for GitHub issue to Sheet project rows, forum topics, and known grant records.
+- Matching engine for GitHub issue to historical All Grants registry rows, payment/milestone detail rows, forum topics, and known grant records.
 - Canonical application and grant creation from imported source records.
 - Confidence scoring and manual reconciliation queue.
 - Status normalization from GitHub labels and Sheet statuses.
@@ -312,7 +315,8 @@ Build:
 
 Acceptance criteria:
 
-- Each imported application has a canonical record or a reconciliation issue.
+- Each titled All Grants registry row has a canonical application record or an explicit reconciliation issue.
+- Payment/milestone rows that do not match a historical application are reconciliation issues, not automatically canonical applications.
 - The prototype identifies unmatched Sheet rows and unmatched GitHub issues.
 - A reviewer can open one grant and see all matched source evidence.
 - A reconciliation report quantifies match confidence and remaining manual cleanup.

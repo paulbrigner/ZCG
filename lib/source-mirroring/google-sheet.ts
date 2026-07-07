@@ -7,7 +7,10 @@ import type {
 } from "./types";
 
 const DEFAULT_SHEET_ID = "1FQ28rDCyRW0TiNxrm3rgD8ai2KGUsXAjPieQmI1kKKg";
-const DEFAULT_TABS: GoogleSheetTabConfig[] = [{ name: "default", gid: "803214474" }];
+const DEFAULT_TABS: GoogleSheetTabConfig[] = [
+  { name: "all_grants_tracking", gid: "1164534734" },
+  { name: "milestone_details", gid: "803214474" }
+];
 
 function configuredTabs(config?: GoogleSheetMirrorConfig): GoogleSheetTabConfig[] {
   if (config?.tabs?.length) {
@@ -31,7 +34,7 @@ function configuredTabs(config?: GoogleSheetMirrorConfig): GoogleSheetTabConfig[
 }
 
 function titleFromRow(row: Record<string, string>, rowNumber: number) {
-  const preferredKeys = ["Grant", "Project", "Title", "Name", "Applicant", "Organization"];
+  const preferredKeys = ["Proposal Title", "Grant", "Project", "Title", "Name", "Applicant", "Applicant(s)", "Organization"];
 
   for (const key of preferredKeys) {
     if (row[key]) {

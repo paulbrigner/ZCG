@@ -132,7 +132,7 @@ The Sheet is publicly readable by CSV for individual tabs. The unauthenticated G
 | 9 | 598263567 | ZCG 2026 Stipend | 27 | 6 | Current stipend payments |
 | 10 | 164877840 | ZCG Funds Distribution | 85 | 18 | Distribution summary by recipient/classification |
 | 11 | 1885743444 | Coinholder Funds Distribution | 18 | 18 | Coinholder distribution summary |
-| 12 | 1164534734 | ZCG All Grants Tracking | 139 | 11 | Proposal/application tracking |
+| 12 | 1164534734 | ZCG All Grants Tracking | 611 | 11 | Comprehensive historical proposal/application tracking |
 | 13 | 1114900636 | ZCG 2024 Disc. Budget (closed) | 15 | 7 | Historical discretionary budget |
 | 14 | 1677818060 | ZCG 2023 Disc. Budget (closed) | 50 | 7 | Historical discretionary budget |
 | 15 | 958969131 | ZCG 2022 Disc. Budget (closed) | 43 | 7 | Historical discretionary budget |
@@ -170,8 +170,9 @@ ZCG Grants tab summary:
 
 ZCG All Grants Tracking tab summary:
 
-- 138 populated proposal/application rows.
-- Status counts: 87 Rejected, 27 Approved, 12 Filtered by FPF / Outside of Scope, 8 ZCG to discuss, 4 Application Withdrawn.
+- 611 titled proposal/application rows as of the 2026-07-07 CSV export.
+- Status counts after normalization: 318 Declined, 161 Approved, 77 Filtered by FPF / Outside of Scope, 36 Application Withdrawn, 10 Cancelled, 9 ZCG to discuss / under review.
+- This tab is the most comprehensive public historical registry of ZCG proposals considered, including older grants that may not have GitHub issue records.
 
 Open questions:
 

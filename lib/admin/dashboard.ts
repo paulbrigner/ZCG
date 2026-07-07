@@ -141,7 +141,7 @@ const applicationFilterWhere: Record<ApplicationFilter, string> = {
   all: "true",
   matched: "ga.canonical_key like 'github:%' and ga.match_confidence > 0",
   github_only: "ga.canonical_key like 'github:%' and ga.match_confidence = 0",
-  sheet_only: "ga.canonical_key like 'sheet:%'",
+  sheet_only: "(ga.canonical_key like 'sheet:%' or ga.canonical_key like 'sheet-all-grants:%')",
   needs_review: `exists (
     select 1
       from reconciliation_issues ri_filter
@@ -155,7 +155,7 @@ function sourceProfileSql(alias = "ga") {
   return `case
             when ${alias}.canonical_key like 'github:%' and ${alias}.match_confidence > 0 then 'matched'
             when ${alias}.canonical_key like 'github:%' then 'github_only'
-            when ${alias}.canonical_key like 'sheet:%' then 'sheet_only'
+            when ${alias}.canonical_key like 'sheet:%' or ${alias}.canonical_key like 'sheet-all-grants:%' then 'sheet_only'
             else 'unknown'
           end`;
 }
@@ -393,7 +393,7 @@ export async function getAdminDashboard({
                 as matched_applications,
               count(*) filter (where ga.canonical_key like 'github:%' and ga.match_confidence = 0)::text
                 as github_only_applications,
-              count(*) filter (where ga.canonical_key like 'sheet:%')::text
+              count(*) filter (where ga.canonical_key like 'sheet:%' or ga.canonical_key like 'sheet-all-grants:%')::text
                 as sheet_only_applications,
               count(*) filter (
                 where exists (

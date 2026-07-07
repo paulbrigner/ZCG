@@ -9,7 +9,10 @@ Phase 1 begins the sync-first plan by importing read-only evidence from current 
 - GitHub issues from `ZcashCommunityGrants/zcashcommunitygrants`.
 - GitHub issue comments from those grant issues, including follow-up comments
   that often contain the corresponding forum thread link.
-- Google Sheet CSV exports from configured tab gids, defaulting to gid `803214474` from the known ZCG sheet.
+- Google Sheet CSV exports from configured tab gids, defaulting to:
+  - `all_grants_tracking:1164534734` for the comprehensive historical list of
+    every ZCG proposal/grant considered.
+  - `milestone_details:803214474` for milestone, payment, and detail rows.
 
 ## What the worker records
 
@@ -21,6 +24,30 @@ Each Phase 1 run creates:
 - `audit_events` rows for sync completion or failure.
 
 The first pass preserves source-specific raw payloads. Canonical grant normalization and reconciliation are intentionally next, not hidden inside the importer.
+
+## Historical registry refinement
+
+As of 2026-07-07, reconciliation treats the `ZCG All Grants Tracking` tab
+(`gid=1164534734`) as the historical proposal/application registry. Each titled
+row in that tab is eligible to become a canonical `grant_applications` record,
+including older grants that predate GitHub intake.
+
+The milestone/payment tab (`gid=803214474`) is no longer treated as the
+complete application list. Its rows are detail evidence that should attach to an
+All Grants registry row or a GitHub application. Payment/detail rows that do not
+match the historical registry produce reconciliation issues instead of becoming
+canonical applications by default.
+
+The current adapter maps:
+
+- `Proposal Title` -> canonical application title.
+- `Applicant(s)` -> applicant/grantee display name.
+- `Grant Status` -> normalized status.
+- `Grant Platform Link` -> GitHub issue link when it points to GitHub, or a
+  legacy proposal-platform source URL otherwise.
+- `Forum Link` -> forum source evidence.
+- `Date Committee Approved/ Rejected`, `Decision Turnaround Days`, `Country`,
+  and `Organization or Individual` -> source summary metadata.
 
 ## Local invocation
 
@@ -44,7 +71,7 @@ DATABASE_URL=postgres://zcg:zcg@localhost:5433/zcg \
   npm run worker:sync -- --source github-issues
 ```
 
-Mirror the default Google Sheet tab:
+Mirror the configured Google Sheet tabs:
 
 ```bash
 DATABASE_URL=postgres://zcg:zcg@localhost:5433/zcg \
@@ -112,9 +139,27 @@ Against a disposable local Postgres database:
 - A combined `phase1-all` run saw 1,130 records and skipped all unchanged records.
 - `/api/admin/source-records` returned mirrored records through Better Auth and `source:mirror:read`.
 
+## Local verification on 2026-07-07
+
+Against a disposable local Postgres database with the non-vector migrations:
+
+- `google-sheet` imported 1,428 records from the two configured Sheet tabs.
+- `all_grants_tracking` contributed 611 titled historical proposal/application
+  rows after CSV parsing.
+- `reconcile:grants` produced 611 canonical `sheet-all-grants:*`
+  applications from the historical registry.
+- The run produced 161 funded grant records from approved historical rows.
+- 12 payment/detail projects did not match the historical registry and were
+  retained as reconciliation issues rather than promoted to canonical
+  applications.
+- A full unauthenticated GitHub+Sheet local rehearsal was blocked by GitHub API
+  rate limits while fetching issue comments; use `GITHUB_TOKEN` or
+  `ZCG_GITHUB_TOKEN` for full local public-source reconciliation.
+
 ## Next Phase 1 work
 
-- Add more known Google Sheet tab gids with stable names.
+- Continue adding known Google Sheet tab gids with stable names where they
+  represent distinct evidence classes.
 - Add a Discourse topic/post mirror.
 - Add reconciliation issue generation for missing forum links, unmatched Sheet rows, stale statuses, and label/status conflicts.
 - Add an admin source-mirror UI instead of API-only inspection.
