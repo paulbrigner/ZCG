@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "exportedAt": "2026-07-07T15:28:51.006Z",
+  "exportedAt": "2026-07-07T15:35:45.634Z",
   "decisions": [
     {
       "decision_key": "manual:link_source:2875f6353baa01fabfd4bef3",
@@ -360,6 +360,50 @@
       },
       "created_at": "2026-07-07 15:28:01.397335+00",
       "updated_at": "2026-07-07 15:28:01.397335+00"
+    },
+    {
+      "decision_key": "manual:link_source:33ff2a63da2d4a4edaa0845a",
+      "decision_type": "link_source",
+      "status": "active",
+      "source_kind": "github_issue",
+      "source_id": "ZcashCommunityGrants/zcashcommunitygrants#33",
+      "canonical_type": "grant_application",
+      "canonical_key": "sheet-all-grants:zcash unified grant tracking dashboard:emmanueleclipse:3 30 2025",
+      "related_canonical_key": null,
+      "relationship_type": null,
+      "field_name": null,
+      "field_value": null,
+      "rationale": "Sheet row 330 links to a specific applicant comment on GitHub issue #33 via Grant Platform Link. The sheet applicant EmmanuelEclipse aligns with the GitHub issue author/comment author EmmanuelEklipse, and the GitHub issue labels identify it as a grant application that was declined, matching the sheet status Rejected. Bulk manual review confirms this source belongs with the canonical application; the warning appears to be an automatic reconciliation miss caused by the issue title/body being minimal.",
+      "confidence": "1.0000",
+      "evidence": {
+        "reviewMode": "bulk-obvious-comment-grant-platform-link",
+        "linkedIssue": {
+          "id": "9400a90e-862c-4d11-b5cd-0975bbe084b5",
+          "details": {
+            "generatedBy": "grant_reconciliation_v1",
+            "githubIssueUrl": "https://github.com/ZcashCommunityGrants/zcashcommunitygrants/issues/33",
+            "githubIssueNumber": 33,
+            "historicalRegistryTitle": "Zcash Unified Grant Tracking Dashboard"
+          },
+          "summary": "All Grants registry links to GitHub issue #33, but no mirrored GitHub issue matched",
+          "issueType": "missing_github_source_mirror"
+        },
+        "sheetStatus": "Rejected",
+        "githubAuthor": "EmmanuelEklipse",
+        "githubLabels": [
+          "📝 Pending Grant Application",
+          "📋 Grant Application",
+          "👀 Ready For ZCG Review",
+          "❌ Grant Declined"
+        ],
+        "sheetSourceId": "1FQ28rDCyRW0TiNxrm3rgD8ai2KGUsXAjPieQmI1kKKg:1164534734:row:330",
+        "sheetApplicant": "EmmanuelEclipse",
+        "githubIssueTitle": ".",
+        "grantPlatformLink": "https://github.com/ZcashCommunityGrants/zcashcommunitygrants/issues/33#issuecomment-2777339780",
+        "githubIssueBodyLength": 1
+      },
+      "created_at": "2026-07-07 15:35:28.770615+00",
+      "updated_at": "2026-07-07 15:35:28.770615+00"
     }
   ]
 }
