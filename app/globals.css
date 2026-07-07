@@ -353,10 +353,8 @@ button:disabled {
   display: inline-flex;
   flex: 0 0 auto;
   line-height: 1;
-  position: relative;
   text-transform: none;
   vertical-align: middle;
-  z-index: 5;
 }
 
 .metric-help-button {
@@ -386,6 +384,7 @@ button:disabled {
   background: #0f172a;
   border: 1px solid rgba(148, 163, 184, 0.34);
   border-radius: 8px;
+  box-sizing: border-box;
   box-shadow: 0 14px 34px rgba(15, 23, 42, 0.2);
   color: #f8fafc;
   display: grid;
@@ -393,20 +392,20 @@ button:disabled {
   font-weight: 500;
   gap: 6px;
   line-height: 1.4;
-  max-width: min(320px, calc(100vw - 48px));
+  max-height: calc(100vh - 32px);
+  opacity: 0;
+  overflow: auto;
   padding: 10px 12px;
-  position: absolute;
-  right: 0;
+  pointer-events: none;
+  position: fixed;
   text-align: left;
   text-transform: none;
-  top: calc(100% + 8px);
-  width: max-content;
-  z-index: 60;
+  z-index: 1000;
 }
 
-.metric-help.align-left .metric-help-popover {
-  left: 0;
-  right: auto;
+.metric-help-popover.positioned {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .metric-help-title {
