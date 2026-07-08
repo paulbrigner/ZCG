@@ -95,6 +95,12 @@ export class ZcgPrototypeStack extends Stack {
     const betterAuthUrl = this.node.tryGetContext("betterAuthUrl");
     const bootstrapAdminEmails = this.node.tryGetContext("bootstrapAdminEmails") ?? "";
     const sesFromEmail = this.node.tryGetContext("sesFromEmail") as string | undefined;
+    const githubTokenSecretId = this.node.tryGetContext("githubTokenSecretId") as string | undefined;
+    const githubTokenSecret = githubTokenSecretId
+      ? githubTokenSecretId.startsWith("arn:")
+        ? secretsmanager.Secret.fromSecretCompleteArn(this, "GitHubMirrorTokenSecret", githubTokenSecretId)
+        : secretsmanager.Secret.fromSecretNameV2(this, "GitHubMirrorTokenSecret", githubTokenSecretId)
+      : undefined;
     const sesIdentityName =
       (this.node.tryGetContext("sesIdentityName") as string | undefined) ??
       sesFromEmail?.split("@").at(-1);
@@ -436,6 +442,11 @@ export class ZcgPrototypeStack extends Stack {
     let migrationRunnerFunctionName = "disabled";
 
     if (enableWorkers) {
+      const syncWorkerEnvironment = {
+        ...workerEnvironment,
+        ...(githubTokenSecretId ? { ZCG_GITHUB_TOKEN_SECRET_ID: githubTokenSecretId } : {})
+      };
+
       const syncWorker = new lambdaNodejs.NodejsFunction(this, "SyncWorker", {
         entry: path.join(__dirname, "..", "workers", "sync-worker.ts"),
         handler: "handler",
@@ -447,7 +458,7 @@ export class ZcgPrototypeStack extends Stack {
           subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS
         },
         securityGroups: [workerSecurityGroup],
-        environment: workerEnvironment,
+        environment: syncWorkerEnvironment,
         logGroup: syncWorkerLogGroup,
         bundling: {
           externalModules: []
@@ -489,6 +500,7 @@ export class ZcgPrototypeStack extends Stack {
       snapshotBucket.grantReadWrite(migrationRunner);
       database.secret!.grantRead(syncWorker);
       database.secret!.grantRead(migrationRunner);
+      githubTokenSecret?.grantRead(syncWorker);
       database.connections.allowDefaultPortFrom(syncWorker);
       database.connections.allowDefaultPortFrom(migrationRunner);
 

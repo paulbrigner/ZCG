@@ -112,12 +112,20 @@ Environment variables and matching CDK context:
 - `ZCG_GITHUB_REPO` / `-c githubRepo=...`
 - `ZCG_GITHUB_MAX_PAGES` / `-c githubMaxPages=...`
 - `ZCG_GITHUB_COMMENT_MAX_PAGES`
+- `ZCG_GITHUB_TOKEN_SECRET_ID` / `-c githubTokenSecretId=...`
 - `ZCG_GOOGLE_SHEET_ID` / `-c googleSheetId=...`
 - `ZCG_GOOGLE_SHEET_TABS` / `-c googleSheetTabs=name:gid,name2:gid2`
 
-`GITHUB_TOKEN` or `ZCG_GITHUB_TOKEN` should be supplied for reliable GitHub
-comment mirroring, since comments require one API request per issue with
-comments and anonymous GitHub API rate limits are low.
+`GITHUB_TOKEN`, `ZCG_GITHUB_TOKEN`, or a Secrets Manager secret referenced by
+`ZCG_GITHUB_TOKEN_SECRET_ID` should be supplied for reliable GitHub comment
+mirroring, since comments require one API request per issue with comments and
+anonymous GitHub API rate limits are low. The deployment scripts default to the
+secret name `zcg/prototype/github-mirror-token`; override
+`GITHUB_TOKEN_SECRET_ID` when deploying into another AWS account or environment.
+
+The secret may contain the raw token string or JSON with a `token`,
+`GITHUB_TOKEN`, or `ZCG_GITHUB_TOKEN` field. Use a fine-grained GitHub PAT with
+read-only Issues permission for `ZcashCommunityGrants/zcashcommunitygrants`.
 
 ## Admin inspection
 

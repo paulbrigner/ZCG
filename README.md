@@ -259,21 +259,21 @@ Current capabilities include:
   embedding the next batch, and managing user access.
 - Public grants API with allowlisted public projection.
 
-At the time of this README update on July 1, 2026, the live prototype has
+At the time of this README update on July 8, 2026, the live prototype has
 produced:
 
 | Metric | Count |
 | --- | ---: |
-| Total mirrored source records | 1,272 |
-| GitHub issue source records | 319 |
-| Google Sheet row source records | 810 |
-| Canonical application records | 400 |
-| Canonical grant records | 173 |
-| Forum links associated from mirrored sources | 142 |
-| Open generated reconciliation issues | 336 |
-| Grant knowledge documents | 1,713 |
-| Knowledge applications covered | 400 |
-| Embedded knowledge documents | 1,713 |
+| Total mirrored source records | 4,389 |
+| GitHub issue source records | 330 |
+| Google Sheet row source records | 1,428 |
+| Canonical application records | 624 |
+| Canonical grant records | 161 |
+| Forum links associated from mirrored sources | 1,057 |
+| Open generated reconciliation issues | 1 |
+| Grant knowledge documents | 3,153 |
+| Knowledge applications covered | 301 |
+| Embedded knowledge documents | 1,104 |
 
 These numbers are prototype reconciliation outputs, not final ZCG production
 truth. They are useful because they show both the value and the messiness of the
@@ -485,7 +485,10 @@ Important knobs include `ZCG_KNOWLEDGE_AI_API_KEY`,
 `ZCG_KNOWLEDGE_AI_MODEL`, `ZCG_KNOWLEDGE_SEMANTIC_ENABLED`,
 `ZCG_KNOWLEDGE_EMBEDDING_MODEL`, and `ZCG_KNOWLEDGE_EMBEDDING_DIMS`.
 GitHub source mirroring also supports `ZCG_GITHUB_COMMENT_MAX_PAGES` for the
-per-issue comment pagination pass.
+per-issue comment pagination pass. The deployed sync worker reads a GitHub
+fine-grained PAT from AWS Secrets Manager when `githubTokenSecretId` is passed
+to CDK. The default deployment scripts use `zcg/prototype/github-mirror-token`,
+which can be overridden with `GITHUB_TOKEN_SECRET_ID`.
 
 ## Deployment Posture
 

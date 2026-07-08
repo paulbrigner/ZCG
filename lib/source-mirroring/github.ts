@@ -1,4 +1,5 @@
 import type { GitHubMirrorConfig, SourceMirrorResult, SourceMirrorRecord } from "./types";
+import { GetSecretValueCommand, SecretsManagerClient } from "@aws-sdk/client-secrets-manager";
 
 type GitHubLabel = {
   name?: string;
@@ -40,6 +41,9 @@ type GitHubIssueComment = {
 
 const DEFAULT_OWNER = "ZcashCommunityGrants";
 const DEFAULT_REPO = "zcashcommunitygrants";
+const secretsManager = new SecretsManagerClient({});
+
+let cachedSecretToken: string | undefined;
 
 function labelsFor(issue: GitHubIssue) {
   return (issue.labels ?? [])
@@ -75,6 +79,43 @@ function githubHeaders(token?: string) {
     "user-agent": "zcg-grants-prototype",
     ...(token ? { authorization: `Bearer ${token}` } : {})
   };
+}
+
+function tokenFromSecretValue(secretValue: string) {
+  const trimmed = secretValue.trim();
+
+  if (!trimmed) {
+    return undefined;
+  }
+
+  try {
+    const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+    const token = parsed.token ?? parsed.GITHUB_TOKEN ?? parsed.ZCG_GITHUB_TOKEN;
+
+    return typeof token === "string" && token.trim() ? token.trim() : undefined;
+  } catch {
+    return trimmed;
+  }
+}
+
+async function githubTokenFromSecretsManager() {
+  const secretId = process.env.ZCG_GITHUB_TOKEN_SECRET_ID ?? process.env.ZCG_GITHUB_TOKEN_SECRET_ARN;
+
+  if (!secretId) {
+    return undefined;
+  }
+
+  if (cachedSecretToken) {
+    return cachedSecretToken;
+  }
+
+  const response = await secretsManager.send(new GetSecretValueCommand({ SecretId: secretId }));
+  const secretValue =
+    response.SecretString ??
+    (response.SecretBinary ? Buffer.from(response.SecretBinary).toString("utf8") : undefined);
+
+  cachedSecretToken = secretValue ? tokenFromSecretValue(secretValue) : undefined;
+  return cachedSecretToken;
 }
 
 async function fetchIssueComments(params: {
@@ -122,7 +163,7 @@ async function fetchIssueComments(params: {
 export async function mirrorGitHubIssues(config: GitHubMirrorConfig = {}): Promise<SourceMirrorResult> {
   const owner = config.owner ?? process.env.ZCG_GITHUB_OWNER ?? DEFAULT_OWNER;
   const repo = config.repo ?? process.env.ZCG_GITHUB_REPO ?? DEFAULT_REPO;
-  const token = config.token ?? process.env.GITHUB_TOKEN ?? process.env.ZCG_GITHUB_TOKEN;
+  const token = config.token ?? process.env.GITHUB_TOKEN ?? process.env.ZCG_GITHUB_TOKEN ?? (await githubTokenFromSecretsManager());
   const maxPages = Number(config.maxPages ?? process.env.ZCG_GITHUB_MAX_PAGES ?? 10);
   const commentMaxPages = Number(config.commentMaxPages ?? process.env.ZCG_GITHUB_COMMENT_MAX_PAGES ?? 10);
   const fetchedAt = new Date().toISOString();
