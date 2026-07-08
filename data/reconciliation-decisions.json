@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "exportedAt": "2026-07-07T15:35:45.634Z",
+  "exportedAt": "2026-07-08T13:53:41.601Z",
   "decisions": [
     {
       "decision_key": "manual:link_source:2875f6353baa01fabfd4bef3",
@@ -404,6 +404,966 @@
       },
       "created_at": "2026-07-07 15:35:28.770615+00",
       "updated_at": "2026-07-07 15:35:28.770615+00"
+    },
+    {
+      "decision_key": "manual:dismiss_issue:5d7a95fafaf97c5f74bde8ba",
+      "decision_type": "dismiss_issue",
+      "status": "active",
+      "source_kind": "github_issue",
+      "source_id": "ZcashCommunityGrants/zcashcommunitygrants#326",
+      "canonical_type": "grant_application",
+      "canonical_key": "sheet-all-grants:zinfra sovereign zcash infrastructure platform for africa and the world:el ltd:6 16 2026",
+      "related_canonical_key": null,
+      "relationship_type": "related_attempt",
+      "field_name": null,
+      "field_value": null,
+      "rationale": "GitHub issue #326 now returns 410 Gone / deleted from GitHub. The All Grants sheet retains a historical Grant Platform Link to that deleted issue, but no GitHub issue source record can be mirrored or linked. Manual review confirms this missing_github_source_mirror warning should be dismissed while preserving the All Grants sheet row as the canonical evidence for this application.",
+      "confidence": "1.0000",
+      "evidence": {
+        "linkedIssue": {
+          "id": "23656507-9a94-4b36-b5b2-0e8c35f80109",
+          "details": {
+            "generatedBy": "grant_reconciliation_v1",
+            "githubIssueUrl": "https://github.com/ZcashCommunityGrants/zcashcommunitygrants/issues/326",
+            "githubIssueNumber": 326,
+            "historicalRegistryTitle": "Zinfra — Sovereign Zcash Infrastructure Platform for Africa and the World"
+          },
+          "summary": "All Grants registry links to GitHub issue #326, but no mirrored GitHub issue matched",
+          "issueType": "missing_github_source_mirror"
+        }
+      },
+      "created_at": "2026-07-08 05:36:53.04214+00",
+      "updated_at": "2026-07-08 05:36:53.04214+00"
+    },
+    {
+      "decision_key": "manual:dismiss_issue:db9da35016568ecf73b52901",
+      "decision_type": "dismiss_issue",
+      "status": "active",
+      "source_kind": "github_issue",
+      "source_id": "ZcashCommunityGrants/zcashcommunitygrants#94",
+      "canonical_type": "grant_application",
+      "canonical_key": "sheet-all-grants:zcash awareness campaign on snapchat:rems:10 2 2025",
+      "related_canonical_key": null,
+      "relationship_type": "related_attempt",
+      "field_name": null,
+      "field_value": null,
+      "rationale": "GitHub issue #94 now returns 410 Gone / deleted from GitHub. The All Grants sheet retains a historical Grant Platform Link to that deleted issue, but no GitHub issue source record can be mirrored or linked. Manual review confirms this missing_github_source_mirror warning should be dismissed while preserving the All Grants sheet row as the canonical evidence for this application.",
+      "confidence": "1.0000",
+      "evidence": {
+        "linkedIssue": {
+          "id": "781aaae6-5208-4748-aba6-0b0641eb00a6",
+          "details": {
+            "generatedBy": "grant_reconciliation_v1",
+            "githubIssueUrl": "https://github.com/ZcashCommunityGrants/zcashcommunitygrants/issues/94",
+            "githubIssueNumber": 94,
+            "historicalRegistryTitle": "Zcash Awareness Campaign on Snapchat"
+          },
+          "summary": "All Grants registry links to GitHub issue #94, but no mirrored GitHub issue matched",
+          "issueType": "missing_github_source_mirror"
+        }
+      },
+      "created_at": "2026-07-08 05:40:40.959985+00",
+      "updated_at": "2026-07-08 05:40:40.959985+00"
+    },
+    {
+      "decision_key": "manual:link_source:eba5380ae2b983a767fa8043",
+      "decision_type": "link_source",
+      "status": "active",
+      "source_kind": "github_issue",
+      "source_id": "ZcashCommunityGrants/zcashcommunitygrants#80",
+      "canonical_type": "grant_application",
+      "canonical_key": "sheet-all-grants:expanding proactive adoption in introducing private transactions:zack club:9 2 2025",
+      "related_canonical_key": null,
+      "relationship_type": "related_attempt",
+      "field_name": null,
+      "field_value": null,
+      "rationale": "The GitHub issue exists but was not completed. Manual review confirms this source belongs with Expanding proactive adoption in introducing private transactions.",
+      "confidence": "1.0000",
+      "evidence": {
+        "linkedIssue": {
+          "id": "f5206ee9-b544-4598-a26d-b5109123b5af",
+          "details": {
+            "generatedBy": "grant_reconciliation_v1",
+            "githubIssueUrl": "https://github.com/ZcashCommunityGrants/zcashcommunitygrants/issues/80",
+            "githubIssueNumber": 80,
+            "historicalRegistryTitle": "Expanding proactive adoption in introducing private transactions"
+          },
+          "summary": "All Grants registry links to GitHub issue #80, but no mirrored GitHub issue matched",
+          "issueType": "missing_github_source_mirror"
+        }
+      },
+      "created_at": "2026-07-08 05:43:06.613511+00",
+      "updated_at": "2026-07-08 05:43:06.613511+00"
+    },
+    {
+      "decision_key": "manual:link_source:9ad30c487a7769fa6f375bd3",
+      "decision_type": "link_source",
+      "status": "active",
+      "source_kind": "github_issue",
+      "source_id": "ZcashCommunityGrants/zcashcommunitygrants#33",
+      "canonical_type": "grant_application",
+      "canonical_key": "sheet-all-grants:zcash unified grant tracking dashboard:emmanueleclipse:4 3 2025",
+      "related_canonical_key": null,
+      "relationship_type": "related_attempt",
+      "field_name": null,
+      "field_value": null,
+      "rationale": "Manual review confirms GitHub issue #33 links to row 330 in All Grants despite the lack of information provided in that GitHub entry.",
+      "confidence": "1.0000",
+      "evidence": {
+        "linkedIssue": {
+          "id": "41b87d45-3d5e-4209-b414-0cc550a353d3",
+          "details": {
+            "generatedBy": "grant_reconciliation_v1",
+            "githubIssueUrl": "https://github.com/ZcashCommunityGrants/zcashcommunitygrants/issues/33",
+            "githubIssueNumber": 33,
+            "historicalRegistryTitle": "Zcash Unified Grant Tracking Dashboard"
+          },
+          "summary": "All Grants registry links to GitHub issue #33, but no mirrored GitHub issue matched",
+          "issueType": "missing_github_source_mirror"
+        }
+      },
+      "created_at": "2026-07-08 05:47:52.10205+00",
+      "updated_at": "2026-07-08 05:47:52.10205+00"
+    },
+    {
+      "decision_key": "manual:link_source:b2c869b8054c2031a29ed7b3",
+      "decision_type": "link_source",
+      "status": "active",
+      "source_kind": "github_issue",
+      "source_id": "ZcashCommunityGrants/zcashcommunitygrants#1",
+      "canonical_type": "grant_application",
+      "canonical_key": "github:ZcashCommunityGrants/zcashcommunitygrants#1",
+      "related_canonical_key": null,
+      "relationship_type": "related_attempt",
+      "field_name": null,
+      "field_value": null,
+      "rationale": "Manual review confirms All Grants sheet row 303 corresponds to GitHub issue #1. The GitHub issue title is “Grant Application - Driving Zcash adoption and education in Western Kenya,” which matches the application represented by row 303. This decision links the mirrored GitHub issue source to the canonical application derived from the All Grants registry row.",
+      "confidence": "1.0000",
+      "evidence": {
+        "linkedIssue": {
+          "id": "b229c251-7caa-40f8-870f-4c3edaaca9d6",
+          "details": {
+            "issueUrl": "https://github.com/ZcashCommunityGrants/zcashcommunitygrants/issues/1",
+            "generatedBy": "grant_reconciliation_v1",
+            "githubTitle": "Grant Application - Driving Zcash adoption and education in Western Kenya",
+            "issueNumber": 1
+          },
+          "summary": "No All Grants registry match found for Driving Zcash adoption and education in Western Kenya",
+          "issueType": "missing_historical_registry_match"
+        }
+      },
+      "created_at": "2026-07-08 05:55:54.722367+00",
+      "updated_at": "2026-07-08 05:55:54.722367+00"
+    },
+    {
+      "decision_key": "manual:dismiss_issue:b10f2c66f296a8c69b35a0d1",
+      "decision_type": "dismiss_issue",
+      "status": "active",
+      "source_kind": "github_issue",
+      "source_id": "ZcashCommunityGrants/zcashcommunitygrants#147",
+      "canonical_type": "grant_application",
+      "canonical_key": "github:ZcashCommunityGrants/zcashcommunitygrants#147",
+      "related_canonical_key": null,
+      "relationship_type": "related_attempt",
+      "field_name": null,
+      "field_value": null,
+      "rationale": "Manual review confirms there is no All Grants sheet entry for issue #147.",
+      "confidence": "1.0000",
+      "evidence": {
+        "linkedIssue": {
+          "id": "6ab9c158-2de7-4a0f-add3-e7510ad48345",
+          "details": {
+            "issueUrl": "https://github.com/ZcashCommunityGrants/zcashcommunitygrants/issues/147",
+            "generatedBy": "grant_reconciliation_v1",
+            "githubTitle": "Grant Application - {David Gichenga Gichamba}",
+            "issueNumber": 147
+          },
+          "summary": "No All Grants registry match found for {David Gichenga Gichamba}",
+          "issueType": "missing_historical_registry_match"
+        }
+      },
+      "created_at": "2026-07-08 05:59:18.145416+00",
+      "updated_at": "2026-07-08 05:59:18.145416+00"
+    },
+    {
+      "decision_key": "manual:link_source:e412295211ac5050c4414f19",
+      "decision_type": "link_source",
+      "status": "active",
+      "source_kind": "github_issue",
+      "source_id": "1FQ28rDCyRW0TiNxrm3rgD8ai2KGUsXAjPieQmI1kKKg:1164534734:row:277",
+      "canonical_type": "grant_application",
+      "canonical_key": "github:ZcashCommunityGrants/zcashcommunitygrants#18",
+      "related_canonical_key": null,
+      "relationship_type": "related_attempt",
+      "field_name": null,
+      "field_value": null,
+      "rationale": "Manual review confirms All Grants sheet row 277 belongs with GitHub issue #18. The sheet row lists “Developer Relations Engineer” with applicant Pacu and status Approved. GitHub issue #18 is titled “Zcash Developer Relations Engineer,” identifies Pacu as the applicant, and carries approved/completed grant labels. The title, applicant, and status evidence confirm this is the same application despite the low-confidence automatic match.",
+      "confidence": "1.0000",
+      "evidence": {
+        "linkedIssue": {
+          "id": "fc5b8419-c6db-46b2-95eb-5008e3dd2f78",
+          "details": {
+            "confidence": 0.75,
+            "generatedBy": "grant_reconciliation_v1",
+            "githubTitle": "Zcash Developer Relations Engineer",
+            "historicalRegistryTitle": "Developer Relations Engineer"
+          },
+          "summary": "Review possible All Grants registry match for Zcash Developer Relations Engineer",
+          "issueType": "low_confidence_historical_registry_match"
+        }
+      },
+      "created_at": "2026-07-08 06:26:36.718146+00",
+      "updated_at": "2026-07-08 06:26:36.718146+00"
+    },
+    {
+      "decision_key": "manual:dismiss_issue:b95c1068a3c868e0d7f018d5",
+      "decision_type": "dismiss_issue",
+      "status": "active",
+      "source_kind": "github_issue",
+      "source_id": "ZcashCommunityGrants/zcashcommunitygrants#180",
+      "canonical_type": "grant_application",
+      "canonical_key": "github:ZcashCommunityGrants/zcashcommunitygrants#180",
+      "related_canonical_key": null,
+      "relationship_type": "related_attempt",
+      "field_name": null,
+      "field_value": null,
+      "rationale": "Manual review confirms issue 180 has no linkage to All Grants sheet and has no meaningful information. Disregard this record.",
+      "confidence": "1.0000",
+      "evidence": {
+        "linkedIssue": {
+          "id": "b1e6d272-84a0-4c5f-a658-975ffb3ad342",
+          "details": {
+            "issueUrl": "https://github.com/ZcashCommunityGrants/zcashcommunitygrants/issues/180",
+            "generatedBy": "grant_reconciliation_v1",
+            "githubTitle": "Grant Application - {Application Name}Aa123456",
+            "issueNumber": 180
+          },
+          "summary": "No All Grants registry match found for {Application Name}Aa123456",
+          "issueType": "missing_historical_registry_match"
+        }
+      },
+      "created_at": "2026-07-08 06:28:26.819502+00",
+      "updated_at": "2026-07-08 06:28:26.819502+00"
+    },
+    {
+      "decision_key": "manual:dismiss_issue:134488d269998c8a3c5504e6",
+      "decision_type": "dismiss_issue",
+      "status": "active",
+      "source_kind": "github_issue",
+      "source_id": "ZcashCommunityGrants/zcashcommunitygrants#183",
+      "canonical_type": "grant_application",
+      "canonical_key": "github:ZcashCommunityGrants/zcashcommunitygrants#183",
+      "related_canonical_key": null,
+      "relationship_type": "related_attempt",
+      "field_name": null,
+      "field_value": null,
+      "rationale": "Manual review confirms GitHub issue #183 ( {Application Name}jhon haris ricauerta ) has no corresponding entry in the All Grants sheet, and the GitHub issue doesn't contain any meaningful grant details.",
+      "confidence": "1.0000",
+      "evidence": {
+        "linkedIssue": {
+          "id": "8d4c392b-a5d0-4bba-8e45-be79bb8397b2",
+          "details": {
+            "issueUrl": "https://github.com/ZcashCommunityGrants/zcashcommunitygrants/issues/183",
+            "generatedBy": "grant_reconciliation_v1",
+            "githubTitle": "Grant Application - {Application Name}jhon haris ricauerta",
+            "issueNumber": 183
+          },
+          "summary": "No All Grants registry match found for {Application Name}jhon haris ricauerta",
+          "issueType": "missing_historical_registry_match"
+        }
+      },
+      "created_at": "2026-07-08 08:37:21.887756+00",
+      "updated_at": "2026-07-08 08:37:21.887756+00"
+    },
+    {
+      "decision_key": "manual:dismiss_issue:109e578ac1814780f3b28ae2",
+      "decision_type": "dismiss_issue",
+      "status": "active",
+      "source_kind": "github_issue",
+      "source_id": "ZcashCommunityGrants/zcashcommunitygrants#184",
+      "canonical_type": "grant_application",
+      "canonical_key": "github:ZcashCommunityGrants/zcashcommunitygrants#184",
+      "related_canonical_key": null,
+      "relationship_type": "related_attempt",
+      "field_name": null,
+      "field_value": null,
+      "rationale": "Manual review confirms GitHub issue #184 ({Application Name}jhon haris ricauerta) has no corresponding entry in the All Grants sheet; moreover, GitHub issue #184 appears to not have any meaningful grant information.",
+      "confidence": "1.0000",
+      "evidence": {
+        "linkedIssue": {
+          "id": "ee498018-f736-4c60-8311-802617748e8e",
+          "details": {
+            "issueUrl": "https://github.com/ZcashCommunityGrants/zcashcommunitygrants/issues/184",
+            "generatedBy": "grant_reconciliation_v1",
+            "githubTitle": "Grant Application - {Application Name}jhon haris ricauerta",
+            "issueNumber": 184
+          },
+          "summary": "No All Grants registry match found for {Application Name}jhon haris ricauerta",
+          "issueType": "missing_historical_registry_match"
+        }
+      },
+      "created_at": "2026-07-08 08:42:31.284951+00",
+      "updated_at": "2026-07-08 08:42:31.284951+00"
+    },
+    {
+      "decision_key": "manual:link_source:887e6f3283d237d641b46a2b",
+      "decision_type": "link_source",
+      "status": "active",
+      "source_kind": "github_issue",
+      "source_id": "1FQ28rDCyRW0TiNxrm3rgD8ai2KGUsXAjPieQmI1kKKg:1164534734:row:322",
+      "canonical_type": "grant_application",
+      "canonical_key": "github:ZcashCommunityGrants/zcashcommunitygrants#24",
+      "related_canonical_key": null,
+      "relationship_type": "related_attempt",
+      "field_name": null,
+      "field_value": null,
+      "rationale": "Manual review confirms All Grants sheet row 322 belongs with GitHub issue #24. The sheet row lists “Zenith Full Node Wallet 2025,” applicant Vergara Technologies, status Rejected, and its Grant Platform Link directly points to https://github.com/ZcashCommunityGrants/zcashcommunitygrants/issues/24. GitHub issue #24 is titled “Grant Application - Zenith Full Node Wallet 2025” and is labeled Grant Declined, confirming this is the same application.",
+      "confidence": "1.0000",
+      "evidence": {
+        "linkedIssue": {
+          "id": "71310b98-ec00-431f-a6cd-68a0ac6c5868",
+          "details": {
+            "confidence": 0.8571428571428571,
+            "generatedBy": "grant_reconciliation_v1",
+            "githubTitle": "Grant Application - Zenith Full Node Wallet 2025",
+            "sheetProject": "Zenith Full Node Wallet"
+          },
+          "summary": "Review possible payment/detail Sheet match for Zenith Full Node Wallet 2025",
+          "issueType": "low_confidence_payment_detail_match"
+        }
+      },
+      "created_at": "2026-07-08 08:55:04.12018+00",
+      "updated_at": "2026-07-08 08:55:04.12018+00"
+    },
+    {
+      "decision_key": "manual:link_source:b32cdf5013ade94a2cc8abdc",
+      "decision_type": "link_source",
+      "status": "active",
+      "source_kind": "github_issue",
+      "source_id": "1FQ28rDCyRW0TiNxrm3rgD8ai2KGUsXAjPieQmI1kKKg:1164534734:row:518",
+      "canonical_type": "grant_application",
+      "canonical_key": "github:ZcashCommunityGrants/zcashcommunitygrants#243",
+      "related_canonical_key": null,
+      "relationship_type": "related_attempt",
+      "field_name": null,
+      "field_value": null,
+      "rationale": "Manual review confirms All Grants sheet row 518 belongs with GitHub issue #243. The sheet row lists “ACCUM Fair Proof-of-Contribution Blockchain Protocol,” applicant Andrii Dumitro, and status Rejected. Although the sheet row’s Grant Platform Link currently points to GitHub issue #241, issue #243 is titled “Grant Application - ACCUM Fair Proof-of-Contribution Blockchain Protocol (replaces #241),” confirming that #241 was abandoned/replaced by #243. This decision links the All Grants row to the replacement GitHub application.",
+      "confidence": "1.0000",
+      "evidence": {
+        "linkedIssue": {
+          "id": "8033cdf1-f5cf-47a5-ba9e-e4af1307dc0c",
+          "details": {
+            "confidence": 0.75,
+            "generatedBy": "grant_reconciliation_v1",
+            "githubTitle": "Grant Application - ACCUM Fair Proof-of-Contribution Blockchain Protocol (replaces #241)",
+            "historicalRegistryTitle": "ACCUM Fair Proof-of-Contribution Blockchain Protocol"
+          },
+          "summary": "Review possible All Grants registry match for ACCUM Fair Proof-of-Contribution Blockchain Protocol (replaces #241)",
+          "issueType": "low_confidence_historical_registry_match"
+        }
+      },
+      "created_at": "2026-07-08 09:02:19.071486+00",
+      "updated_at": "2026-07-08 09:02:19.071486+00"
+    },
+    {
+      "decision_key": "manual:dismiss_issue:dafade25412c766d2fe6940c",
+      "decision_type": "dismiss_issue",
+      "status": "active",
+      "source_kind": "github_issue",
+      "source_id": "ZcashCommunityGrants/zcashcommunitygrants#334",
+      "canonical_type": "grant_application",
+      "canonical_key": "github:ZcashCommunityGrants/zcashcommunitygrants#334",
+      "related_canonical_key": null,
+      "relationship_type": "related_attempt",
+      "field_name": null,
+      "field_value": null,
+      "rationale": "Manual review determines the suggested payment/detail sheet match is not the same grant. The sheet project “Zenith Full Node Wallet” refers to earlier completed milestone/payment records, while GitHub issue #334 and All Grants row 600 refer to the separate “Zenith Full-node Wallet 2026” application, which was rejected. The All Grants row has its own direct Grant Platform Link to issue #334 and should be reconciled separately from the older payment/detail records.",
+      "confidence": "1.0000",
+      "evidence": {
+        "linkedIssue": {
+          "id": "1e4242c1-44ab-44f2-85ce-21b6044fbdc3",
+          "details": {
+            "confidence": 0.8571428571428571,
+            "generatedBy": "grant_reconciliation_v1",
+            "githubTitle": "Grant Application - Zenith Full-node Wallet 2026",
+            "sheetProject": "Zenith Full Node Wallet"
+          },
+          "summary": "Review possible payment/detail Sheet match for Zenith Full-node Wallet 2026",
+          "issueType": "low_confidence_payment_detail_match"
+        }
+      },
+      "created_at": "2026-07-08 09:16:27.508599+00",
+      "updated_at": "2026-07-08 09:16:27.508599+00"
+    },
+    {
+      "decision_key": "manual:dismiss_issue:01f5b790102deae9e8afd6df",
+      "decision_type": "dismiss_issue",
+      "status": "active",
+      "source_kind": "github_issue",
+      "source_id": "ZcashCommunityGrants/zcashcommunitygrants#59",
+      "canonical_type": "grant_application",
+      "canonical_key": "github:ZcashCommunityGrants/zcashcommunitygrants#59",
+      "related_canonical_key": null,
+      "relationship_type": "related_attempt",
+      "field_name": null,
+      "field_value": null,
+      "rationale": "Manual review confirms GitHub issue #59 is correctly linked to All Grants sheet row 353 via the row’s direct Grant Platform Link. However, this generated warning refers to the payment/detail sheet project “Assistance for Legal Compliance Activities (2024),” which appears to be an older QEDIT grant/payment record rather than the 2025 application represented by GitHub issue #59 and All Grants row 353. The low-confidence payment/detail match should be dismissed rather than treated as the same source linkage.",
+      "confidence": "1.0000",
+      "evidence": {
+        "linkedIssue": {
+          "id": "6a1332e9-1955-47bf-ab5e-8986e3626e6b",
+          "details": {
+            "confidence": 0.8571428571428571,
+            "generatedBy": "grant_reconciliation_v1",
+            "githubTitle": "Grant Application - Assistance for Legal Compliance Activities",
+            "sheetProject": "Assistance for Legal Compliance Activities (2024)"
+          },
+          "summary": "Review possible payment/detail Sheet match for Assistance for Legal Compliance Activities",
+          "issueType": "low_confidence_payment_detail_match"
+        }
+      },
+      "created_at": "2026-07-08 09:23:57.708313+00",
+      "updated_at": "2026-07-08 09:23:57.708313+00"
+    },
+    {
+      "decision_key": "manual:dismiss_issue:450d9fc1785a9fc58f7b8322",
+      "decision_type": "dismiss_issue",
+      "status": "active",
+      "source_kind": "github_issue",
+      "source_id": "ZcashCommunityGrants/zcashcommunitygrants#77",
+      "canonical_type": "grant_application",
+      "canonical_key": "github:ZcashCommunityGrants/zcashcommunitygrants#77",
+      "related_canonical_key": null,
+      "relationship_type": "related_attempt",
+      "field_name": null,
+      "field_value": null,
+      "rationale": "Manual review confirms this source was not an actual grant request but rather a request for ZCG process improvement.",
+      "confidence": "1.0000",
+      "evidence": {
+        "linkedIssue": {
+          "id": "34eecf5a-6422-40af-a726-bf135036d8de",
+          "details": {
+            "issueUrl": "https://github.com/ZcashCommunityGrants/zcashcommunitygrants/issues/77",
+            "generatedBy": "grant_reconciliation_v1",
+            "githubTitle": "Governance: Define a process for non-grant topics to be considered",
+            "issueNumber": 77
+          },
+          "summary": "No All Grants registry match found for Governance: Define a process for non-grant topics to be considered",
+          "issueType": "missing_historical_registry_match"
+        }
+      },
+      "created_at": "2026-07-08 09:37:58.387844+00",
+      "updated_at": "2026-07-08 09:37:58.387844+00"
+    },
+    {
+      "decision_key": "manual:link_source:871557a907ce7e63f2d64f85",
+      "decision_type": "link_source",
+      "status": "active",
+      "source_kind": "google_sheet_row",
+      "source_id": "1FQ28rDCyRW0TiNxrm3rgD8ai2KGUsXAjPieQmI1kKKg:803214474:row:8",
+      "canonical_type": "grant_application",
+      "canonical_key": "sheet-all-grants:zcash zeal:zcashzeal:2 16 2021",
+      "related_canonical_key": null,
+      "relationship_type": "related_attempt",
+      "field_name": null,
+      "field_value": null,
+      "rationale": "Manual review confirms the ZcashZeal payment/detail rows belong with All Grants row 12, “Zcash Zeal.” The All Grants registry records the application as withdrawn, while the payment/detail sheet records four cancelled milestone rows. Row 8 reflects one payment of $2,754.00 made on 22 Feb 2021 before the remaining milestones were cancelled. No GitHub issue appears to exist for this older grant record.",
+      "confidence": "1.0000",
+      "evidence": {
+        "linkedIssue": {
+          "id": "fe05e2d0-2f78-4236-8645-acd191714551",
+          "details": {
+            "status": "Cancelled",
+            "grantee": "ZcashZeal",
+            "rowCount": 4,
+            "generatedBy": "grant_reconciliation_v1",
+            "sheetProject": "ZcashZeal"
+          },
+          "summary": "Payment/detail Sheet project did not match the All Grants registry: ZcashZeal",
+          "issueType": "unmatched_payment_detail_without_historical_registry_match"
+        }
+      },
+      "created_at": "2026-07-08 12:27:04.498212+00",
+      "updated_at": "2026-07-08 12:27:04.498212+00"
+    },
+    {
+      "decision_key": "manual:dismiss_issue:afb8e29fb8230fd67df03e42",
+      "decision_type": "dismiss_issue",
+      "status": "active",
+      "source_kind": "google_sheet_row",
+      "source_id": "1FQ28rDCyRW0TiNxrm3rgD8ai2KGUsXAjPieQmI1kKKg:803214474:row:120",
+      "canonical_type": "grant_application",
+      "canonical_key": null,
+      "related_canonical_key": null,
+      "relationship_type": "related_attempt",
+      "field_name": null,
+      "field_value": null,
+      "rationale": "Manual review confirms that Free2Z has two canonical All Grants records: the April 2022 Free2Z grant and the February 2023 “Preparing the Garden For Spring” grant. The normal milestone payments for those grants are already represented separately in the payment/detail sheet. The three “Free2Z legal expenses reimbursement” rows appear to be ancillary completed reimbursements, not a separate All Grants application and not part of the 2023 Garden grant. This generated unmatched payment/detail warning is therefore dismissed as known source-only payment history.",
+      "confidence": "1.0000",
+      "evidence": {
+        "linkedIssue": {
+          "id": "345175ea-5a5f-4066-8d26-073b78c48127",
+          "details": {
+            "status": "Completed",
+            "grantee": "Free2Z",
+            "rowCount": 3,
+            "generatedBy": "grant_reconciliation_v1",
+            "sheetProject": "Free2Z legal expenses reimbursement"
+          },
+          "summary": "Payment/detail Sheet project did not match the All Grants registry: Free2Z legal expenses reimbursement",
+          "issueType": "unmatched_payment_detail_without_historical_registry_match"
+        }
+      },
+      "created_at": "2026-07-08 12:48:11.330374+00",
+      "updated_at": "2026-07-08 12:48:11.330374+00"
+    },
+    {
+      "decision_key": "manual:link_source:c3c0bf6e6e45e98e8bf1eb75",
+      "decision_type": "link_source",
+      "status": "active",
+      "source_kind": "google_sheet_row",
+      "source_id": "1FQ28rDCyRW0TiNxrm3rgD8ai2KGUsXAjPieQmI1kKKg:803214474:row:176",
+      "canonical_type": "grant_application",
+      "canonical_key": "sheet-all-grants:implement orchard:zingolabs:8 4 2022",
+      "related_canonical_key": null,
+      "relationship_type": "related_attempt",
+      "field_name": null,
+      "field_value": null,
+      "rationale": "Manual review confirms that payment/detail rows 176-178 for “Implement Orchard Funded Amendment” belong with All Grants row 120, “Implement Orchard.” The payment/detail sheet records the funded amendment/payment schedule, while the All Grants registry records the underlying approved application. The title variation and ZingoLabs/Zingo Labs spelling difference caused the generated matcher to treat the payment group as unmatched.",
+      "confidence": "1.0000",
+      "evidence": {
+        "linkedIssue": {
+          "id": "9f83fa20-80a0-4583-81bc-68ea6b94dd5b",
+          "details": {
+            "status": "Completed",
+            "grantee": "Zingo Labs",
+            "rowCount": 3,
+            "generatedBy": "grant_reconciliation_v1",
+            "sheetProject": "Implement Orchard Funded Amendment"
+          },
+          "summary": "Payment/detail Sheet project did not match the All Grants registry: Implement Orchard Funded Amendment",
+          "issueType": "unmatched_payment_detail_without_historical_registry_match"
+        }
+      },
+      "created_at": "2026-07-08 12:55:18.132621+00",
+      "updated_at": "2026-07-08 12:55:18.132621+00"
+    },
+    {
+      "decision_key": "manual:link_source:0d857fc9ac5633dc80d7113f",
+      "decision_type": "link_source",
+      "status": "active",
+      "source_kind": "google_sheet_row",
+      "source_id": "1FQ28rDCyRW0TiNxrm3rgD8ai2KGUsXAjPieQmI1kKKg:803214474:row:179",
+      "canonical_type": "grant_application",
+      "canonical_key": "sheet-all-grants:ywallet and warp sync:hanh:7 23 2022",
+      "related_canonical_key": null,
+      "relationship_type": "related_attempt",
+      "field_name": null,
+      "field_value": null,
+      "rationale": "Manual review confirms that payment/detail rows 179-180 for “YWallet” belong with All Grants row 117, “YWallet & Warp Sync.” The payment/detail sheet uses the shortened project name “YWallet,” while the All Grants registry records the full proposal title. The grantee/applicant, timing, and forum proposal align, so this is a title-normalization mismatch rather than a separate unmatched payment-detail grant.",
+      "confidence": "1.0000",
+      "evidence": {
+        "linkedIssue": {
+          "id": "28cc3bc6-2c5c-4d45-b1b1-a69f2276cacb",
+          "details": {
+            "status": "Completed",
+            "grantee": "Hanh",
+            "rowCount": 2,
+            "generatedBy": "grant_reconciliation_v1",
+            "sheetProject": "YWallet"
+          },
+          "summary": "Payment/detail Sheet project did not match the All Grants registry: YWallet",
+          "issueType": "unmatched_payment_detail_without_historical_registry_match"
+        }
+      },
+      "created_at": "2026-07-08 13:01:17.875525+00",
+      "updated_at": "2026-07-08 13:01:17.875525+00"
+    },
+    {
+      "decision_key": "manual:link_source:a910a858560e156aa259b2ba",
+      "decision_type": "link_source",
+      "status": "active",
+      "source_kind": "google_sheet_row",
+      "source_id": "1FQ28rDCyRW0TiNxrm3rgD8ai2KGUsXAjPieQmI1kKKg:803214474:row:227",
+      "canonical_type": "grant_application",
+      "canonical_key": "sheet-all-grants:zechub open source education for zcash:dismad:1 4 2023",
+      "related_canonical_key": null,
+      "relationship_type": "related_attempt",
+      "field_name": null,
+      "field_value": null,
+      "rationale": "Manual review confirms that payment/detail rows 227-238 for “ZecHub” belong with All Grants row 153, “ZecHub: open-source education for Zcash.” The payment/detail sheet uses the shortened project name “ZecHub,” while the All Grants registry records the full proposal title. The grantee, 2023 payment timing, 12-row milestone structure, and proposal amount align with the January 2023 ZecHub grant, so this is a title-normalization mismatch rather than a separate unmatched payment-detail grant.",
+      "confidence": "1.0000",
+      "evidence": {
+        "linkedIssue": {
+          "id": "3be34db2-6b17-47dd-9fbb-9ca9e0dbb6d7",
+          "details": {
+            "status": "Completed",
+            "grantee": "ZecHub",
+            "rowCount": 12,
+            "generatedBy": "grant_reconciliation_v1",
+            "sheetProject": "ZecHub"
+          },
+          "summary": "Payment/detail Sheet project did not match the All Grants registry: ZecHub",
+          "issueType": "unmatched_payment_detail_without_historical_registry_match"
+        }
+      },
+      "created_at": "2026-07-08 13:06:35.122251+00",
+      "updated_at": "2026-07-08 13:06:35.122251+00"
+    },
+    {
+      "decision_key": "manual:link_source:d2e9ec78be3662005c32d4ea",
+      "decision_type": "link_source",
+      "status": "active",
+      "source_kind": "google_sheet_row",
+      "source_id": "1FQ28rDCyRW0TiNxrm3rgD8ai2KGUsXAjPieQmI1kKKg:803214474:row:345",
+      "canonical_type": "grant_application",
+      "canonical_key": "sheet-all-grants:zcash sdk implementation js ts:daniel choi bernard stojanovic and ivan rubido:11 30 2023",
+      "related_canonical_key": null,
+      "relationship_type": "related_attempt",
+      "field_name": null,
+      "field_value": null,
+      "rationale": "Manual review confirms that payment/detail row 345 for “ZCash SDK Feasibility Study [JS/TS]” belongs with All Grants row 231, “ZCash SDK Implementation [JS/TS].” The forum proposal identifies this as a ChainSafe proposal and describes a $35,000 viability/feasibility milestone. The payment/detail sheet records that milestone-level payment, while the All Grants registry records the broader approved application.",
+      "confidence": "1.0000",
+      "evidence": {
+        "linkedIssue": {
+          "id": "cd9ebdd1-b58a-4997-85c7-fafec334e577",
+          "details": {
+            "status": "Completed",
+            "grantee": "ChainSafe",
+            "rowCount": 1,
+            "generatedBy": "grant_reconciliation_v1",
+            "sheetProject": "ZCash SDK Feasibility Study [JS/TS]"
+          },
+          "summary": "Payment/detail Sheet project did not match the All Grants registry: ZCash SDK Feasibility Study [JS/TS]",
+          "issueType": "unmatched_payment_detail_without_historical_registry_match"
+        }
+      },
+      "created_at": "2026-07-08 13:09:38.488048+00",
+      "updated_at": "2026-07-08 13:09:38.488048+00"
+    },
+    {
+      "decision_key": "manual:link_source:a59d5bbd6dd0b37960fc2f67",
+      "decision_type": "link_source",
+      "status": "active",
+      "source_kind": "google_sheet_row",
+      "source_id": "1FQ28rDCyRW0TiNxrm3rgD8ai2KGUsXAjPieQmI1kKKg:803214474:row:37",
+      "canonical_type": "grant_application",
+      "canonical_key": "sheet-all-grants:zeme team:ziga and zipha:3 22 2021",
+      "related_canonical_key": null,
+      "relationship_type": "related_attempt",
+      "field_name": null,
+      "field_value": null,
+      "rationale": "Manual review confirms that payment/detail row 37, “Zeme Team- returned funds intended for tip creators,” belongs with All Grants row 24, “Zeme Team.” The row is a negative accounting adjustment for returned funds tied to creator tips described in the original Zeme Team proposal, not a separate grant application. The generated matcher treated it as unmatched because the payment/detail project name includes return/accounting text after the base grant title.",
+      "confidence": "1.0000",
+      "evidence": {
+        "linkedIssue": {
+          "id": "e7a3a3bb-3b9e-4fe2-9d63-dd79bbdb3167",
+          "details": {
+            "status": "Completed",
+            "grantee": "Zeme Team",
+            "rowCount": 1,
+            "generatedBy": "grant_reconciliation_v1",
+            "sheetProject": "Zeme Team- returned funds intended for tip creators"
+          },
+          "summary": "Payment/detail Sheet project did not match the All Grants registry: Zeme Team- returned funds intended for tip creators",
+          "issueType": "unmatched_payment_detail_without_historical_registry_match"
+        }
+      },
+      "created_at": "2026-07-08 13:22:51.269853+00",
+      "updated_at": "2026-07-08 13:22:51.269853+00"
+    },
+    {
+      "decision_key": "manual:link_source:54e0ef457b389e5bdcf907ec",
+      "decision_type": "link_source",
+      "status": "active",
+      "source_kind": "google_sheet_row",
+      "source_id": "1FQ28rDCyRW0TiNxrm3rgD8ai2KGUsXAjPieQmI1kKKg:803214474:row:437",
+      "canonical_type": "grant_application",
+      "canonical_key": "sheet-all-grants:request for funding to upstream enhancements to librustzcash:willem olding chainsafe systems:11 5 2024",
+      "related_canonical_key": null,
+      "relationship_type": "related_attempt",
+      "field_name": null,
+      "field_value": null,
+      "rationale": "Manual review confirms that payment/detail row 437 for “Upstream enhancements to librustzcash” belongs with All Grants row 296, “Request for funding to upstream enhancements to librustzcash.” The payment/detail sheet uses a shortened project title and grantee “ChainSafe,” while the All Grants registry records the fuller proposal title and applicant “Willem Olding (ChainSafe Systems).” The forum thread confirms ChainSafe submitted the grant and that the work was the first and only milestone.",
+      "confidence": "1.0000",
+      "evidence": {
+        "linkedIssue": {
+          "id": "ef3e5e15-074b-4bb3-a1dc-3e1dabc90b06",
+          "details": {
+            "status": "Open",
+            "grantee": "ChainSafe",
+            "rowCount": 1,
+            "generatedBy": "grant_reconciliation_v1",
+            "sheetProject": "Upstream enhancements to librustzcash"
+          },
+          "summary": "Payment/detail Sheet project did not match the All Grants registry: Upstream enhancements to librustzcash",
+          "issueType": "unmatched_payment_detail_without_historical_registry_match"
+        }
+      },
+      "created_at": "2026-07-08 13:26:03.08725+00",
+      "updated_at": "2026-07-08 13:26:03.08725+00"
+    },
+    {
+      "decision_key": "manual:link_source:d735d2332a2d8edd05b555b2",
+      "decision_type": "link_source",
+      "status": "active",
+      "source_kind": "google_sheet_row",
+      "source_id": "1FQ28rDCyRW0TiNxrm3rgD8ai2KGUsXAjPieQmI1kKKg:803214474:row:442",
+      "canonical_type": "grant_application",
+      "canonical_key": "sheet-all-grants:webzjs zcash browser library maintenance:chainsafe systems bryant:12 13 2024",
+      "related_canonical_key": null,
+      "relationship_type": "related_attempt",
+      "field_name": null,
+      "field_value": null,
+      "rationale": "Manual review confirms that payment/detail rows 442-453 for “Chainsafe Systems” belong with All Grants row 308, “WebZjs - Zcash Browser Library Maintenance.” The payment/detail sheet uses a generic grantee/project label, while the All Grants registry and GitHub issue #2 identify the underlying grant as a 12-month WebZjs/browser wallet maintenance grant. The 12 monthly $14,000 milestones total $168,000, matching the approved application.",
+      "confidence": "1.0000",
+      "evidence": {
+        "linkedIssue": {
+          "id": "9fbc068c-7e08-461b-a579-c30dd49e0211",
+          "details": {
+            "status": "Completed",
+            "grantee": "ChainSafe",
+            "rowCount": 12,
+            "generatedBy": "grant_reconciliation_v1",
+            "sheetProject": "Chainsafe Systems"
+          },
+          "summary": "Payment/detail Sheet project did not match the All Grants registry: Chainsafe Systems",
+          "issueType": "unmatched_payment_detail_without_historical_registry_match"
+        }
+      },
+      "created_at": "2026-07-08 13:28:32.220309+00",
+      "updated_at": "2026-07-08 13:28:32.220309+00"
+    },
+    {
+      "decision_key": "manual:link_source:0568977f79e2de800b1e051c",
+      "decision_type": "link_source",
+      "status": "active",
+      "source_kind": "google_sheet_row",
+      "source_id": "1FQ28rDCyRW0TiNxrm3rgD8ai2KGUsXAjPieQmI1kKKg:803214474:row:554",
+      "canonical_type": "grant_application",
+      "canonical_key": "sheet-all-grants:assistance for legal compliance activities:qedit:6 30 2025",
+      "related_canonical_key": null,
+      "relationship_type": "related_attempt",
+      "field_name": null,
+      "field_value": null,
+      "rationale": "Manual review confirms that payment/detail row 554 for “Assistance for Legal Compliance Activities (2025)” belongs with All Grants row 353, “Assistance for Legal Compliance Activities.” The payment/detail sheet includes “(2025)” to distinguish it from the prior 2024 legal-compliance grant, while the All Grants registry uses the same base title. The GitHub issue #59 and 2025 forum thread confirm this is the 2025 QEDIT legal-compliance grant.",
+      "confidence": "1.0000",
+      "evidence": {
+        "linkedIssue": {
+          "id": "b4240d2e-e990-4708-9c49-4d523d562323",
+          "details": {
+            "status": "Completed",
+            "grantee": "QEDIT",
+            "rowCount": 1,
+            "generatedBy": "grant_reconciliation_v1",
+            "sheetProject": "Assistance for Legal Compliance Activities (2025)"
+          },
+          "summary": "Payment/detail Sheet project did not match the All Grants registry: Assistance for Legal Compliance Activities (2025)",
+          "issueType": "unmatched_payment_detail_without_historical_registry_match"
+        }
+      },
+      "created_at": "2026-07-08 13:30:57.669862+00",
+      "updated_at": "2026-07-08 13:30:57.669862+00"
+    },
+    {
+      "decision_key": "manual:link_source:d46adfbc562a14128abac6c5",
+      "decision_type": "link_source",
+      "status": "active",
+      "source_kind": "google_sheet_row",
+      "source_id": "1FQ28rDCyRW0TiNxrm3rgD8ai2KGUsXAjPieQmI1kKKg:803214474:row:59",
+      "canonical_type": "grant_application",
+      "canonical_key": "sheet-all-grants:zcash mini documentary and educational series:37 laines and david boyer:7 25 2021",
+      "related_canonical_key": null,
+      "relationship_type": "related_attempt",
+      "field_name": null,
+      "field_value": null,
+      "rationale": "Manual review confirms that payment/detail rows 59-64 for “Zcash Short Documentary” belong with All Grants row 49, “Zcash Mini-Documentary & Educational Series.” The payment/detail sheet uses a shortened project name and grantee “Zcash Media,” while the All Grants registry records the original applicant names, 37 Laines & David Boyer. The linked forum proposal describes a documentary and educational video series, matching the completed payment group.",
+      "confidence": "1.0000",
+      "evidence": {
+        "linkedIssue": {
+          "id": "5c3dcd9b-7256-495e-843f-2c1672476778",
+          "details": {
+            "status": "Completed",
+            "grantee": "Zcash Media",
+            "rowCount": 6,
+            "generatedBy": "grant_reconciliation_v1",
+            "sheetProject": "Zcash Short Documentary"
+          },
+          "summary": "Payment/detail Sheet project did not match the All Grants registry: Zcash Short Documentary",
+          "issueType": "unmatched_payment_detail_without_historical_registry_match"
+        }
+      },
+      "created_at": "2026-07-08 13:32:59.982818+00",
+      "updated_at": "2026-07-08 13:32:59.982818+00"
+    },
+    {
+      "decision_key": "manual:link_source:e214abbf5fcc630d7e38f232",
+      "decision_type": "link_source",
+      "status": "active",
+      "source_kind": "google_sheet_row",
+      "source_id": "1FQ28rDCyRW0TiNxrm3rgD8ai2KGUsXAjPieQmI1kKKg:803214474:row:600",
+      "canonical_type": "grant_application",
+      "canonical_key": "sheet-all-grants:zecdev launchpad one command zebra devnet reusable ci changed grant name to zebra regtest ci kit zrk:abdulkareem oyeneye dapps over apps:10 11 2025",
+      "related_canonical_key": null,
+      "relationship_type": "related_attempt",
+      "field_name": null,
+      "field_value": null,
+      "rationale": "Manual review confirms that payment/detail rows 600-604 for “Zebra Regtest CI Kit (ZRK)” belong with All Grants row 397. The All Grants registry records the original title “ZecDev Launchpad - One-Command Zebra Devnet + Reusable CI” and notes that the grant name changed to “Zebra Regtest CI Kit (ZRK).” GitHub issue #105 confirms the grant was approved, milestones 1-3 were completed, and the grant was later cancelled before completion.",
+      "confidence": "1.0000",
+      "evidence": {
+        "linkedIssue": {
+          "id": "a0ed0fb0-b774-4b40-8f2a-1c770e0ec91f",
+          "details": {
+            "status": "Cancelled",
+            "grantee": "Abdulkareem Oyeneye (Dapps over Apps)",
+            "rowCount": 5,
+            "generatedBy": "grant_reconciliation_v1",
+            "sheetProject": "Zebra Regtest CI Kit (ZRK)"
+          },
+          "summary": "Payment/detail Sheet project did not match the All Grants registry: Zebra Regtest CI Kit (ZRK)",
+          "issueType": "unmatched_payment_detail_without_historical_registry_match"
+        }
+      },
+      "created_at": "2026-07-08 13:35:22.159881+00",
+      "updated_at": "2026-07-08 13:35:22.159881+00"
+    },
+    {
+      "decision_key": "manual:link_source:c94762a7378d7f684dc61077",
+      "decision_type": "link_source",
+      "status": "active",
+      "source_kind": "google_sheet_row",
+      "source_id": "1FQ28rDCyRW0TiNxrm3rgD8ai2KGUsXAjPieQmI1kKKg:1164534734:row:277",
+      "canonical_type": "grant_application",
+      "canonical_key": "github:ZcashCommunityGrants/zcashcommunitygrants#18",
+      "related_canonical_key": null,
+      "relationship_type": null,
+      "field_name": null,
+      "field_value": null,
+      "rationale": "Corrected durable source link: All Grants sheet row 277 belongs with GitHub issue #18. The earlier manual decision captured the right row and canonical application but used the wrong source kind; this decision records the source as a google_sheet_row so it can be replayed after reconciliation rebuilds.",
+      "confidence": "1.0000",
+      "evidence": {},
+      "created_at": "2026-07-08 13:50:00.410954+00",
+      "updated_at": "2026-07-08 13:50:00.410954+00"
+    },
+    {
+      "decision_key": "manual:link_source:5f1bacb5a1a702557bb49704",
+      "decision_type": "link_source",
+      "status": "active",
+      "source_kind": "google_sheet_row",
+      "source_id": "1FQ28rDCyRW0TiNxrm3rgD8ai2KGUsXAjPieQmI1kKKg:1164534734:row:322",
+      "canonical_type": "grant_application",
+      "canonical_key": "github:ZcashCommunityGrants/zcashcommunitygrants#24",
+      "related_canonical_key": null,
+      "relationship_type": null,
+      "field_name": null,
+      "field_value": null,
+      "rationale": "Corrected durable source link: All Grants sheet row 322 belongs with GitHub issue #24. The earlier manual decision captured the right row and canonical application but used the wrong source kind; this decision records the source as a google_sheet_row so it can be replayed after reconciliation rebuilds.",
+      "confidence": "1.0000",
+      "evidence": {},
+      "created_at": "2026-07-08 13:50:01.103424+00",
+      "updated_at": "2026-07-08 13:50:01.103424+00"
+    },
+    {
+      "decision_key": "manual:link_source:e0577d382a280d6f1d48bbf0",
+      "decision_type": "link_source",
+      "status": "active",
+      "source_kind": "google_sheet_row",
+      "source_id": "1FQ28rDCyRW0TiNxrm3rgD8ai2KGUsXAjPieQmI1kKKg:1164534734:row:518",
+      "canonical_type": "grant_application",
+      "canonical_key": "github:ZcashCommunityGrants/zcashcommunitygrants#243",
+      "related_canonical_key": null,
+      "relationship_type": null,
+      "field_name": null,
+      "field_value": null,
+      "rationale": "Corrected durable source link: All Grants sheet row 518 belongs with GitHub issue #243, the replacement for abandoned issue #241. The earlier manual decision captured the right row and canonical application but used the wrong source kind; this decision records the source as a google_sheet_row so it can be replayed after reconciliation rebuilds.",
+      "confidence": "1.0000",
+      "evidence": {},
+      "created_at": "2026-07-08 13:50:01.763686+00",
+      "updated_at": "2026-07-08 13:50:01.763686+00"
+    },
+    {
+      "decision_key": "manual:link_source:5686d942f359d6ca79dfbb0b",
+      "decision_type": "link_source",
+      "status": "active",
+      "source_kind": "google_sheet_row",
+      "source_id": "1FQ28rDCyRW0TiNxrm3rgD8ai2KGUsXAjPieQmI1kKKg:803214474:row:442",
+      "canonical_type": "grant_application",
+      "canonical_key": "github:ZcashCommunityGrants/zcashcommunitygrants#2",
+      "related_canonical_key": null,
+      "relationship_type": null,
+      "field_name": null,
+      "field_value": null,
+      "rationale": "Corrected durable source link: payment/detail rows 442-453 for “Chainsafe Systems” belong with GitHub issue #2 / the ChainSafe Systems WebZjs browser library maintenance grant. The earlier decision used a sheet-all-grants canonical key that is now represented by the matched GitHub canonical application.",
+      "confidence": "1.0000",
+      "evidence": {},
+      "created_at": "2026-07-08 13:51:43.738552+00",
+      "updated_at": "2026-07-08 13:51:43.738552+00"
+    },
+    {
+      "decision_key": "manual:link_source:01bc5254227c13e3c2c243e0",
+      "decision_type": "link_source",
+      "status": "active",
+      "source_kind": "google_sheet_row",
+      "source_id": "1FQ28rDCyRW0TiNxrm3rgD8ai2KGUsXAjPieQmI1kKKg:803214474:row:554",
+      "canonical_type": "grant_application",
+      "canonical_key": "github:ZcashCommunityGrants/zcashcommunitygrants#59",
+      "related_canonical_key": null,
+      "relationship_type": null,
+      "field_name": null,
+      "field_value": null,
+      "rationale": "Corrected durable source link: payment/detail row 554 for “Assistance for Legal Compliance Activities (2025)” belongs with GitHub issue #59 / the 2025 QEDIT legal-compliance grant. The earlier decision used a sheet-all-grants canonical key that is now represented by the matched GitHub canonical application.",
+      "confidence": "1.0000",
+      "evidence": {},
+      "created_at": "2026-07-08 13:51:44.496439+00",
+      "updated_at": "2026-07-08 13:51:44.496439+00"
+    },
+    {
+      "decision_key": "manual:link_source:0b2a27133145228fd8b7b52d",
+      "decision_type": "link_source",
+      "status": "active",
+      "source_kind": "google_sheet_row",
+      "source_id": "1FQ28rDCyRW0TiNxrm3rgD8ai2KGUsXAjPieQmI1kKKg:803214474:row:600",
+      "canonical_type": "grant_application",
+      "canonical_key": "github:ZcashCommunityGrants/zcashcommunitygrants#105",
+      "related_canonical_key": null,
+      "relationship_type": null,
+      "field_name": null,
+      "field_value": null,
+      "rationale": "Corrected durable source link: payment/detail rows 600-604 for “Zebra Regtest CI Kit (ZRK)” belong with GitHub issue #105. The earlier decision used a sheet-all-grants canonical key that is now represented by the matched GitHub canonical application.",
+      "confidence": "1.0000",
+      "evidence": {},
+      "created_at": "2026-07-08 13:51:45.190183+00",
+      "updated_at": "2026-07-08 13:51:45.190183+00"
+    },
+    {
+      "decision_key": "manual:dismiss_issue:8d31c64d51cec9fd1b2e554e",
+      "decision_type": "dismiss_issue",
+      "status": "active",
+      "source_kind": "github_issue",
+      "source_id": "ZcashCommunityGrants/zcashcommunitygrants#24",
+      "canonical_type": "grant_application",
+      "canonical_key": "github:ZcashCommunityGrants/zcashcommunitygrants#24",
+      "related_canonical_key": null,
+      "relationship_type": null,
+      "field_name": null,
+      "field_value": null,
+      "rationale": "Manual review determines the suggested payment/detail sheet match is not the same grant. The sheet project “Zenith Full Node Wallet” refers to older completed milestone/payment records, while GitHub issue #24 and All Grants row 322 refer to the separate “Zenith Full Node Wallet 2025” application, which was rejected. The low-confidence payment/detail warning should be dismissed rather than treated as the same source linkage.",
+      "confidence": "1.0000",
+      "evidence": {
+        "linkedIssue": {
+          "id": "3ee59682-a37c-4c86-be04-b8f90bc7c02e",
+          "details": {
+            "confidence": 0.8571428571428571,
+            "generatedBy": "grant_reconciliation_v1",
+            "githubTitle": "Grant Application - Zenith Full Node Wallet 2025",
+            "sheetProject": "Zenith Full Node Wallet"
+          },
+          "summary": "Review possible payment/detail Sheet match for Zenith Full Node Wallet 2025",
+          "issueType": "low_confidence_payment_detail_match"
+        }
+      },
+      "created_at": "2026-07-08 13:52:20.672684+00",
+      "updated_at": "2026-07-08 13:52:20.672684+00"
     }
   ]
 }

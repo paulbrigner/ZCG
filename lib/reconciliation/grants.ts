@@ -1823,6 +1823,7 @@ export async function runGrantReconciliation(): Promise<ReconciliationRunResult>
     manualApplyResult.unlinkedSources +
     manualApplyResult.relationships +
     manualApplyResult.directlyResolvedIssues +
+    manualApplyResult.inferredDismissedIssues +
     manualApplyResult.inferredResolvedIssues;
 
   await query(

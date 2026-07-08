@@ -98,6 +98,7 @@ export type ManualReconciliationApplyResult = {
   unlinkedSources: number;
   relationships: number;
   directlyResolvedIssues: number;
+  inferredDismissedIssues: number;
   inferredResolvedIssues: number;
 };
 
@@ -649,13 +650,67 @@ export async function applyManualReconciliationDecisions(): Promise<ManualReconc
      select count(*)::text as affected_count from resolved`
   );
 
-  const inferredResolvedIssues = await countFromQuery(
-    `with active_links as (
+  const inferredDismissedIssues = await countFromQuery(
+    `with active_dismissals as (
        select d.created_by_principal_id,
+              d.source_kind,
               d.source_id,
               substring(d.source_id from '#([0-9]+)$') as github_issue_number,
               ga.id as canonical_id,
-              sr.id as source_record_id
+              sr.id as source_record_id,
+              sr.raw_payload->>'Project' as source_project,
+              sr.raw_payload->>'Grantee' as source_grantee
+         from reconciliation_decisions d
+         left join grant_applications ga on ga.canonical_key = d.canonical_key
+         left join source_records sr on sr.source_kind = d.source_kind
+                                and sr.source_id = d.source_id
+        where d.status = 'active'
+          and d.decision_type = 'dismiss_issue'
+     ),
+     dismissed as (
+       update reconciliation_issues ri
+          set status = 'dismissed',
+              resolved_by_principal_id = coalesce(ri.resolved_by_principal_id, ad.created_by_principal_id),
+              resolved_at = coalesce(ri.resolved_at, now()),
+              updated_at = now()
+         from active_dismissals ad
+        where ri.status in ('open', 'assigned')
+          and (
+            ri.source_record_id = ad.source_record_id
+            or (
+              ad.github_issue_number is not null
+              and (
+                ri.details->>'githubIssueNumber' = ad.github_issue_number
+                or ri.details->>'issueNumber' = ad.github_issue_number
+              )
+            )
+            or (
+              ad.canonical_id is not null
+              and ri.canonical_type = 'grant_application'
+              and ri.canonical_id = ad.canonical_id
+            )
+            or (
+              ri.issue_type = 'unmatched_payment_detail_without_historical_registry_match'
+              and ad.source_kind = 'google_sheet_row'
+              and ri.details->>'sheetProject' = ad.source_project
+              and coalesce(ri.details->>'grantee', '') = coalesce(ad.source_grantee, '')
+            )
+          )
+        returning 1
+     )
+     select count(*)::text as affected_count from dismissed`
+  );
+
+  const inferredResolvedIssues = await countFromQuery(
+    `with active_links as (
+       select d.created_by_principal_id,
+              d.source_kind,
+              d.source_id,
+              substring(d.source_id from '#([0-9]+)$') as github_issue_number,
+              ga.id as canonical_id,
+              sr.id as source_record_id,
+              sr.raw_payload->>'Project' as source_project,
+              sr.raw_payload->>'Grantee' as source_grantee
          from reconciliation_decisions d
          join grant_applications ga on ga.canonical_key = d.canonical_key
          left join source_records sr on sr.source_kind = d.source_kind
@@ -672,14 +727,26 @@ export async function applyManualReconciliationDecisions(): Promise<ManualReconc
               updated_at = now()
          from active_links al
         where ri.status in ('open', 'assigned')
-          and ri.canonical_type = 'grant_application'
-          and ri.canonical_id = al.canonical_id
           and (
             ri.source_record_id = al.source_record_id
             or (
-              ri.issue_type in ('missing_github_source_mirror', 'missing_github_match', 'missing_historical_registry_match')
+              ri.canonical_type = 'grant_application'
+              and ri.canonical_id = al.canonical_id
+              and ri.issue_type in ('missing_github_source_mirror', 'missing_github_match', 'missing_historical_registry_match', 'low_confidence_historical_registry_match')
+            )
+            or (
+              ri.issue_type in ('missing_github_source_mirror', 'missing_github_match', 'missing_historical_registry_match', 'low_confidence_historical_registry_match')
               and al.github_issue_number is not null
-              and ri.details->>'githubIssueNumber' = al.github_issue_number
+              and (
+                ri.details->>'githubIssueNumber' = al.github_issue_number
+                or ri.details->>'issueNumber' = al.github_issue_number
+              )
+            )
+            or (
+              ri.issue_type = 'unmatched_payment_detail_without_historical_registry_match'
+              and al.source_kind = 'google_sheet_row'
+              and ri.details->>'sheetProject' = al.source_project
+              and coalesce(ri.details->>'grantee', '') = coalesce(al.source_grantee, '')
             )
           )
         returning 1
@@ -692,6 +759,7 @@ export async function applyManualReconciliationDecisions(): Promise<ManualReconc
     unlinkedSources,
     relationships,
     directlyResolvedIssues,
+    inferredDismissedIssues,
     inferredResolvedIssues
   };
 }
