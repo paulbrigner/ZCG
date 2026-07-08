@@ -1378,6 +1378,44 @@ async function deleteLegacySheetOnlyApplications() {
   await query(`delete from grant_applications where canonical_key like 'sheet:%' or canonical_key like 'sheet-detail-unmatched:%'`);
 }
 
+async function deleteMatchedHistoricalRegistryApplications(matchedHistoricalKeys: Set<string>) {
+  if (!matchedHistoricalKeys.size) {
+    return;
+  }
+
+  const payload = [...matchedHistoricalKeys].map((key) => ({
+    canonical_key: `sheet-all-grants:${key}`
+  }));
+
+  await query(
+    `delete from source_links sl
+      using grant_applications ga,
+            jsonb_to_recordset($1::jsonb) as stale(canonical_key text)
+      where sl.canonical_type = 'grant_application'
+        and sl.canonical_id = ga.id
+        and ga.canonical_key = stale.canonical_key`,
+    [JSON.stringify(payload)]
+  );
+
+  await query(
+    `delete from grants
+      where application_id in (
+        select ga.id
+          from grant_applications ga
+          join jsonb_to_recordset($1::jsonb) as stale(canonical_key text)
+            on stale.canonical_key = ga.canonical_key
+      )`,
+    [JSON.stringify(payload)]
+  );
+
+  await query(
+    `delete from grant_applications ga
+      using jsonb_to_recordset($1::jsonb) as stale(canonical_key text)
+      where ga.canonical_key = stale.canonical_key`,
+    [JSON.stringify(payload)]
+  );
+}
+
 export async function runGrantReconciliation(): Promise<ReconciliationRunResult> {
   const [githubRecords, githubCommentRecords, sheetRecords] = await Promise.all([
     fetchSourceRecords("github_issue"),
@@ -1602,6 +1640,8 @@ export async function runGrantReconciliation(): Promise<ReconciliationRunResult>
 
     plannedApplications.push(planned);
   }
+
+  await deleteMatchedHistoricalRegistryApplications(matchedHistoricalKeys);
 
   for (const group of historicalGroups.values()) {
     if (matchedHistoricalKeys.has(group.key)) {
