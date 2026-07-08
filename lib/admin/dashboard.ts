@@ -41,6 +41,11 @@ export type ApplicationTotalsRow = {
   needs_review_applications: string;
 };
 
+export type ForumRoleTotalsRow = {
+  primary_forum_threads: string;
+  supporting_forum_references: string;
+};
+
 export type ApplicationPagination = {
   page: number;
   pageSize: number;
@@ -85,6 +90,8 @@ export type GrantApplicationRow = {
   github_state: string | null;
   source_count: string;
   forum_link_count: string;
+  primary_forum_thread_count: string;
+  supporting_forum_reference_count: string;
   github_label_count: string;
   github_labels: string;
   open_issue_count: string;
@@ -112,6 +119,7 @@ export type ForumLinkRow = {
   title: string | null;
   summary: string | null;
   confidence: string;
+  relationship_role: string;
   metadata: string;
 };
 
@@ -123,6 +131,7 @@ export type SourceEvidenceRow = {
   title: string | null;
   summary: string | null;
   confidence: string;
+  relationship_role: string;
   raw_payload: string;
   metadata: string;
 };
@@ -357,6 +366,7 @@ export async function getAdminDashboard({
     syncRuns,
     sourceCounts,
     reconciliationSummary,
+    forumRoleTotals,
     applicationTotals,
     applicationStatusOptions,
     githubIssueStateOptions,
@@ -394,6 +404,17 @@ export async function getAdminDashboard({
          from reconciliation_issues
         group by status, severity
         order by status, severity`
+    ),
+    query<ForumRoleTotalsRow>(
+      `select count(distinct sl.id) filter (where sl.relationship_role = 'primary_forum_thread')::text
+                as primary_forum_threads,
+              count(distinct sl.id) filter (
+                where coalesce(sl.relationship_role, 'source_evidence') <> 'primary_forum_thread'
+              )::text as supporting_forum_references
+         from source_links sl
+         join source_records sr on sr.id = sl.source_record_id
+        where sl.canonical_type = 'grant_application'
+          and sr.source_kind = 'forum_link'`
     ),
     query<ApplicationTotalsRow>(
       `select count(*)::text as total_applications,
@@ -491,6 +512,14 @@ export async function getAdminDashboard({
             ga.github_state,
             count(distinct sl.source_record_id)::text as source_count,
             count(distinct sl.source_record_id) filter (where sr.source_kind = 'forum_link')::text as forum_link_count,
+            count(distinct sl.source_record_id) filter (
+              where sr.source_kind = 'forum_link'
+                and sl.relationship_role = 'primary_forum_thread'
+            )::text as primary_forum_thread_count,
+            count(distinct sl.source_record_id) filter (
+              where sr.source_kind = 'forum_link'
+                and coalesce(sl.relationship_role, 'source_evidence') <> 'primary_forum_thread'
+            )::text as supporting_forum_reference_count,
             (
               select count(*)::text
                 from grant_application_github_labels gal_count
@@ -535,6 +564,7 @@ export async function getAdminDashboard({
     syncRuns: syncRuns.rows,
     sourceCounts: sourceCounts.rows,
     reconciliationSummary: reconciliationSummary.rows,
+    forumRoleTotals: forumRoleTotals.rows[0] ?? { primary_forum_threads: "0", supporting_forum_references: "0" },
     applicationTotals: applicationTotals.rows[0] ?? emptyApplicationTotals,
     applicationStatusOptions: applicationStatusOptions.rows,
     githubIssueStateOptions: githubIssueStateOptions.rows,
@@ -570,6 +600,14 @@ export async function getGrantApplicationDetail(id: string) {
               ga.github_state,
               count(distinct sl.source_record_id)::text as source_count,
               count(distinct sl.source_record_id) filter (where sr.source_kind = 'forum_link')::text as forum_link_count,
+              count(distinct sl.source_record_id) filter (
+                where sr.source_kind = 'forum_link'
+                  and sl.relationship_role = 'primary_forum_thread'
+              )::text as primary_forum_thread_count,
+              count(distinct sl.source_record_id) filter (
+                where sr.source_kind = 'forum_link'
+                  and coalesce(sl.relationship_role, 'source_evidence') <> 'primary_forum_thread'
+              )::text as supporting_forum_reference_count,
               (
                 select count(*)::text
                   from grant_application_github_labels gal_count
@@ -631,6 +669,7 @@ export async function getGrantApplicationDetail(id: string) {
               sr.title,
               sr.summary,
               sl.confidence::text,
+              sl.relationship_role,
               sr.metadata::text
          from source_links sl
          join source_records sr on sr.id = sl.source_record_id
@@ -648,6 +687,7 @@ export async function getGrantApplicationDetail(id: string) {
               sr.title,
               sr.summary,
               sl.confidence::text,
+              sl.relationship_role,
               sr.raw_payload::text,
               sr.metadata::text
          from source_links sl

@@ -740,14 +740,16 @@ button:disabled {
 .badge.open,
 .badge.info,
 .badge.matched,
-.badge.sheet_github_linked {
+.badge.sheet_github_linked,
+.badge.primary_forum_thread {
   background: #eff6ff;
   border-color: #bfdbfe;
   color: #1d4ed8;
 }
 
 .badge.github_only,
-.badge.sheet_only {
+.badge.sheet_only,
+.badge.supporting_forum_reference {
   background: #fffbeb;
   border-color: #fde68a;
   color: var(--amber);

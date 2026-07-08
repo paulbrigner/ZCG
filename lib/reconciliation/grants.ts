@@ -107,10 +107,13 @@ type ApplicationGitHubLabelInput = GitHubLabelInput & {
   applicationId: string;
 };
 
+type SourceLinkRelationshipRole = "source_evidence" | "primary_forum_thread" | "supporting_forum_reference";
+
 type SourceLinkInput = {
   sourceRecordId: string;
   canonicalId: string;
   confidence: number;
+  relationshipRole?: SourceLinkRelationshipRole;
 };
 
 type ReconciliationIssueInput = {
@@ -127,6 +130,7 @@ type ForumLinkInput = {
   title: string;
   summary: string;
   discoveredFrom: string[];
+  relationshipRole: Extract<SourceLinkRelationshipRole, "primary_forum_thread" | "supporting_forum_reference">;
 };
 
 type PlannedApplication = {
@@ -193,25 +197,30 @@ function numberValue(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function collectStringValues(value: unknown, depth = 0): string[] {
+type StringEntry = {
+  path: string[];
+  value: string;
+};
+
+function collectStringEntries(value: unknown, path: string[] = [], depth = 0): StringEntry[] {
   if (depth > 6 || value === null || value === undefined) {
     return [];
   }
 
   if (typeof value === "string") {
-    return [value];
+    return [{ path, value }];
   }
 
   if (typeof value === "number" || typeof value === "boolean") {
-    return [String(value)];
+    return [{ path, value: String(value) }];
   }
 
   if (Array.isArray(value)) {
-    return value.flatMap((entry) => collectStringValues(entry, depth + 1));
+    return value.flatMap((entry) => collectStringEntries(entry, path, depth + 1));
   }
 
   if (typeof value === "object") {
-    return Object.values(value).flatMap((entry) => collectStringValues(entry, depth + 1));
+    return Object.entries(value).flatMap(([key, entry]) => collectStringEntries(entry, [...path, key], depth + 1));
   }
 
   return [];
@@ -257,23 +266,61 @@ function forumTitleFromUrl(url: string) {
   return "Forum thread";
 }
 
+function forumRelationshipRole(
+  record: RawSourceRecord,
+  entry: StringEntry
+): ForumLinkInput["relationshipRole"] {
+  const context = `${entry.path.join(" ")} ${entry.value}`.toLowerCase();
+  const hasForumReference =
+    /forum\s+(post|thread|reference|discussion|link)/.test(context) ||
+    /discussion\s+thread/.test(context);
+  const isHistoricalForumField =
+    record.source_kind === "google_sheet_row" &&
+    entry.path.some((part) => part.toLowerCase() === "forum link");
+  const isBackgroundReference =
+    /previous\s+funding|prior\s+funding|previous\s+work|prior\s+work|reference\s+to|references\s+to|dependencies/.test(context);
+
+  if ((isHistoricalForumField || hasForumReference) && !isBackgroundReference) {
+    return "primary_forum_thread";
+  }
+
+  return "supporting_forum_reference";
+}
+
+function mergeForumRelationshipRole(
+  left: ForumLinkInput["relationshipRole"],
+  right: ForumLinkInput["relationshipRole"]
+) {
+  return left === "primary_forum_thread" || right === "primary_forum_thread"
+    ? "primary_forum_thread"
+    : "supporting_forum_reference";
+}
+
 function forumLinksFromRecord(record: RawSourceRecord) {
   const raw = parseJsonRecord(record.raw_payload);
-  const values = [
-    record.title,
-    record.summary,
-    record.source_url,
-    ...collectStringValues(raw)
-  ].filter((value): value is string => typeof value === "string");
+  const entries = [
+    { path: ["title"], value: record.title },
+    { path: ["summary"], value: record.summary },
+    { path: ["source_url"], value: record.source_url },
+    ...collectStringEntries(raw)
+  ].filter((entry): entry is StringEntry => typeof entry.value === "string");
   const urls = new Map<string, ForumLinkInput>();
 
-  for (const value of values) {
-    const matches = value.match(forumUrlPattern) ?? [];
+  for (const entry of entries) {
+    const matches = entry.value.match(forumUrlPattern) ?? [];
 
     for (const match of matches) {
       const url = normalizeForumUrl(match);
 
-      if (!url || urls.has(url)) {
+      if (!url) {
+        continue;
+      }
+
+      const relationshipRole = forumRelationshipRole(record, entry);
+      const existing = urls.get(url);
+
+      if (existing) {
+        existing.relationshipRole = mergeForumRelationshipRole(existing.relationshipRole, relationshipRole);
         continue;
       }
 
@@ -281,7 +328,8 @@ function forumLinksFromRecord(record: RawSourceRecord) {
         url,
         title: forumTitleFromUrl(url),
         summary: `Forum link discovered in ${record.source_kind} ${record.source_id}`,
-        discoveredFrom: [`${record.source_kind}:${record.source_id}`]
+        discoveredFrom: [`${record.source_kind}:${record.source_id}`],
+        relationshipRole
       });
     }
   }
@@ -298,6 +346,7 @@ function mergeForumLinks(records: RawSourceRecord[]) {
 
       if (existing) {
         existing.discoveredFrom = [...new Set([...existing.discoveredFrom, ...link.discoveredFrom])];
+        existing.relationshipRole = mergeForumRelationshipRole(existing.relationshipRole, link.relationshipRole);
         continue;
       }
 
@@ -1233,7 +1282,21 @@ async function replaceApplicationGithubLabels(applicationIds: string[], labels: 
 
 async function bulkUpsertForumSourceRecords(forumLinks: ForumLinkInput[]) {
   const idsByUrl = new Map<string, string>();
-  const uniqueLinks = [...new Map(forumLinks.map((link) => [link.url, link])).values()];
+  const uniqueLinksByUrl = new Map<string, ForumLinkInput>();
+
+  for (const link of forumLinks) {
+    const existing = uniqueLinksByUrl.get(link.url);
+
+    if (existing) {
+      existing.discoveredFrom = [...new Set([...existing.discoveredFrom, ...link.discoveredFrom])];
+      existing.relationshipRole = mergeForumRelationshipRole(existing.relationshipRole, link.relationshipRole);
+      continue;
+    }
+
+    uniqueLinksByUrl.set(link.url, { ...link });
+  }
+
+  const uniqueLinks = [...uniqueLinksByUrl.values()];
 
   for (const batch of chunkArray(uniqueLinks, writeBatchSize)) {
     const payload = batch.map((link) => ({
@@ -1242,12 +1305,14 @@ async function bulkUpsertForumSourceRecords(forumLinks: ForumLinkInput[]) {
       summary: link.summary,
       raw_payload: {
         url: link.url,
-        discoveredFrom: link.discoveredFrom
+        discoveredFrom: link.discoveredFrom,
+        relationshipRole: link.relationshipRole
       },
       metadata: {
         source: "reconciliation",
         generatedBy,
-        discoveredFrom: link.discoveredFrom
+        discoveredFrom: link.discoveredFrom,
+        relationshipRole: link.relationshipRole
       }
     }));
 
@@ -1301,19 +1366,22 @@ async function bulkLinkSources(links: SourceLinkInput[]) {
     const payload = batch.map((link) => ({
       source_record_id: link.sourceRecordId,
       canonical_id: link.canonicalId,
-      confidence: link.confidence
+      confidence: link.confidence,
+      relationship_role: link.relationshipRole ?? "source_evidence"
     }));
 
     await query(
-      `insert into source_links (source_record_id, canonical_type, canonical_id, confidence)
-       select source_record_id, 'grant_application', canonical_id, confidence
+      `insert into source_links (source_record_id, canonical_type, canonical_id, confidence, relationship_role)
+       select source_record_id, 'grant_application', canonical_id, confidence, relationship_role
          from jsonb_to_recordset($1::jsonb) as x(
            source_record_id uuid,
            canonical_id uuid,
-           confidence numeric
+           confidence numeric,
+           relationship_role text
          )
        on conflict (source_record_id, canonical_type, canonical_id)
-       do update set confidence = excluded.confidence`,
+       do update set confidence = excluded.confidence,
+                     relationship_role = excluded.relationship_role`,
       [JSON.stringify(payload)]
     );
   }
@@ -1837,7 +1905,12 @@ export async function runGrantReconciliation(): Promise<ReconciliationRunResult>
       const sourceRecordId = forumSourceIds.get(forumLink.url);
 
       if (sourceRecordId) {
-        links.push({ sourceRecordId, canonicalId: applicationId, confidence: 1 });
+        links.push({
+          sourceRecordId,
+          canonicalId: applicationId,
+          confidence: 1,
+          relationshipRole: forumLink.relationshipRole
+        });
       }
     }
 

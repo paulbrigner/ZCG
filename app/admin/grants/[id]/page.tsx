@@ -105,6 +105,10 @@ function compactJson(value: string) {
     .join(" | ");
 }
 
+function forumRoleLabel(value: string | null) {
+  return value === "primary_forum_thread" ? "Primary forum thread" : "Supporting forum reference";
+}
+
 const detailHelp = {
   applicant:
     "Applicant name stored on the canonical grant_applications row after reconciliation chooses the best available value from source evidence.",
@@ -116,14 +120,16 @@ const detailHelp = {
     "How the canonical application is currently supported by source evidence: matched GitHub + Sheet, GitHub only, Sheet + GitHub link, Sheet only, or unknown.",
   match:
     "Reconciliation confidence for the GitHub-to-Sheet match. GitHub-only and Sheet-only records show the missing side; sheet records with a GitHub issue link show the linked issue.",
-  forumLinks:
-    "Count of linked forum_link source_records associated with this canonical application through source_links.",
+  primaryForumThreads:
+    "Count of forum_link source_records linked as the primary grant discussion thread, usually from an explicit Forum reference comment or All Grants Forum Link field.",
+  supportingForumReferences:
+    "Count of forum_link source_records linked as supporting context, such as prior funding, previous work, reports, dependencies, or background references.",
   githubLabels:
     "Count of GitHub issue labels captured as first-class grant_application_github_labels rows for this application.",
   githubLabelSection:
     "Structured labels copied from the GitHub issue during source mirroring and reconciliation. These are used for workflow/status filtering.",
   forumLinkSection:
-    "Forum threads discovered from GitHub comments, source payloads, or Sheet fields and linked to this application during reconciliation."
+    "Forum links discovered from GitHub comments, source payloads, or Sheet fields. Reconciliation classifies each as a primary forum thread or a supporting reference."
 };
 
 export default async function GrantApplicationPage({
@@ -145,6 +151,8 @@ export default async function GrantApplicationPage({
 
   const application = detail.application;
   const sourceEvidence = detail.sources.filter((source) => source.source_kind !== "forum_link");
+  const primaryForumLinks = detail.forumLinks.filter((forumLink) => forumLink.relationship_role === "primary_forum_thread");
+  const supportingForumLinks = detail.forumLinks.filter((forumLink) => forumLink.relationship_role !== "primary_forum_thread");
 
   return (
     <main className="admin-shell">
@@ -182,8 +190,12 @@ export default async function GrantApplicationPage({
           <strong>{matchText(application)}</strong>
         </article>
         <article className="metric-card">
-          <MetricLabel body={detailHelp.forumLinks} label="Forum links" text="Forum links" />
-          <strong>{numberText(application.forum_link_count)}</strong>
+          <MetricLabel body={detailHelp.primaryForumThreads} label="Primary forum threads" text="Primary forum" />
+          <strong>{numberText(application.primary_forum_thread_count)}</strong>
+        </article>
+        <article className="metric-card">
+          <MetricLabel body={detailHelp.supportingForumReferences} label="Supporting forum references" text="Supporting forum" />
+          <strong>{numberText(application.supporting_forum_reference_count)}</strong>
         </article>
         <article className="metric-card">
           <MetricLabel body={detailHelp.githubLabels} label="GitHub labels" text="GitHub labels" />
@@ -248,17 +260,17 @@ export default async function GrantApplicationPage({
           <div>
             <h2>Forum links</h2>
             <span className="section-count">
-              {numberText(application.forum_link_count)} forum thread{application.forum_link_count === "1" ? "" : "s"} associated with this application
+              {numberText(application.primary_forum_thread_count)} primary, {numberText(application.supporting_forum_reference_count)} supporting
               <MetricHelp align="left" body={detailHelp.forumLinkSection} label="Forum link count" />
             </span>
           </div>
         </div>
         <div className="evidence-list">
-          {detail.forumLinks.length ? (
-            detail.forumLinks.map((forumLink) => (
+          {primaryForumLinks.length ? (
+            primaryForumLinks.map((forumLink) => (
               <article className="evidence-item" key={forumLink.id}>
                 <div>
-                  <span className="badge neutral">Forum thread</span>
+                  <span className={`badge ${forumLink.relationship_role}`}>{forumRoleLabel(forumLink.relationship_role)}</span>
                   <h3>{forumLink.title ?? forumLink.source_id}</h3>
                   <p>{forumLink.summary ?? "Forum link discovered during source reconciliation."}</p>
                 </div>
@@ -281,8 +293,33 @@ export default async function GrantApplicationPage({
               </article>
             ))
           ) : (
-            <p>No forum links identified for this application yet.</p>
+            <p>No primary forum thread identified for this application yet.</p>
           )}
+          {supportingForumLinks.map((forumLink) => (
+            <article className="evidence-item" key={forumLink.id}>
+              <div>
+                <span className={`badge ${forumLink.relationship_role}`}>{forumRoleLabel(forumLink.relationship_role)}</span>
+                <h3>{forumLink.title ?? forumLink.source_id}</h3>
+                <p>{forumLink.summary ?? "Forum link discovered during source reconciliation."}</p>
+              </div>
+              <dl className="evidence-meta">
+                <div>
+                  <dt>Confidence</dt>
+                  <dd>{percentText(forumLink.confidence)}</dd>
+                </div>
+                <div>
+                  <dt>Forum URL</dt>
+                  <dd>{forumLink.source_id}</dd>
+                </div>
+              </dl>
+              {forumLink.source_url ? (
+                <a className="table-link" href={forumLink.source_url} rel="noreferrer" target="_blank">
+                  Open forum thread
+                </a>
+              ) : null}
+              <p className="subtle">{compactJson(forumLink.metadata)}</p>
+            </article>
+          ))}
         </div>
       </section>
 

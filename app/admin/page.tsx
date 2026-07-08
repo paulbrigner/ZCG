@@ -119,6 +119,13 @@ function githubIssueStateText(application: GrantApplicationRow) {
     : `GitHub #${application.github_issue_number}`;
 }
 
+function forumLinkText(application: GrantApplicationRow) {
+  const primary = numberText(application.primary_forum_thread_count);
+  const supporting = numberText(application.supporting_forum_reference_count);
+
+  return { primary, supporting };
+}
+
 function parseGitHubLabels(value: string | null | undefined): GitHubLabelSummary[] {
   if (!value) {
     return [];
@@ -254,8 +261,10 @@ const metricHelp = {
     "Canonical applications with GitHub evidence but no matched Sheet registry/payment evidence yet.",
   sheetOnly:
     "Canonical applications from Sheet registry/payment evidence without a linked GitHub issue.",
-  forumLinks:
-    "Forum link source records discovered from GitHub comments, source payloads, or Sheet fields and linked back to canonical applications.",
+  primaryForumThreads:
+    "Forum link relationships classified as the primary grant discussion thread, usually from an explicit Forum reference comment or All Grants Forum Link field.",
+  supportingForumReferences:
+    "Forum link relationships classified as supporting context, such as prior funding, previous work, reports, dependencies, or background references.",
   applicationRange:
     "Visible rows for the current Application reconciliation page after source filters, search, status, label, GitHub issue state, and pagination are applied.",
   preTableFilter:
@@ -265,7 +274,7 @@ const metricHelp = {
   tableSources:
     "Distinct source_records linked to this application through source_links.",
   tableForum:
-    "Distinct linked source_records whose source kind is forum_link.",
+    "Primary forum thread count followed by supporting forum reference count for this application.",
   tableIssues:
     "Open reconciliation_issues linked to this application."
 };
@@ -311,7 +320,7 @@ export default async function AdminPage({
     (total, row) => total + Number(row.record_count),
     0
   );
-  const forumLinkCount = dashboard.sourceCounts.find((row) => row.source_kind === "forum_link")?.record_count ?? "0";
+  const forumRoleTotals = dashboard.forumRoleTotals;
   const openReconciliationIssues = dashboard.reconciliationSummary
     .filter((row) => row.status === "open")
     .reduce((total, row) => total + Number(row.issue_count), 0);
@@ -524,10 +533,18 @@ export default async function AdminPage({
             </p>
             <p className="status-item">
               <span className="dot blue" />
-              Forum links associated
+              Primary forum threads
               <strong className="count-with-help">
-                {numberText(forumLinkCount)}
-                <MetricHelp align="left" body={metricHelp.forumLinks} label="Forum links associated" />
+                {numberText(forumRoleTotals.primary_forum_threads)}
+                <MetricHelp align="left" body={metricHelp.primaryForumThreads} label="Primary forum threads" />
+              </strong>
+            </p>
+            <p className="status-item">
+              <span className="dot blue" />
+              Supporting forum references
+              <strong className="count-with-help">
+                {numberText(forumRoleTotals.supporting_forum_references)}
+                <MetricHelp align="left" body={metricHelp.supportingForumReferences} label="Supporting forum references" />
               </strong>
             </p>
             <p className="status-item">
@@ -716,6 +733,7 @@ export default async function AdminPage({
               {dashboard.applications.length ? (
                 dashboard.applications.map((application) => {
                   const githubLabels = parseGitHubLabels(application.github_labels);
+                  const forumLinks = forumLinkText(application);
 
                   return (
                     <tr key={application.id}>
@@ -736,7 +754,10 @@ export default async function AdminPage({
                       <td>{moneyText(application.requested_amount_usd)}</td>
                       <td>{matchText(application)}</td>
                       <td>{numberText(application.source_count)}</td>
-                      <td>{numberText(application.forum_link_count)}</td>
+                      <td>
+                        <span>{forumLinks.primary} primary</span>
+                        <span className="subtle">{forumLinks.supporting} supporting</span>
+                      </td>
                       <td>{numberText(application.open_issue_count)}</td>
                     </tr>
                   );
