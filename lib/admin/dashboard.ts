@@ -79,7 +79,7 @@ export type GrantApplicationRow = {
   normalized_status: string;
   requested_amount_usd: string | null;
   match_confidence: string;
-  source_profile: "matched" | "github_only" | "sheet_only" | "unknown";
+  source_profile: "matched" | "github_only" | "sheet_github_linked" | "sheet_only" | "unknown";
   github_issue_number: string | null;
   github_issue_url: string | null;
   github_state: string | null;
@@ -137,11 +137,17 @@ export type ReconciliationIssueRow = {
   created_at: string;
 };
 
+const sheetCanonicalWhere = "(ga.canonical_key like 'sheet:%' or ga.canonical_key like 'sheet-all-grants:%')";
+const matchedApplicationWhere = `(
+  (ga.canonical_key like 'github:%' and ga.match_confidence > 0)
+  or (${sheetCanonicalWhere} and ga.github_issue_number is not null)
+)`;
+
 const applicationFilterWhere: Record<ApplicationFilter, string> = {
   all: "true",
-  matched: "ga.canonical_key like 'github:%' and ga.match_confidence > 0",
+  matched: matchedApplicationWhere,
   github_only: "ga.canonical_key like 'github:%' and ga.match_confidence = 0",
-  sheet_only: "(ga.canonical_key like 'sheet:%' or ga.canonical_key like 'sheet-all-grants:%')",
+  sheet_only: `${sheetCanonicalWhere} and ga.github_issue_number is null`,
   needs_review: `exists (
     select 1
       from reconciliation_issues ri_filter
@@ -152,10 +158,13 @@ const applicationFilterWhere: Record<ApplicationFilter, string> = {
 };
 
 function sourceProfileSql(alias = "ga") {
+  const sheetCanonical = `(${alias}.canonical_key like 'sheet:%' or ${alias}.canonical_key like 'sheet-all-grants:%')`;
+
   return `case
             when ${alias}.canonical_key like 'github:%' and ${alias}.match_confidence > 0 then 'matched'
             when ${alias}.canonical_key like 'github:%' then 'github_only'
-            when ${alias}.canonical_key like 'sheet:%' or ${alias}.canonical_key like 'sheet-all-grants:%' then 'sheet_only'
+            when ${sheetCanonical} and ${alias}.github_issue_number is not null then 'sheet_github_linked'
+            when ${sheetCanonical} then 'sheet_only'
             else 'unknown'
           end`;
 }
@@ -389,11 +398,11 @@ export async function getAdminDashboard({
     query<ApplicationTotalsRow>(
       `select count(*)::text as total_applications,
               (select count(*)::text from grants) as total_grants,
-              count(*) filter (where ga.canonical_key like 'github:%' and ga.match_confidence > 0)::text
+              count(*) filter (where ${matchedApplicationWhere})::text
                 as matched_applications,
               count(*) filter (where ga.canonical_key like 'github:%' and ga.match_confidence = 0)::text
                 as github_only_applications,
-              count(*) filter (where ga.canonical_key like 'sheet:%' or ga.canonical_key like 'sheet-all-grants:%')::text
+              count(*) filter (where ${sheetCanonicalWhere} and ga.github_issue_number is null)::text
                 as sheet_only_applications,
               count(*) filter (
                 where exists (

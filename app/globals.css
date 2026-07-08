@@ -739,7 +739,8 @@ button:disabled {
 .badge.neutral,
 .badge.open,
 .badge.info,
-.badge.matched {
+.badge.matched,
+.badge.sheet_github_linked {
   background: #eff6ff;
   border-color: #bfdbfe;
   color: #1d4ed8;

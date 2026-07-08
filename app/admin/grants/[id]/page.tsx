@@ -55,6 +55,8 @@ function sourceProfileLabel(profile: GrantApplicationRow["source_profile"]) {
       return "GitHub + Sheet";
     case "github_only":
       return "GitHub only";
+    case "sheet_github_linked":
+      return "Sheet + GitHub link";
     case "sheet_only":
       return "Sheet only";
     default:
@@ -69,6 +71,10 @@ function matchText(application: GrantApplicationRow) {
 
   if (application.source_profile === "sheet_only") {
     return "No GitHub match";
+  }
+
+  if (application.source_profile === "sheet_github_linked") {
+    return application.github_issue_number ? `GitHub #${application.github_issue_number} linked` : "GitHub linked";
   }
 
   if (application.source_profile === "matched") {
@@ -107,9 +113,9 @@ const detailHelp = {
   requested:
     "Requested amount on the canonical application, usually sourced from Sheet registry/payment fields or structured application evidence when available.",
   sourceState:
-    "How the canonical application is currently supported by source evidence: matched GitHub + Sheet, GitHub only, Sheet only, or unknown.",
+    "How the canonical application is currently supported by source evidence: matched GitHub + Sheet, GitHub only, Sheet + GitHub link, Sheet only, or unknown.",
   match:
-    "Reconciliation confidence for the GitHub-to-Sheet match. GitHub-only and Sheet-only records show the missing side instead of a percentage.",
+    "Reconciliation confidence for the GitHub-to-Sheet match. GitHub-only and Sheet-only records show the missing side; sheet records with a GitHub issue link show the linked issue.",
   forumLinks:
     "Count of linked forum_link source_records associated with this canonical application through source_links.",
   githubLabels:

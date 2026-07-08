@@ -52,6 +52,8 @@ function sourceProfileLabel(profile: GrantApplicationRow["source_profile"]) {
       return "GitHub + Sheet";
     case "github_only":
       return "GitHub only";
+    case "sheet_github_linked":
+      return "Sheet + GitHub link";
     case "sheet_only":
       return "Sheet only";
     default:
@@ -66,6 +68,10 @@ function matchText(application: GrantApplicationRow) {
 
   if (application.source_profile === "sheet_only") {
     return "No GitHub match";
+  }
+
+  if (application.source_profile === "sheet_github_linked") {
+    return application.github_issue_number ? `GitHub #${application.github_issue_number} linked` : "GitHub linked";
   }
 
   if (application.source_profile === "matched") {
@@ -243,11 +249,11 @@ const metricHelp = {
   reconciliationGroup:
     "Rows in reconciliation_issues grouped by status and severity. Open warning/error rows are the ones most likely to need review.",
   matched:
-    "Canonical applications that currently have GitHub evidence matched to Sheet evidence with positive confidence.",
+    "Canonical applications that currently have GitHub evidence matched to Sheet evidence or a Sheet registry row linked to a GitHub issue.",
   githubOnly:
     "Canonical applications with GitHub evidence but no matched Sheet registry/payment evidence yet.",
   sheetOnly:
-    "Canonical applications from Sheet registry/payment evidence without a matched GitHub issue.",
+    "Canonical applications from Sheet registry/payment evidence without a linked GitHub issue.",
   forumLinks:
     "Forum link source records discovered from GitHub comments, source payloads, or Sheet fields and linked back to canonical applications.",
   applicationRange:
