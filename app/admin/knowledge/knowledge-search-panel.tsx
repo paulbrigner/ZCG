@@ -21,7 +21,7 @@ const knowledgeSearchHelp = {
   resultLimit:
     "Maximum number of evidence documents returned for the query. These are grant_knowledge_documents rows, not unique grant applications.",
   evidenceMatches:
-    "Number of retrieved evidence documents returned for this query after the selected keyword, semantic, or hybrid retrieval mode runs."
+    "Number of evidence documents available for this answer. AI grounded answers expand the initial retrieval matches with nearby source documents from the same top grant applications."
 };
 
 async function responseJson(response: Response) {
@@ -307,6 +307,12 @@ export function KnowledgeSearchPanel({
                 <MetricHelp align="left" body={knowledgeSearchHelp.evidenceMatches} label="Evidence matches" />
                 {" | "}
                 {result.retrievalStats.mode} retrieval
+                {result.retrievalStats.expandedEvidenceCount > result.retrievalStats.initialResultCount ? (
+                  <>
+                    {" | "}
+                    expanded from {result.retrievalStats.initialResultCount.toLocaleString()}
+                  </>
+                ) : null}
               </span>
             </div>
             <span className={`badge ${result.answerStatus === "generated" ? "green" : "neutral"}`}>

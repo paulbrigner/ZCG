@@ -80,6 +80,8 @@ export type GrantKnowledgeSearchResponse = {
   results: GrantKnowledgeSearchResult[];
   retrievalStats: {
     resultCount: number;
+    initialResultCount: number;
+    expandedEvidenceCount: number;
     limit: number;
     mode: KnowledgeRetrievalMode;
     semanticSearchEnabled: boolean;
@@ -89,6 +91,9 @@ export type GrantKnowledgeSearchResponse = {
 
 const defaultLimit = 8;
 const maxLimit = 20;
+const maxAnswerEvidenceApplications = 5;
+const maxAnswerEvidenceDocuments = 20;
+const maxExpandedDocumentsPerApplication = 7;
 
 function parseJsonRecord(value: string | null): Record<string, unknown> {
   if (!value) {
@@ -356,6 +361,127 @@ function searchResultKey(result: GrantKnowledgeSearchResult) {
   return result.id;
 }
 
+function uniqueApplicationMatches(results: GrantKnowledgeSearchResult[]) {
+  const seen = new Set<string>();
+  const matches: Array<{ applicationId: string; appOrder: number; appRank: number }> = [];
+
+  for (const result of results) {
+    if (seen.has(result.applicationId)) {
+      continue;
+    }
+
+    seen.add(result.applicationId);
+    matches.push({
+      applicationId: result.applicationId,
+      appOrder: matches.length,
+      appRank: Number.isFinite(result.rank) ? result.rank : 0
+    });
+
+    if (matches.length >= maxAnswerEvidenceApplications) {
+      break;
+    }
+  }
+
+  return matches;
+}
+
+async function expandResultsWithApplicationSources({
+  searchText,
+  results,
+  maxDocuments
+}: {
+  searchText: string;
+  results: GrantKnowledgeSearchResult[];
+  maxDocuments: number;
+}) {
+  if (!results.length) {
+    return results;
+  }
+
+  const applicationMatches = uniqueApplicationMatches(results);
+
+  if (!applicationMatches.length) {
+    return results;
+  }
+
+  const result = await query<GrantKnowledgeSearchRow>(
+    `with selected as (
+       select application_id,
+              app_order,
+              app_rank
+         from jsonb_to_recordset($1::jsonb) as x(
+           application_id uuid,
+           app_order integer,
+           app_rank numeric
+         )
+     ),
+     ranked as (
+       select d.id::text,
+              d.application_id::text,
+              d.document_kind,
+              d.title,
+              d.applicant_name,
+              d.source_kind,
+              d.source_id,
+              d.source_url,
+              d.normalized_status,
+              d.requested_amount_usd::text,
+              d.content,
+              selected.app_order,
+              selected.app_rank,
+              row_number() over (
+                partition by d.application_id
+                order by
+                  case
+                    when d.document_kind = 'application_summary' then 0
+                    when d.document_kind = 'github_issue' then 1
+                    when d.document_kind = 'google_sheet_row' then 2
+                    when d.document_kind = 'github_issue_comment' then 3
+                    when d.document_kind = 'forum_link' then 4
+                    else 9
+                  end,
+                  d.indexed_at desc,
+                  d.source_kind,
+                  d.source_id
+              ) as source_rank
+         from selected
+         join grant_knowledge_documents d on d.application_id = selected.application_id
+     )
+     select id,
+            application_id,
+            document_kind,
+            title,
+            applicant_name,
+            source_kind,
+            source_id,
+            source_url,
+            normalized_status,
+            requested_amount_usd,
+            greatest(app_rank - (source_rank::numeric * 0.0001), 0) as rank,
+            content
+       from ranked
+      where source_rank <= $2
+      order by app_order, source_rank
+      limit $3`,
+    [JSON.stringify(applicationMatches), maxExpandedDocumentsPerApplication, maxDocuments]
+  );
+  const expanded = result.rows.map((row) => mapSearchRow(row, searchText));
+  const merged = new Map<string, GrantKnowledgeSearchResult>();
+  const initialEvidenceCap = Math.min(results.length, Math.max(defaultLimit, Math.ceil(maxDocuments / 2)));
+
+  for (const result of results.slice(0, initialEvidenceCap)) {
+    merged.set(result.id, result);
+  }
+
+  for (const result of expanded) {
+    if (!merged.has(result.id)) {
+      merged.set(result.id, result);
+    }
+  }
+
+  return [...merged.values()].slice(0, maxDocuments);
+}
+
 async function searchHybridGrantKnowledge({
   searchText,
   limit
@@ -443,13 +569,19 @@ export async function runGrantKnowledgeSearch({
     limit,
     retrievalMode: effectiveRetrievalMode
   });
+  let answerEvidenceResults = results;
   const providerStatus = knowledgeProviderStatus();
   let answerText: string | null = null;
   let answerStatus: GrantKnowledgeSearchResponse["answerStatus"] = "not_requested";
 
   if (answerMode === "ai") {
     if (allowAiAnswer && knowledgeAiEnabled()) {
-      answerText = await composeGrantKnowledgeAnswer({ searchText, results });
+      answerEvidenceResults = await expandResultsWithApplicationSources({
+        searchText,
+        results,
+        maxDocuments: Math.min(maxLimit, Math.max(limit, maxAnswerEvidenceDocuments))
+      });
+      answerText = await composeGrantKnowledgeAnswer({ searchText, results: answerEvidenceResults });
       answerStatus = "generated";
     } else {
       answerText = extractiveAnswer(searchText, results);
@@ -472,7 +604,9 @@ export async function runGrantKnowledgeSearch({
         answerMode,
         retrievalMode: effectiveRetrievalMode,
         answerStatus,
-        resultCount: results.length
+        resultCount: answerEvidenceResults.length,
+        initialResultCount: results.length,
+        expandedEvidenceCount: answerEvidenceResults.length
       }
     });
 
@@ -495,6 +629,8 @@ export async function runGrantKnowledgeSearch({
         JSON.stringify({
           answerStatus,
           retrievalMode: effectiveRetrievalMode,
+          initialResultCount: results.length,
+          expandedEvidenceCount: answerEvidenceResults.length,
           provider: providerStatus.aiConfigured ? "configured" : "not_configured"
         })
       ]
@@ -508,9 +644,11 @@ export async function runGrantKnowledgeSearch({
     retrievalMode: effectiveRetrievalMode,
     answerText,
     answerStatus,
-    results,
+    results: answerEvidenceResults,
     retrievalStats: {
-      resultCount: results.length,
+      resultCount: answerEvidenceResults.length,
+      initialResultCount: results.length,
+      expandedEvidenceCount: answerEvidenceResults.length,
       limit,
       mode: effectiveRetrievalMode,
       semanticSearchEnabled: providerStatus.semanticSearchEnabled

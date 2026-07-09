@@ -14,6 +14,19 @@ type ChatCompletionResponse = {
   }>;
 };
 
+const maxEvidenceItems = 20;
+const maxEvidenceTextChars = 7000;
+
+function promptEvidenceText(result: GrantKnowledgeSearchResult) {
+  const text = result.content.replace(/\n{3,}/g, "\n\n").trim() || result.excerpt;
+
+  if (text.length <= maxEvidenceTextChars) {
+    return text;
+  }
+
+  return `${text.slice(0, maxEvidenceTextChars - 90)}\n\n[Evidence text truncated for prompt size.]`;
+}
+
 function resultForPrompt(result: GrantKnowledgeSearchResult, index: number) {
   const source = result.sourceUrl ? `Source URL: ${result.sourceUrl}` : `Source: ${result.sourceKind ?? "unknown"}`;
   return [
@@ -22,7 +35,7 @@ function resultForPrompt(result: GrantKnowledgeSearchResult, index: number) {
     result.normalizedStatus ? `Status: ${result.normalizedStatus}` : null,
     result.requestedAmountUsd ? `Requested USD: ${result.requestedAmountUsd}` : null,
     source,
-    `Evidence: ${result.excerpt}`
+    `Evidence text:\n${promptEvidenceText(result)}`
   ]
     .filter(Boolean)
     .join("\n");
@@ -68,7 +81,7 @@ export async function composeGrantKnowledgeAnswer({
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), knowledgeAiTimeoutMs());
-  const evidence = results.slice(0, 10).map(resultForPrompt).join("\n\n");
+  const evidence = results.slice(0, maxEvidenceItems).map(resultForPrompt).join("\n\n");
 
   try {
     const response = await fetch(`${knowledgeAiBaseUrl()}/chat/completions`, {
