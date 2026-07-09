@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import type { GrantKnowledgeSearchResponse } from "@/lib/knowledge/search";
 import { MetricHelp } from "../metric-help";
 
@@ -17,12 +17,34 @@ type IndexState = {
   message: string;
 };
 
+type KnowledgeAnswerJobStatus = "queued" | "running" | "succeeded" | "failed" | "expired";
+
+type KnowledgeAnswerJobResponse = {
+  accepted?: boolean;
+  jobId: string;
+  status: KnowledgeAnswerJobStatus;
+  result?: GrantKnowledgeSearchResponse | null;
+  error?: { message?: string } | null;
+  pollAfterMs?: number;
+};
+
 const knowledgeSearchHelp = {
   resultLimit:
     "Initial search-result size for the query. Evidence-summary mode returns this many documents. AI grounded-answer mode can use a larger answer-preparation pass behind the scenes.",
   evidenceMatches:
     "Number of evidence documents prepared for this answer. AI grounded answers run a wider candidate pass, expand top grant applications with nearby source documents, and include compact summaries for broader matching applications."
 };
+
+const defaultPollMs = 1500;
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function clampPollMs(value: unknown, fallback: number) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.min(Math.max(parsed, 750), 5000) : fallback;
+}
 
 async function responseJson(response: Response) {
   const text = await response.text();
@@ -84,6 +106,15 @@ function answerBadgeText(status: GrantKnowledgeSearchResponse["answerStatus"]) {
   return "Grounded";
 }
 
+function isKnowledgeAnswerJobResponse(value: unknown): value is KnowledgeAnswerJobResponse {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const record = value as { jobId?: unknown; status?: unknown };
+  return typeof record.jobId === "string" && typeof record.status === "string";
+}
+
 export function KnowledgeSearchPanel({
   canComposeAi,
   canIndex,
@@ -98,10 +129,12 @@ export function KnowledgeSearchPanel({
   );
   const [answerMode, setAnswerMode] = useState<"evidence" | "ai">("evidence");
   const [isSearching, setIsSearching] = useState(false);
+  const [activeJob, setActiveJob] = useState<{ jobId: string; status: KnowledgeAnswerJobStatus } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<GrantKnowledgeSearchResponse | null>(null);
   const [indexState, setIndexState] = useState<IndexState>({ status: "idle", message: "" });
   const [embeddingState, setEmbeddingState] = useState<IndexState>({ status: "idle", message: "" });
+  const runTokenRef = useRef(0);
   const aiAvailable = canComposeAi && initialAiConfigured;
   const semanticAvailable = canUseSemantic && initialSemanticEnabled;
   const answerModeNote = useMemo(() => {
@@ -137,10 +170,19 @@ export function KnowledgeSearchPanel({
 
   async function submitSearch(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const runToken = runTokenRef.current + 1;
+    runTokenRef.current = runToken;
     setIsSearching(true);
+    setActiveJob(null);
     setError(null);
+    setResult(null);
 
     try {
+      if (answerMode === "ai") {
+        await submitAsyncAnswerJob(runToken);
+        return;
+      }
+
       const response = await fetch("/api/admin/knowledge/search", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -152,11 +194,85 @@ export function KnowledgeSearchPanel({
         throw new Error(errorMessage(body, "Search failed."));
       }
 
-      setResult(body as GrantKnowledgeSearchResponse);
+      if (runTokenRef.current === runToken) {
+        setResult(body as GrantKnowledgeSearchResponse);
+      }
     } catch (searchError) {
-      setError(searchErrorMessage(searchError));
+      if (runTokenRef.current === runToken) {
+        setError(searchErrorMessage(searchError));
+      }
     } finally {
-      setIsSearching(false);
+      if (runTokenRef.current === runToken) {
+        setIsSearching(false);
+      }
+    }
+  }
+
+  async function submitAsyncAnswerJob(runToken: number) {
+    const response = await fetch("/api/admin/knowledge/search/jobs", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ query, limit: Number(limit), retrievalMode, answerMode })
+    });
+    const body = await responseJson(response);
+
+    if (!response.ok) {
+      throw new Error(errorMessage(body, "Search failed."));
+    }
+
+    if (!isKnowledgeAnswerJobResponse(body)) {
+      throw new Error("Invalid knowledge answer job response.");
+    }
+
+    if (runTokenRef.current !== runToken) {
+      return;
+    }
+
+    setActiveJob({ jobId: body.jobId, status: body.status });
+    let pollDelayMs = clampPollMs(body.pollAfterMs, defaultPollMs);
+
+    while (runTokenRef.current === runToken) {
+      await sleep(pollDelayMs);
+
+      if (runTokenRef.current !== runToken) {
+        return;
+      }
+
+      const pollResponse = await fetch(`/api/admin/knowledge/search/jobs/${encodeURIComponent(body.jobId)}`, {
+        method: "GET",
+        cache: "no-store"
+      });
+      const pollBody = await responseJson(pollResponse);
+
+      if (!pollResponse.ok) {
+        throw new Error(errorMessage(pollBody, "Search failed."));
+      }
+
+      if (!isKnowledgeAnswerJobResponse(pollBody)) {
+        throw new Error("Invalid knowledge answer job status response.");
+      }
+
+      setActiveJob({ jobId: pollBody.jobId, status: pollBody.status });
+
+      if (pollBody.status === "succeeded") {
+        if (!pollBody.result) {
+          throw new Error("Knowledge answer job completed without a result.");
+        }
+
+        setResult(pollBody.result);
+        return;
+      }
+
+      if (pollBody.status === "failed" || pollBody.status === "expired") {
+        throw new Error(
+          pollBody.error?.message ||
+            (pollBody.status === "expired"
+              ? "Knowledge answer job expired before completing."
+              : "Knowledge answer job failed.")
+        );
+      }
+
+      pollDelayMs = clampPollMs(pollBody.pollAfterMs, pollDelayMs);
     }
   }
 
@@ -315,6 +431,9 @@ export function KnowledgeSearchPanel({
         ) : null}
         {embeddingState.message ? (
           <p className={embeddingState.status === "error" ? "form-error" : "form-status"}>{embeddingState.message}</p>
+        ) : null}
+        {isSearching && activeJob ? (
+          <p className="form-status neutral-status">Answer job {activeJob.jobId.slice(0, 8)} is {activeJob.status}.</p>
         ) : null}
         {error ? <p className="form-error">{error}</p> : null}
       </form>

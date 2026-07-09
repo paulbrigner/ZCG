@@ -462,10 +462,16 @@ export class ZcgPrototypeStack extends Stack {
       removalPolicy
     });
 
+    const knowledgeAnswerWorkerLogGroup = new logs.LogGroup(this, "KnowledgeAnswerWorkerLogGroup", {
+      retention: logRetention,
+      removalPolicy
+    });
+
     let syncWorkerFunctionName = "disabled";
     let migrationRunnerFunctionName = "disabled";
     let knowledgeIndexWorkerFunctionName = "disabled";
     let knowledgeEmbeddingWorkerFunctionName = "disabled";
+    let knowledgeAnswerWorkerFunctionName = "disabled";
 
     if (enableWorkers) {
       const syncWorkerEnvironment = {
@@ -567,19 +573,50 @@ export class ZcgPrototypeStack extends Stack {
         }
       });
 
+      const knowledgeAnswerWorker = new lambdaNodejs.NodejsFunction(this, "KnowledgeAnswerWorker", {
+        entry: path.join(__dirname, "..", "workers", "knowledge-answer-worker.ts"),
+        handler: "handler",
+        runtime: lambda.Runtime.NODEJS_24_X,
+        timeout: Duration.minutes(5),
+        memorySize: 1024,
+        environment: {
+          APP_ENV: environmentName,
+          DATABASE_DRIVER: "data-api",
+          DB_CLUSTER_ARN: database.clusterArn,
+          DB_SECRET_ARN: database.secret!.secretArn,
+          DB_NAME: "zcg",
+          ZCG_KNOWLEDGE_AI_TIMEOUT_MS: "60000",
+          ZCG_KNOWLEDGE_QUERY_EMBEDDING_TIMEOUT_MS: "30000",
+          ...(knowledgeEmbeddingApiSecretId
+            ? {
+                ZCG_KNOWLEDGE_AI_API_KEY_SECRET_ID: knowledgeEmbeddingApiSecretId,
+                ZCG_KNOWLEDGE_EMBEDDING_API_KEY_SECRET_ID: knowledgeEmbeddingApiSecretId
+              }
+            : {})
+        },
+        logGroup: knowledgeAnswerWorkerLogGroup,
+        bundling: {
+          externalModules: []
+        }
+      });
+
       syncWorkerFunctionName = syncWorker.functionName;
       migrationRunnerFunctionName = migrationRunner.functionName;
       knowledgeIndexWorkerFunctionName = knowledgeIndexWorker.functionName;
       knowledgeEmbeddingWorkerFunctionName = knowledgeEmbeddingWorker.functionName;
+      knowledgeAnswerWorkerFunctionName = knowledgeAnswerWorker.functionName;
       snapshotBucket.grantReadWrite(syncWorker);
       snapshotBucket.grantReadWrite(migrationRunner);
       database.secret!.grantRead(syncWorker);
       database.secret!.grantRead(migrationRunner);
       database.secret!.grantRead(knowledgeIndexWorker);
       database.secret!.grantRead(knowledgeEmbeddingWorker);
+      database.secret!.grantRead(knowledgeAnswerWorker);
       githubTokenSecret?.grantRead(syncWorker);
       knowledgeEmbeddingApiSecret?.grantRead(knowledgeEmbeddingWorker);
+      knowledgeEmbeddingApiSecret?.grantRead(knowledgeAnswerWorker);
       knowledgeIndexWorker.grantInvoke(amplifyComputeRole);
+      knowledgeAnswerWorker.grantInvoke(amplifyComputeRole);
       database.connections.allowDefaultPortFrom(syncWorker);
       database.connections.allowDefaultPortFrom(migrationRunner);
       knowledgeIndexWorker.addToRolePolicy(
@@ -595,6 +632,18 @@ export class ZcgPrototypeStack extends Stack {
         })
       );
       knowledgeEmbeddingWorker.addToRolePolicy(
+        new iam.PolicyStatement({
+          actions: [
+            "rds-data:ExecuteStatement",
+            "rds-data:BatchExecuteStatement",
+            "rds-data:BeginTransaction",
+            "rds-data:CommitTransaction",
+            "rds-data:RollbackTransaction"
+          ],
+          resources: [database.clusterArn]
+        })
+      );
+      knowledgeAnswerWorker.addToRolePolicy(
         new iam.PolicyStatement({
           actions: [
             "rds-data:ExecuteStatement",
@@ -646,6 +695,13 @@ export class ZcgPrototypeStack extends Stack {
           evaluationPeriods: 1,
           comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD
         });
+
+        knowledgeAnswerWorker.metricErrors().createAlarm(this, "KnowledgeAnswerWorkerErrorsAlarm", {
+          alarmName: `${appName}-${environmentName}-knowledge-answer-worker-errors`,
+          threshold: 1,
+          evaluationPeriods: 1,
+          comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD
+        });
       }
     }
 
@@ -687,6 +743,9 @@ export class ZcgPrototypeStack extends Stack {
     });
     new cdk.CfnOutput(this, "KnowledgeEmbeddingWorkerFunctionName", {
       value: knowledgeEmbeddingWorkerFunctionName
+    });
+    new cdk.CfnOutput(this, "KnowledgeAnswerWorkerFunctionName", {
+      value: knowledgeAnswerWorkerFunctionName
     });
     new cdk.CfnOutput(this, "CostMode", {
       value: costMode
