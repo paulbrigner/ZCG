@@ -6,7 +6,7 @@ export default function SignInPage() {
       <section className="hero">
         <div>
           <p className="eyebrow">Authentication</p>
-          <h1>Sign in to the admin shell</h1>
+          <h1>Sign in to the dashboard</h1>
           <p className="lead">
             Phase 0 uses Better Auth email codes with bootstrap admin assignment
             controlled by deployment configuration.

@@ -237,7 +237,7 @@ Current capabilities include:
   - surfaces reconciliation issues,
   - extracts and associates Zcash Community Forum links already present in
     mirrored issues, issue comments, and Sheet rows.
-- Admin dashboard with:
+- Dashboard with:
   - source record counts,
   - canonical application and grant counts,
   - reconciliation issue summary,
@@ -332,7 +332,7 @@ Status: started and usable as a public read-only prototype.
 - Canonical application and grant model.
 - GitHub-to-Sheet matching.
 - Forum link association from existing source payloads.
-- Admin filters, search, pagination, and application detail pages.
+- Dashboard filters, search, pagination, and application detail pages.
 - Reconciliation issue generation.
 - Grounded grant knowledge index built from canonical applications and source
   evidence.
@@ -432,6 +432,9 @@ Current rules:
   application access.
 - User access management lives on `/admin/users` and requires
   `role:assignment:manage`.
+- Exact-email grants and domain grants are durable access records. The prototype
+  seeds `zcashcommunitygrants.org` as a `committee` domain grant so matching
+  email addresses receive committee workflow access after sign-in.
 - Rebuilding grant knowledge documents and embedding new batches requires the
   Administrator role and `knowledge:index`.
 - In deployed environments, the rebuild button enqueues the knowledge index

@@ -12,7 +12,7 @@ export default async function AdminUsersPage() {
       <main className="admin-shell">
         <section className="admin-header">
           <div>
-            <p className="eyebrow">Admin console</p>
+            <p className="eyebrow">Dashboard</p>
             <h1>User access</h1>
             <p className="lead">
               User access management is restricted to Administrator role members.
@@ -29,12 +29,12 @@ export default async function AdminUsersPage() {
     <main className="admin-shell">
       <section className="admin-header">
         <div>
-          <p className="eyebrow">Admin console</p>
+          <p className="eyebrow">Dashboard</p>
           <h1>User access</h1>
           <p className="lead">
             Signed in as <span className="code">{principal.email}</span>.{" "}
             <Link className="table-link" href="/admin">
-              Admin dashboard
+              Dashboard
             </Link>
           </p>
         </div>

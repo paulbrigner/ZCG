@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   AdminUserActionError,
   getUserAccessOverview,
+  grantEmailDomainRole,
   grantEmailRole,
+  revokeEmailDomainRole,
   revokeEmailRole
 } from "@/lib/admin/users";
 import { principalHasRole, requirePermission } from "@/lib/authorization";
@@ -56,9 +58,30 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: true, overview: await getUserAccessOverview() });
     }
 
+    if (action === "grant_domain_role") {
+      await grantEmailDomainRole({
+        domain: body?.domain,
+        roleKey: body?.roleKey,
+        actorPrincipalId: principal.id,
+        reason: typeof body?.reason === "string" ? body.reason : null
+      });
+
+      return NextResponse.json({ ok: true, overview: await getUserAccessOverview() });
+    }
+
     if (action === "revoke_role") {
       await revokeEmailRole({
         email: body?.email,
+        roleKey: body?.roleKey,
+        actorPrincipalId: principal.id
+      });
+
+      return NextResponse.json({ ok: true, overview: await getUserAccessOverview() });
+    }
+
+    if (action === "revoke_domain_role") {
+      await revokeEmailDomainRole({
+        domain: body?.domain,
         roleKey: body?.roleKey,
         actorPrincipalId: principal.id
       });

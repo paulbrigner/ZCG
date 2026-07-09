@@ -162,7 +162,7 @@ export default async function GrantApplicationPage({
           <h1>{application.title}</h1>
           <p className="lead">
             <Link className="table-link" href="/admin">
-              Admin dashboard
+              Dashboard
             </Link>
           </p>
         </div>

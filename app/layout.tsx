@@ -18,7 +18,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
               ZCG Grants Prototype
             </Link>
             <nav className="nav" aria-label="Primary">
-              <a href="/admin">Admin</a>
+              <a href="/admin">Dashboard</a>
               <a href="/admin/knowledge">Knowledge</a>
               <a href="/admin/reconciliations">Reconciliations</a>
               <a href="/api/health">Health</a>

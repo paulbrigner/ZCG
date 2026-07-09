@@ -14,7 +14,7 @@ export default async function AdminReconciliationsPage() {
     <main className="admin-shell">
       <section className="admin-header">
         <div>
-          <p className="eyebrow">Admin console</p>
+          <p className="eyebrow">Dashboard</p>
           <h1>Reconciliations</h1>
           <p className="lead">
             {isPublicPrototypePrincipal(principal) ? (
@@ -25,7 +25,7 @@ export default async function AdminReconciliationsPage() {
               <>
                 Signed in as <span className="code">{principal.email}</span>.{" "}
                 <Link className="table-link" href="/admin">
-                  Admin dashboard
+                  Dashboard
                 </Link>
               </>
             )}

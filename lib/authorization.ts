@@ -63,8 +63,9 @@ export async function getCurrentPrincipal(): Promise<Principal | null> {
   const principal = result.rows[0] ? { ...result.rows[0], accessMode: "authenticated" as const } : null;
 
   if (principal) {
-    await ensureBootstrapAdmin(principal);
+    await ensureEmailDomainRoleAssignments(principal);
     await ensureEmailRoleAssignments(principal);
+    await ensureBootstrapAdmin(principal);
   }
 
   return principal;
@@ -98,6 +99,29 @@ async function ensureEmailRoleAssignments(principal: Principal) {
          from email_role_assignments era
         where era.email = lower($2)
           and (era.expires_at is null or era.expires_at > now())
+       on conflict (principal_id, role_id)
+       do update set reason = excluded.reason,
+                     granted_by_principal_id = excluded.granted_by_principal_id,
+                     expires_at = excluded.expires_at`,
+      [principal.id, principal.email]
+    );
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "42P01") {
+      return;
+    }
+
+    throw error;
+  }
+}
+
+async function ensureEmailDomainRoleAssignments(principal: Principal) {
+  try {
+    await query(
+      `insert into role_assignments (principal_id, role_id, granted_by_principal_id, reason, expires_at)
+       select $1, edra.role_id, edra.granted_by_principal_id, coalesce(edra.reason, 'Email domain role grant'), edra.expires_at
+         from email_domain_role_assignments edra
+        where edra.domain = lower(split_part($2, '@', 2))
+          and (edra.expires_at is null or edra.expires_at > now())
        on conflict (principal_id, role_id)
        do update set reason = excluded.reason,
                      granted_by_principal_id = excluded.granted_by_principal_id,

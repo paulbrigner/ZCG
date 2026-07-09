@@ -372,12 +372,12 @@ export default async function AdminPage({
     <main className="admin-shell">
       <section className="admin-header">
         <div>
-          <p className="eyebrow">Admin console</p>
+          <p className="eyebrow">Dashboard</p>
           <h1>Source mirror and reconciliation dashboard</h1>
           <p className="lead">
             {isPublicPrototypePrincipal(principal) ? (
               <>
-                Public read-only prototype view. <Link className="table-link" href="/sign-in">Sign in</Link> for admin operations.
+                Public read-only prototype view. <Link className="table-link" href="/sign-in">Sign in</Link> for dashboard operations.
               </>
             ) : (
               <>
@@ -560,7 +560,7 @@ export default async function AdminPage({
         {canManageUsers ? (
           <article className="panel">
             <div className="section-heading">
-              <h2>Admin tools</h2>
+              <h2>Dashboard tools</h2>
             </div>
             <div className="status-list">
               <p className="status-item">

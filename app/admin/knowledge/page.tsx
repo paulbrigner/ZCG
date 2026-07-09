@@ -103,7 +103,7 @@ export default async function GrantKnowledgePage() {
           <p className="lead">
             {isPublicPrototypePrincipal(principal) ? (
               <>
-                Public read-only prototype view. <Link className="table-link" href="/sign-in">Sign in</Link> for admin operations.
+                Public read-only prototype view. <Link className="table-link" href="/sign-in">Sign in</Link> for dashboard operations.
               </>
             ) : (
               <>

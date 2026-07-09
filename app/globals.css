@@ -288,6 +288,24 @@ button:disabled {
   color: var(--red);
 }
 
+.maintenance-callout {
+  background: #f8fafc;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  padding: 12px 14px;
+}
+
+.maintenance-callout summary {
+  color: #273244;
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.maintenance-callout p {
+  margin-top: 10px;
+}
+
 .admin-shell {
   display: grid;
   gap: 24px;
@@ -907,8 +925,20 @@ button:disabled {
   gap: 14px;
 }
 
+.access-grant-forms {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .user-access-form {
   margin-bottom: 0;
+}
+
+.user-access-form h3 {
+  align-self: end;
+  flex-basis: 100%;
+  margin: 0;
 }
 
 .role-list {
@@ -1128,6 +1158,7 @@ button:disabled {
   .metric-grid,
   .two-column,
   .github-label-grid,
+  .access-grant-forms,
   .compact-source-counts,
   .reconciliation-decision-form,
   .reconciliation-facts {

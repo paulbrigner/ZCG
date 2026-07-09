@@ -221,6 +221,21 @@ export function KnowledgeSearchPanel({
             </div>
           ) : null}
         </div>
+        {canIndex ? (
+          <details className="maintenance-callout">
+            <summary>How rebuild and embedding work</summary>
+            <p>
+              Rebuild index regenerates the searchable text documents from canonical grant applications and their linked
+              GitHub, Google Sheet, Forum, label, and reconciliation evidence. Embed next batch writes BGE-M3 vector
+              embeddings for indexed documents that are new, missing, or stale. Keyword search can use rebuilt text
+              immediately; semantic and hybrid retrieval are strongest after the embedding backlog is caught up.
+            </p>
+            <p>
+              The scheduled embedding worker continues catching up in the background, so manual embedding is mainly for
+              one-time catch-up or verification after a large rebuild.
+            </p>
+          </details>
+        ) : null}
         <label className="knowledge-query-field">
           <span>Search</span>
           <textarea

@@ -10,7 +10,7 @@ export type AdminRole = {
 export type UserRoleGrant = {
   roleKey: string;
   roleName: string;
-  source: "principal" | "email";
+  source: "principal" | "email" | "domain";
   createdAt: string;
   expiresAt: string | null;
   reason: string | null;
@@ -32,10 +32,16 @@ export type PendingEmailGrant = {
   roles: UserRoleGrant[];
 };
 
+export type EmailDomainGrant = {
+  domain: string;
+  roles: UserRoleGrant[];
+};
+
 export type UserAccessOverview = {
   roles: AdminRole[];
   users: AdminUserAccess[];
   pendingEmailGrants: PendingEmailGrant[];
+  emailDomainGrants: EmailDomainGrant[];
 };
 
 export class AdminUserActionError extends Error {
@@ -72,7 +78,18 @@ type EmailGrantRow = {
   reason: string | null;
 };
 
+type DomainGrantRow = {
+  domain: string;
+  role_key: string;
+  role_name: string;
+  created_at: string;
+  expires_at: string | null;
+  reason: string | null;
+};
+
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const emailDomainPattern =
+  /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/;
 
 export function normalizeAdminEmail(value: unknown) {
   const email = typeof value === "string" ? value.trim().toLowerCase() : "";
@@ -86,6 +103,21 @@ export function normalizeAdminEmail(value: unknown) {
   }
 
   return email;
+}
+
+export function normalizeAdminEmailDomain(value: unknown) {
+  const rawDomain = typeof value === "string" ? value.trim().toLowerCase() : "";
+  const domain = rawDomain.startsWith("@") ? rawDomain.slice(1) : rawDomain;
+
+  if (!domain || domain.includes("@") || !emailDomainPattern.test(domain)) {
+    throw new AdminUserActionError("Enter a valid email domain.", 400);
+  }
+
+  if (domain.length > 253) {
+    throw new AdminUserActionError("Email domain must be 253 characters or fewer.", 400);
+  }
+
+  return domain;
 }
 
 function normalizeRoleKey(value: unknown) {
@@ -121,8 +153,32 @@ function addRoleGrant(target: UserRoleGrant[], grant: UserRoleGrant) {
   }
 }
 
+async function getEmailDomainGrantRows() {
+  try {
+    const result = await query<DomainGrantRow>(
+      `select edra.domain,
+              r.role_key,
+              r.name as role_name,
+              edra.created_at::text,
+              edra.expires_at::text,
+              edra.reason
+         from email_domain_role_assignments edra
+         join roles r on r.id = edra.role_id
+        order by edra.domain, r.role_key`
+    );
+
+    return result.rows;
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "42P01") {
+      return [];
+    }
+
+    throw error;
+  }
+}
+
 export async function getUserAccessOverview(): Promise<UserAccessOverview> {
-  const [rolesResult, principalRolesResult, emailGrantsResult] = await Promise.all([
+  const [rolesResult, principalRolesResult, emailGrantsResult, domainGrantRows] = await Promise.all([
     query<{
       role_key: string;
       name: string;
@@ -160,7 +216,8 @@ export async function getUserAccessOverview(): Promise<UserAccessOverview> {
          from email_role_assignments era
          join roles r on r.id = era.role_id
         order by era.email, r.role_key`
-    )
+    ),
+    getEmailDomainGrantRows()
   ]);
 
   const usersById = new Map<string, AdminUserAccess>();
@@ -227,6 +284,28 @@ export async function getUserAccessOverview(): Promise<UserAccessOverview> {
     }
   }
 
+  const domainGrantsByDomain = new Map<string, EmailDomainGrant>();
+
+  for (const row of domainGrantRows) {
+    const grant: UserRoleGrant = {
+      roleKey: row.role_key,
+      roleName: row.role_name,
+      source: "domain",
+      createdAt: row.created_at,
+      expiresAt: row.expires_at,
+      reason: row.reason
+    };
+    const domainGrant =
+      domainGrantsByDomain.get(row.domain) ??
+      ({
+        domain: row.domain,
+        roles: []
+      } satisfies EmailDomainGrant);
+
+    addRoleGrant(domainGrant.roles, grant);
+    domainGrantsByDomain.set(row.domain, domainGrant);
+  }
+
   return {
     roles: rolesResult.rows.map((role) => ({
       roleKey: role.role_key,
@@ -234,7 +313,8 @@ export async function getUserAccessOverview(): Promise<UserAccessOverview> {
       description: role.description
     })),
     users,
-    pendingEmailGrants: Array.from(pendingByEmail.values())
+    pendingEmailGrants: Array.from(pendingByEmail.values()),
+    emailDomainGrants: Array.from(domainGrantsByDomain.values())
   };
 }
 
@@ -247,7 +327,7 @@ export async function grantEmailRole(params: {
   const email = normalizeAdminEmail(params.email);
   const roleKey = normalizeRoleKey(params.roleKey);
   const role = await getRole(roleKey);
-  const reason = params.reason?.trim() || "Granted from admin user utility";
+  const reason = params.reason?.trim() || "Granted from dashboard user utility";
 
   await query(
     `insert into email_role_assignments (email, role_id, granted_by_principal_id, reason)
@@ -279,6 +359,49 @@ export async function grantEmailRole(params: {
   });
 
   return { email, roleKey };
+}
+
+export async function grantEmailDomainRole(params: {
+  domain: string;
+  roleKey: string;
+  actorPrincipalId: string;
+  reason?: string | null;
+}) {
+  const domain = normalizeAdminEmailDomain(params.domain);
+  const roleKey = normalizeRoleKey(params.roleKey);
+  const role = await getRole(roleKey);
+  const reason = params.reason?.trim() || "Granted from dashboard user utility";
+
+  await query(
+    `insert into email_domain_role_assignments (domain, role_id, granted_by_principal_id, reason)
+     values ($1, $2, $3, $4)
+     on conflict (domain, role_id)
+     do update set granted_by_principal_id = excluded.granted_by_principal_id,
+                   reason = excluded.reason,
+                   updated_at = now()`,
+    [domain, role.id, params.actorPrincipalId, reason]
+  );
+
+  await query(
+    `insert into role_assignments (principal_id, role_id, granted_by_principal_id, reason)
+     select p.id, $2, $3, $4
+       from principals p
+      where lower(split_part(p.email, '@', 2)) = $1
+     on conflict (principal_id, role_id)
+     do update set granted_by_principal_id = excluded.granted_by_principal_id,
+                   reason = excluded.reason`,
+    [domain, role.id, params.actorPrincipalId, reason]
+  );
+
+  await recordAuditEvent({
+    actorPrincipalId: params.actorPrincipalId,
+    action: "role.email_domain_grant.upserted",
+    targetType: "email_domain_role_assignment",
+    targetId: `${domain}:${roleKey}`,
+    metadata: { domain, roleKey, reason }
+  });
+
+  return { domain, roleKey };
 }
 
 export async function revokeEmailRole(params: {
@@ -315,4 +438,40 @@ export async function revokeEmailRole(params: {
   });
 
   return { email, roleKey };
+}
+
+export async function revokeEmailDomainRole(params: {
+  domain: string;
+  roleKey: string;
+  actorPrincipalId: string;
+}) {
+  const domain = normalizeAdminEmailDomain(params.domain);
+  const roleKey = normalizeRoleKey(params.roleKey);
+  const role = await getRole(roleKey);
+
+  await query(
+    `delete from email_domain_role_assignments
+      where domain = $1
+        and role_id = $2`,
+    [domain, role.id]
+  );
+
+  await query(
+    `delete from role_assignments ra
+      using principals p
+      where ra.principal_id = p.id
+        and lower(split_part(p.email, '@', 2)) = $1
+        and ra.role_id = $2`,
+    [domain, role.id]
+  );
+
+  await recordAuditEvent({
+    actorPrincipalId: params.actorPrincipalId,
+    action: "role.email_domain_grant.revoked",
+    targetType: "email_domain_role_assignment",
+    targetId: `${domain}:${roleKey}`,
+    metadata: { domain, roleKey }
+  });
+
+  return { domain, roleKey };
 }
