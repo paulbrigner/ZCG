@@ -101,6 +101,12 @@ export class ZcgPrototypeStack extends Stack {
         ? secretsmanager.Secret.fromSecretCompleteArn(this, "GitHubMirrorTokenSecret", githubTokenSecretId)
         : secretsmanager.Secret.fromSecretNameV2(this, "GitHubMirrorTokenSecret", githubTokenSecretId)
       : undefined;
+    const knowledgeEmbeddingApiSecretId = this.node.tryGetContext("knowledgeEmbeddingApiSecretId") as string | undefined;
+    const knowledgeEmbeddingApiSecret = knowledgeEmbeddingApiSecretId
+      ? knowledgeEmbeddingApiSecretId.startsWith("arn:")
+        ? secretsmanager.Secret.fromSecretCompleteArn(this, "KnowledgeEmbeddingApiSecret", knowledgeEmbeddingApiSecretId)
+        : secretsmanager.Secret.fromSecretNameV2(this, "KnowledgeEmbeddingApiSecret", knowledgeEmbeddingApiSecretId)
+      : undefined;
     const sesIdentityName =
       (this.node.tryGetContext("sesIdentityName") as string | undefined) ??
       sesFromEmail?.split("@").at(-1);
@@ -112,6 +118,7 @@ export class ZcgPrototypeStack extends Stack {
     const enableWebService = contextBoolean(this, "enableWebService", !isPrototypeLowCost);
     const enableAlb = contextBoolean(this, "enableAlb", true);
     const enableWorkers = contextBoolean(this, "enableWorkers", true);
+    const enableKnowledgeEmbeddingSchedule = contextBoolean(this, "enableKnowledgeEmbeddingSchedule", enableWorkers);
     const enableAlarms = contextBoolean(this, "enableAlarms", !isPrototypeLowCost);
     const enableContainerInsights = contextBoolean(this, "containerInsights", !isPrototypeLowCost);
     const natGateways = contextNumber(this, "natGateways", enableWorkers ? 1 : 0);
@@ -119,6 +126,8 @@ export class ZcgPrototypeStack extends Stack {
     const dbMaxAcu = contextNumber(this, "dbMaxAcu", isPrototypeLowCost ? 1 : 2);
     const dbAutoPauseSeconds = contextNumber(this, "dbAutoPauseSeconds", 15 * 60);
     const logRetentionDays = contextNumber(this, "logRetentionDays", isPrototypeLowCost ? 7 : 30);
+    const knowledgeEmbeddingMaxDocuments = contextNumber(this, "knowledgeEmbeddingMaxDocuments", 200);
+    const knowledgeEmbeddingScheduleMinutes = contextNumber(this, "knowledgeEmbeddingScheduleMinutes", 60);
     const logRetention = logRetentionForDays(logRetentionDays);
 
     if (dbMinAcu === 0 && (dbAutoPauseSeconds < 300 || dbAutoPauseSeconds > 86400)) {
@@ -438,8 +447,14 @@ export class ZcgPrototypeStack extends Stack {
       removalPolicy
     });
 
+    const knowledgeEmbeddingWorkerLogGroup = new logs.LogGroup(this, "KnowledgeEmbeddingWorkerLogGroup", {
+      retention: logRetention,
+      removalPolicy
+    });
+
     let syncWorkerFunctionName = "disabled";
     let migrationRunnerFunctionName = "disabled";
+    let knowledgeEmbeddingWorkerFunctionName = "disabled";
 
     if (enableWorkers) {
       const syncWorkerEnvironment = {
@@ -494,15 +509,53 @@ export class ZcgPrototypeStack extends Stack {
         }
       });
 
+      const knowledgeEmbeddingWorker = new lambdaNodejs.NodejsFunction(this, "KnowledgeEmbeddingWorker", {
+        entry: path.join(__dirname, "..", "workers", "knowledge-embedding-worker.ts"),
+        handler: "handler",
+        runtime: lambda.Runtime.NODEJS_24_X,
+        timeout: Duration.minutes(15),
+        memorySize: 1024,
+        environment: {
+          APP_ENV: environmentName,
+          DATABASE_DRIVER: "data-api",
+          DB_CLUSTER_ARN: database.clusterArn,
+          DB_SECRET_ARN: database.secret!.secretArn,
+          DB_NAME: "zcg",
+          ZCG_KNOWLEDGE_EMBED_MAX_DOCUMENTS: String(knowledgeEmbeddingMaxDocuments),
+          ...(knowledgeEmbeddingApiSecretId
+            ? { ZCG_KNOWLEDGE_EMBEDDING_API_KEY_SECRET_ID: knowledgeEmbeddingApiSecretId }
+            : {})
+        },
+        logGroup: knowledgeEmbeddingWorkerLogGroup,
+        bundling: {
+          externalModules: []
+        }
+      });
+
       syncWorkerFunctionName = syncWorker.functionName;
       migrationRunnerFunctionName = migrationRunner.functionName;
+      knowledgeEmbeddingWorkerFunctionName = knowledgeEmbeddingWorker.functionName;
       snapshotBucket.grantReadWrite(syncWorker);
       snapshotBucket.grantReadWrite(migrationRunner);
       database.secret!.grantRead(syncWorker);
       database.secret!.grantRead(migrationRunner);
+      database.secret!.grantRead(knowledgeEmbeddingWorker);
       githubTokenSecret?.grantRead(syncWorker);
+      knowledgeEmbeddingApiSecret?.grantRead(knowledgeEmbeddingWorker);
       database.connections.allowDefaultPortFrom(syncWorker);
       database.connections.allowDefaultPortFrom(migrationRunner);
+      knowledgeEmbeddingWorker.addToRolePolicy(
+        new iam.PolicyStatement({
+          actions: [
+            "rds-data:ExecuteStatement",
+            "rds-data:BatchExecuteStatement",
+            "rds-data:BeginTransaction",
+            "rds-data:CommitTransaction",
+            "rds-data:RollbackTransaction"
+          ],
+          resources: [database.clusterArn]
+        })
+      );
 
       new events.Rule(this, "SyncSchedule", {
         enabled: false,
@@ -510,9 +563,28 @@ export class ZcgPrototypeStack extends Stack {
         targets: [new targets.LambdaFunction(syncWorker)]
       });
 
+      new events.Rule(this, "KnowledgeEmbeddingSchedule", {
+        enabled: enableKnowledgeEmbeddingSchedule,
+        schedule: events.Schedule.rate(Duration.minutes(knowledgeEmbeddingScheduleMinutes)),
+        targets: [
+          new targets.LambdaFunction(knowledgeEmbeddingWorker, {
+            event: events.RuleTargetInput.fromObject({
+              maxDocuments: knowledgeEmbeddingMaxDocuments
+            })
+          })
+        ]
+      });
+
       if (enableAlarms) {
         syncWorker.metricErrors().createAlarm(this, "SyncWorkerErrorsAlarm", {
           alarmName: `${appName}-${environmentName}-sync-worker-errors`,
+          threshold: 1,
+          evaluationPeriods: 1,
+          comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD
+        });
+
+        knowledgeEmbeddingWorker.metricErrors().createAlarm(this, "KnowledgeEmbeddingWorkerErrorsAlarm", {
+          alarmName: `${appName}-${environmentName}-knowledge-embedding-worker-errors`,
           threshold: 1,
           evaluationPeriods: 1,
           comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD
@@ -552,6 +624,9 @@ export class ZcgPrototypeStack extends Stack {
     });
     new cdk.CfnOutput(this, "MigrationRunnerFunctionName", {
       value: migrationRunnerFunctionName
+    });
+    new cdk.CfnOutput(this, "KnowledgeEmbeddingWorkerFunctionName", {
+      value: knowledgeEmbeddingWorkerFunctionName
     });
     new cdk.CfnOutput(this, "CostMode", {
       value: costMode

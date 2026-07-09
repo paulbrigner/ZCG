@@ -2,7 +2,7 @@ import { query } from "@/lib/db";
 import { recordAuditEvent } from "@/lib/audit";
 import { knowledgeAiEnabled, knowledgeEmbeddingDims, knowledgeEmbeddingModel, knowledgeProviderStatus } from "@/lib/knowledge/config";
 import { composeGrantKnowledgeAnswer } from "@/lib/knowledge/compose";
-import { createQueryEmbedding, vectorLiteral } from "@/lib/knowledge/embeddings";
+import { createQueryEmbedding, getGrantKnowledgeEmbeddingStatus, vectorLiteral } from "@/lib/knowledge/embeddings";
 
 export type KnowledgeAnswerMode = "evidence" | "ai";
 export type KnowledgeRetrievalMode = "keyword" | "semantic" | "hybrid";
@@ -41,7 +41,6 @@ type GrantKnowledgeSearchRow = {
 type GrantKnowledgeOverviewRow = {
   document_count: string;
   application_count: string;
-  embedding_count: string;
   latest_indexed_at: string | null;
 };
 
@@ -50,11 +49,24 @@ type GrantKnowledgeSourceKindRow = {
   document_count: string;
 };
 
+type GrantKnowledgeEmbeddingRunRow = {
+  action: string;
+  created_at: string;
+  metadata: string;
+};
+
 export type GrantKnowledgeOverview = {
   documentCount: number;
   applicationCount: number;
   embeddingCount: number;
+  embeddingBacklogCount: number;
+  staleEmbeddingCount: number;
   latestIndexedAt: string | null;
+  latestEmbeddingIndexedAt: string | null;
+  lastEmbeddingRunAt: string | null;
+  lastEmbeddingRunAction: string | null;
+  lastEmbeddingRunDocumentsEmbedded: number | null;
+  lastEmbeddingRunDocumentsSkipped: number | null;
   sourceKinds: Array<{ sourceKind: string; documentCount: number }>;
 };
 
@@ -77,6 +89,26 @@ export type GrantKnowledgeSearchResponse = {
 
 const defaultLimit = 8;
 const maxLimit = 20;
+
+function parseJsonRecord(value: string | null): Record<string, unknown> {
+  if (!value) {
+    return {};
+  }
+
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function numberValue(value: unknown) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
 
 export function normalizeKnowledgeQuery(value: unknown) {
   return typeof value === "string" ? value.trim().replace(/\s+/g, " ").slice(0, 500) : "";
@@ -166,19 +198,12 @@ function extractiveAnswer(searchText: string, results: GrantKnowledgeSearchResul
 }
 
 export async function getGrantKnowledgeOverview(): Promise<GrantKnowledgeOverview> {
-  const [overview, sourceKinds] = await Promise.all([
+  const [overview, sourceKinds, embeddingStatus, lastEmbeddingRun] = await Promise.all([
     query<GrantKnowledgeOverviewRow>(
       `select count(*)::text as document_count,
               count(distinct application_id)::text as application_count,
-              count(*) filter (
-                where embedding is not null
-                  and embedding_model = $1
-                  and embedding_dims = $2
-                  and embedding_content_hash = content_hash
-              )::text as embedding_count,
               max(indexed_at)::text as latest_indexed_at
-         from grant_knowledge_documents`,
-      [knowledgeEmbeddingModel(), knowledgeEmbeddingDims()]
+         from grant_knowledge_documents`
     ),
     query<GrantKnowledgeSourceKindRow>(
       `select coalesce(source_kind, document_kind) as source_kind,
@@ -186,15 +211,34 @@ export async function getGrantKnowledgeOverview(): Promise<GrantKnowledgeOvervie
          from grant_knowledge_documents
         group by coalesce(source_kind, document_kind)
         order by source_kind`
+    ),
+    getGrantKnowledgeEmbeddingStatus(),
+    query<GrantKnowledgeEmbeddingRunRow>(
+      `select action,
+              created_at::text,
+              metadata::text
+         from audit_events
+        where action in ('knowledge.embed', 'knowledge.embed.scheduled', 'knowledge.embed.scheduled.failed')
+        order by created_at desc
+        limit 1`
     )
   ]);
   const row = overview.rows[0];
+  const lastRun = lastEmbeddingRun.rows[0];
+  const lastRunMetadata = parseJsonRecord(lastRun?.metadata ?? null);
 
   return {
     documentCount: Number(row?.document_count ?? 0),
     applicationCount: Number(row?.application_count ?? 0),
-    embeddingCount: Number(row?.embedding_count ?? 0),
+    embeddingCount: embeddingStatus.embeddingCount,
+    embeddingBacklogCount: embeddingStatus.embeddingBacklogCount,
+    staleEmbeddingCount: embeddingStatus.staleEmbeddingCount,
     latestIndexedAt: row?.latest_indexed_at ?? null,
+    latestEmbeddingIndexedAt: embeddingStatus.latestEmbeddingIndexedAt,
+    lastEmbeddingRunAt: lastRun?.created_at ?? null,
+    lastEmbeddingRunAction: lastRun?.action ?? null,
+    lastEmbeddingRunDocumentsEmbedded: numberValue(lastRunMetadata.documentsEmbedded),
+    lastEmbeddingRunDocumentsSkipped: numberValue(lastRunMetadata.documentsSkipped),
     sourceKinds: sourceKinds.rows.map((sourceKind) => ({
       sourceKind: sourceKind.source_kind,
       documentCount: Number(sourceKind.document_count)

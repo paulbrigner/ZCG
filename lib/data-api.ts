@@ -13,6 +13,15 @@ type DataApiQueryResult<T> = {
 
 const dataApi = new RDSDataClient({});
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const databaseResumeRetryCount = 6;
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isDatabaseResumingError(error: unknown) {
+  return error instanceof Error && error.name === "DatabaseResumingException";
+}
 
 function formatTimestamp(date: Date) {
   return date.toISOString().replace("T", " ").replace("Z", "");
@@ -119,16 +128,32 @@ export async function dataApiQuery<T extends Record<string, unknown> = Record<st
     throw new Error("DB_CLUSTER_ARN and DB_SECRET_ARN are required when DATABASE_DRIVER=data-api");
   }
 
-  const response = await dataApi.send(
-    new ExecuteStatementCommand({
-      resourceArn: env.DB_CLUSTER_ARN,
-      secretArn: env.DB_SECRET_ARN,
-      database: env.DB_NAME,
-      sql: postgresPlaceholdersToNamed(sql),
-      parameters: sqlParameters(values),
-      includeResultMetadata: true
-    })
-  );
+  const command = new ExecuteStatementCommand({
+    resourceArn: env.DB_CLUSTER_ARN,
+    secretArn: env.DB_SECRET_ARN,
+    database: env.DB_NAME,
+    sql: postgresPlaceholdersToNamed(sql),
+    parameters: sqlParameters(values),
+    includeResultMetadata: true
+  });
+
+  let response;
+  for (let attempt = 1; attempt <= databaseResumeRetryCount; attempt += 1) {
+    try {
+      response = await dataApi.send(command);
+      break;
+    } catch (error) {
+      if (!isDatabaseResumingError(error) || attempt === databaseResumeRetryCount) {
+        throw error;
+      }
+
+      await sleep(Math.min(1000 * 2 ** (attempt - 1), 5000));
+    }
+  }
+
+  if (!response) {
+    throw new Error("RDS Data API query did not return a response.");
+  }
 
   const columns = response.columnMetadata?.map((column) => column.label ?? column.name ?? "") ?? [];
   const rows = (response.records ?? []).map((record) => {

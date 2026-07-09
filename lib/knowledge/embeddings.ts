@@ -32,6 +32,14 @@ export type GrantKnowledgeEmbeddingResult = {
   documentsSkipped: number;
 };
 
+export type GrantKnowledgeEmbeddingStatus = {
+  documentCount: number;
+  embeddingCount: number;
+  embeddingBacklogCount: number;
+  staleEmbeddingCount: number;
+  latestEmbeddingIndexedAt: string | null;
+};
+
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -130,6 +138,50 @@ async function fetchEmbeddingCandidates(limit: number) {
   );
 
   return result.rows;
+}
+
+export async function getGrantKnowledgeEmbeddingStatus(): Promise<GrantKnowledgeEmbeddingStatus> {
+  const result = await query<{
+    document_count: string;
+    embedding_count: string;
+    embedding_backlog_count: string;
+    stale_embedding_count: string;
+    latest_embedding_indexed_at: string | null;
+  }>(
+    `select count(*)::text as document_count,
+            count(*) filter (
+              where embedding is not null
+                and embedding_model = $1
+                and embedding_dims = $2
+                and embedding_content_hash = content_hash
+            )::text as embedding_count,
+            count(*) filter (
+              where embedding is null
+                 or embedding_model is distinct from $1
+                 or embedding_dims is distinct from $2
+                 or embedding_content_hash is distinct from content_hash
+            )::text as embedding_backlog_count,
+            count(*) filter (
+              where embedding is not null
+                and (
+                  embedding_model is distinct from $1
+                  or embedding_dims is distinct from $2
+                  or embedding_content_hash is distinct from content_hash
+                )
+            )::text as stale_embedding_count,
+            max(embedding_indexed_at)::text as latest_embedding_indexed_at
+       from grant_knowledge_documents`,
+    [knowledgeEmbeddingModel(), knowledgeEmbeddingDims()]
+  );
+  const row = result.rows[0];
+
+  return {
+    documentCount: Number(row?.document_count ?? 0),
+    embeddingCount: Number(row?.embedding_count ?? 0),
+    embeddingBacklogCount: Number(row?.embedding_backlog_count ?? 0),
+    staleEmbeddingCount: Number(row?.stale_embedding_count ?? 0),
+    latestEmbeddingIndexedAt: row?.latest_embedding_indexed_at ?? null
+  };
 }
 
 async function storeEmbedding(row: EmbeddingCandidateRow, vector: number[]) {

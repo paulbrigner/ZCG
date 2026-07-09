@@ -434,6 +434,9 @@ Current rules:
   `role:assignment:manage`.
 - Rebuilding grant knowledge documents and embedding new batches requires the
   Administrator role and `knowledge:index`.
+- A scheduled backend worker periodically embeds stale or missing grant
+  knowledge documents so semantic retrieval can catch up without repeated
+  manual clicks.
 - Semantic and hybrid retrieval require `knowledge:semantic`; AI grounded answer
   composition requires `knowledge:compose`.
 - The public prototype can use keyword/evidence retrieval, but it cannot run
@@ -474,6 +477,7 @@ npm run worker:sync
 npm run reconcile:grants
 npm run knowledge:index
 npm run knowledge:embed
+npm run worker:knowledge-embed
 npm run infra:synth
 ```
 
@@ -484,6 +488,11 @@ Knowledge retrieval environment variables are documented in `.env.example`.
 Important knobs include `ZCG_KNOWLEDGE_AI_API_KEY`,
 `ZCG_KNOWLEDGE_AI_MODEL`, `ZCG_KNOWLEDGE_SEMANTIC_ENABLED`,
 `ZCG_KNOWLEDGE_EMBEDDING_MODEL`, and `ZCG_KNOWLEDGE_EMBEDDING_DIMS`.
+The scheduled embedding worker reads the provider key from Secrets Manager via
+`knowledgeEmbeddingApiSecretId`; the deployment scripts default that to
+`zcg/prototype/venice-api-key`. The worker embeds up to
+`knowledgeEmbeddingMaxDocuments` documents per run, defaulting to 200 every 60
+minutes.
 GitHub source mirroring also supports `ZCG_GITHUB_COMMENT_MAX_PAGES` for the
 per-issue comment pagination pass. The deployed sync worker reads a GitHub
 fine-grained PAT from AWS Secrets Manager when `githubTokenSecretId` is passed
