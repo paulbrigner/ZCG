@@ -15,11 +15,13 @@ type ChatCompletionResponse = {
 };
 
 const maxEvidenceItems = 100;
-const maxEvidencePromptChars = 120000;
-const maxEvidenceTextChars = 7000;
-const minEvidenceTextChars = 700;
+const maxEvidencePromptChars = 80000;
+const maxEvidenceTextChars = 4000;
+const richEvidenceTextChars = 3500;
+const expandedEvidenceTextChars = 1400;
+const minEvidenceTextChars = 500;
 const richEvidenceItems = 8;
-const expandedEvidenceItems = 20;
+const expandedEvidenceItems = 24;
 
 function promptEvidenceText(result: GrantKnowledgeSearchResult, maxChars: number) {
   const text = result.content.replace(/\n{3,}/g, "\n\n").trim() || result.excerpt;
@@ -54,9 +56,9 @@ function evidenceForPrompt(results: GrantKnowledgeSearchResult[]) {
   for (const [index, result] of selectedResults.entries()) {
     const preferredTextBudget =
       index < richEvidenceItems
-        ? 5000
+        ? richEvidenceTextChars
         : index < expandedEvidenceItems
-          ? 2500
+          ? expandedEvidenceTextChars
           : minEvidenceTextChars;
     let block = resultForPrompt(result, index, preferredTextBudget);
 

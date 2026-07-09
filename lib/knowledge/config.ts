@@ -2,7 +2,7 @@ const defaultAiBaseUrl = "https://api.venice.ai/api/v1";
 const defaultAiModel = "openai-gpt-55";
 const defaultEmbeddingModel = "text-embedding-bge-m3";
 const defaultEmbeddingDims = 1024;
-const defaultAiTimeoutMs = 20000;
+const defaultAiTimeoutMs = 60000;
 const defaultEmbeddingTimeoutMs = 60000;
 const defaultEmbeddingBatchSize = 2;
 

@@ -99,6 +99,12 @@ const maxAnswerEvidenceDocuments = 100;
 const maxExpandedDocumentsPerApplication = 7;
 const maxExpandedSourceDocuments = 20;
 const maxInitialEvidenceDocuments = 8;
+const searchResultContentMaxChars = 6000;
+const clientResultContentMaxChars = 1200;
+
+function boundedContentSql(tableAlias: string) {
+  return `left(${tableAlias}.content, ${searchResultContentMaxChars})`;
+}
 
 function parseJsonRecord(value: string | null): Record<string, unknown> {
   if (!value) {
@@ -185,6 +191,21 @@ function mapSearchRow(row: GrantKnowledgeSearchRow, searchText: string): GrantKn
     rank: Number(row.rank),
     excerpt: plainExcerpt(row.content, searchText),
     content: row.content
+  };
+}
+
+function truncateClientContent(content: string) {
+  if (content.length <= clientResultContentMaxChars) {
+    return content;
+  }
+
+  return `${content.slice(0, clientResultContentMaxChars - 80)}\n\n[Content truncated in API response.]`;
+}
+
+function resultForClient(result: GrantKnowledgeSearchResult): GrantKnowledgeSearchResult {
+  return {
+    ...result,
+    content: truncateClientContent(result.content)
   };
 }
 
@@ -304,7 +325,7 @@ async function searchKeywordGrantKnowledge({
               case when d.applicant_name ilike $2 then 0.25 else 0 end +
               case when d.source_id ilike $2 then 0.12 else 0 end
             ) as rank,
-            d.content
+            ${boundedContentSql("d")} as content
        from grant_knowledge_documents d
        cross join search_query
       where d.search_tsv @@ search_query.query
@@ -340,7 +361,7 @@ async function searchSemanticGrantKnowledge({
             d.normalized_status,
             d.requested_amount_usd::text,
             (1 - (d.embedding <=> ($1)::vector)) as rank,
-            d.content
+            ${boundedContentSql("d")} as content
        from grant_knowledge_documents d
       where d.embedding is not null
         and d.embedding_model = $2
@@ -427,7 +448,7 @@ async function fetchCandidateApplicationSummaries({
             d.normalized_status,
             d.requested_amount_usd::text,
             selected.app_rank as rank,
-            d.content
+            ${boundedContentSql("d")} as content
        from selected
        join grant_knowledge_documents d on d.application_id = selected.application_id
                                       and d.document_kind = 'application_summary'
@@ -456,13 +477,13 @@ function mergeAnswerEvidence({
     merged.set(result.id, result);
   }
 
-  for (const result of expandedSourceResults) {
+  for (const result of candidateSummaryResults) {
     if (!merged.has(result.id)) {
       merged.set(result.id, result);
     }
   }
 
-  for (const result of candidateSummaryResults) {
+  for (const result of expandedSourceResults) {
     if (!merged.has(result.id)) {
       merged.set(result.id, result);
     }
@@ -542,7 +563,7 @@ async function expandResultsWithApplicationSources({
               d.source_url,
               d.normalized_status,
               d.requested_amount_usd::text,
-              d.content,
+              ${boundedContentSql("d")} as content,
               selected.app_order,
               selected.app_rank,
               row_number() over (
@@ -765,7 +786,7 @@ export async function runGrantKnowledgeSearch({
     retrievalMode: effectiveRetrievalMode,
     answerText,
     answerStatus,
-    results: answerEvidenceResults,
+    results: answerEvidenceResults.map(resultForClient),
     retrievalStats: {
       resultCount: answerEvidenceResults.length,
       initialResultCount: results.length,
