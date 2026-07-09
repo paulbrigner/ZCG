@@ -33,6 +33,22 @@ function statusLabel(value: string | null) {
     .join(" ");
 }
 
+function dateOnlyText(value: string | null) {
+  const match = value?.match(/^(\d{4})-(\d{2})-(\d{2})/);
+
+  if (!match) {
+    return "Meeting date unknown";
+  }
+
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const year = Number(match[1]);
+
+  return Number.isFinite(month) && Number.isFinite(day) && Number.isFinite(year)
+    ? `${month}/${day}/${year}`
+    : "Meeting date unknown";
+}
+
 function numberText(value: string | number) {
   const parsed = typeof value === "number" ? value : Number(value);
   return Number.isFinite(parsed) ? parsed.toLocaleString("en-US") : "0";
@@ -106,7 +122,28 @@ function compactJson(value: string) {
 }
 
 function forumRoleLabel(value: string | null) {
-  return value === "primary_forum_thread" ? "Primary forum thread" : "Supporting forum reference";
+  if (value === "primary_forum_thread") {
+    return "Primary forum thread";
+  }
+
+  if (value === "decision_minutes") {
+    return "Decision minutes";
+  }
+
+  return "Supporting forum reference";
+}
+
+function parseSpeakerNotes(value: string | null | undefined): Array<{ speaker: string; note: string }> {
+  if (!value) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed as Array<{ speaker: string; note: string }> : [];
+  } catch {
+    return [];
+  }
 }
 
 const detailHelp = {
@@ -126,6 +163,10 @@ const detailHelp = {
     "Count of forum_link source_records linked as supporting context, such as prior funding, previous work, reports, dependencies, or background references.",
   githubLabels:
     "Count of GitHub issue labels captured as first-class grant_application_github_labels rows for this application.",
+  decisionNotes:
+    "Count of accepted grant_decision_mentions extracted from ZCG meeting minutes and linked to this canonical application.",
+  decisionHistory:
+    "Committee decision evidence parsed from ZCG meeting minutes in the Community Grants Updates forum category. These notes close the loop between application evidence and recorded ZCG outcomes.",
   githubLabelSection:
     "Structured labels copied from the GitHub issue during source mirroring and reconciliation. These are used for workflow/status filtering.",
   forumLinkSection:
@@ -150,7 +191,7 @@ export default async function GrantApplicationPage({
   }
 
   const application = detail.application;
-  const sourceEvidence = detail.sources.filter((source) => source.source_kind !== "forum_link");
+  const sourceEvidence = detail.sources.filter((source) => !["forum_link", "forum_meeting_minutes"].includes(source.source_kind));
   const primaryForumLinks = detail.forumLinks.filter((forumLink) => forumLink.relationship_role === "primary_forum_thread");
   const supportingForumLinks = detail.forumLinks.filter((forumLink) => forumLink.relationship_role !== "primary_forum_thread");
 
@@ -200,6 +241,10 @@ export default async function GrantApplicationPage({
         <article className="metric-card">
           <MetricLabel body={detailHelp.githubLabels} label="GitHub labels" text="GitHub labels" />
           <strong>{numberText(application.github_label_count)}</strong>
+        </article>
+        <article className="metric-card">
+          <MetricLabel body={detailHelp.decisionNotes} label="Decision notes" text="Decision notes" />
+          <strong>{numberText(application.decision_mention_count)}</strong>
         </article>
       </section>
 
@@ -253,6 +298,77 @@ export default async function GrantApplicationPage({
         ) : (
           <p>No GitHub labels captured for this application yet.</p>
         )}
+      </section>
+
+      <section className="panel">
+        <div className="section-heading">
+          <div>
+            <h2>Decision history</h2>
+            <span className="section-count">
+              {numberText(application.decision_mention_count)} meeting note{application.decision_mention_count === "1" ? "" : "s"} linked
+              <MetricHelp align="left" body={detailHelp.decisionHistory} label="Decision history" />
+            </span>
+          </div>
+        </div>
+        <div className="evidence-list">
+          {detail.decisionMentions.length ? (
+            detail.decisionMentions.map((mention) => {
+              const speakerNotes = parseSpeakerNotes(mention.speaker_notes);
+
+              return (
+                <article className="evidence-item decision-history-item" key={mention.id}>
+                  <div>
+                    <div className="issue-heading">
+                      <span className={`badge ${mention.normalized_decision}`}>{statusLabel(mention.normalized_decision)}</span>
+                      <span className="badge neutral">{dateOnlyText(mention.meeting_date)}</span>
+                    </div>
+                    <h3>{mention.candidate_title}</h3>
+                    <p>{mention.decision_text ?? "Decision text was not parsed from the minutes."}</p>
+                    {mention.rationale_text ? <p>{mention.rationale_text}</p> : null}
+                  </div>
+                  <dl className="evidence-meta">
+                    <div>
+                      <dt>Confidence</dt>
+                      <dd>{percentText(mention.confidence)}</dd>
+                    </div>
+                    <div>
+                      <dt>Match method</dt>
+                      <dd>{statusLabel(mention.match_method)}</dd>
+                    </div>
+                    <div>
+                      <dt>Minutes</dt>
+                      <dd>{mention.meeting_title}</dd>
+                    </div>
+                  </dl>
+                  {speakerNotes.length ? (
+                    <details className="maintenance-callout">
+                      <summary>Committee notes</summary>
+                      <div className="evidence-list compact">
+                        {speakerNotes.map((note, index) => (
+                          <p key={`${note.speaker}-${index}`}>
+                            <strong>{note.speaker}:</strong> {note.note}
+                          </p>
+                        ))}
+                      </div>
+                    </details>
+                  ) : null}
+                  <div className="link-row">
+                    <a className="table-link" href={mention.topic_url} rel="noreferrer" target="_blank">
+                      Open meeting minutes
+                    </a>
+                    {mention.linked_source_url ? (
+                      <a className="table-link" href={mention.linked_source_url} rel="noreferrer" target="_blank">
+                        Open referenced proposal
+                      </a>
+                    ) : null}
+                  </div>
+                </article>
+              );
+            })
+          ) : (
+            <p>No ZCG meeting-minute decision notes are linked to this application yet.</p>
+          )}
+        </div>
       </section>
 
       <section className="panel">

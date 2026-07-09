@@ -34,6 +34,29 @@ type DiscourseTopic = {
   };
 };
 
+type DiscourseCategoryTopic = {
+  id: number;
+  title?: string | null;
+  fancy_title?: string | null;
+  slug?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  last_posted_at?: string | null;
+  bumped_at?: string | null;
+  posts_count?: number | null;
+  reply_count?: number | null;
+  views?: number | null;
+  category_id?: number | null;
+  tags?: string[];
+};
+
+type DiscourseCategoryResponse = {
+  topic_list?: {
+    more_topics_url?: string | null;
+    topics?: DiscourseCategoryTopic[];
+  };
+};
+
 type MirroredForumTopic = {
   url: string;
   jsonUrl: string;
@@ -41,11 +64,19 @@ type MirroredForumTopic = {
   posts: Array<DiscoursePost & { plainText: string }>;
 };
 
+type TopicRecordOptions = {
+  sourceKind?: string;
+  mirrorKind?: string;
+  metadata?: Record<string, unknown>;
+};
+
 const forumUrlPattern = /https?:\/\/forum\.zcashcommunity\.com\/t\/[^\s)"'<\]}]+/gi;
 const genericForumTopicSlugs = new Set(["zcg-code-of-conduct", "zcg-communication-guidelines"]);
+const defaultUpdatesCategoryUrl = "https://forum.zcashcommunity.com/c/grants/zomg-updates/34";
 const defaultMaxTopics = 2000;
 const defaultMaxPostsPerTopic = 20;
 const defaultFetchDelayMs = 500;
+const defaultMaxCategoryPages = 25;
 
 class ForumRateLimitError extends Error {
   constructor(url: string) {
@@ -81,8 +112,16 @@ function maxPostsPerTopic(config?: ForumMirrorConfig) {
   );
 }
 
+function maxCategoryPages(config?: ForumMirrorConfig) {
+  return numberConfig(config?.maxCategoryPages ?? process.env.ZCG_FORUM_MAX_CATEGORY_PAGES, defaultMaxCategoryPages);
+}
+
 function fetchDelayMs(config?: ForumMirrorConfig) {
   return numberConfig(config?.fetchDelayMs ?? process.env.ZCG_FORUM_FETCH_DELAY_MS, defaultFetchDelayMs);
+}
+
+function updatesCategoryUrl(config?: ForumMirrorConfig) {
+  return config?.updatesCategoryUrl ?? process.env.ZCG_FORUM_UPDATES_CATEGORY_URL ?? defaultUpdatesCategoryUrl;
 }
 
 function sleep(ms: number) {
@@ -142,6 +181,42 @@ function htmlToPlainText(value: string | null | undefined) {
       .replace(/[ \t]{2,}/g, " ")
       .trim()
   );
+}
+
+function stripHtml(value: string) {
+  return htmlToPlainText(value);
+}
+
+function absoluteForumUrl(value: string) {
+  try {
+    return new URL(value, "https://forum.zcashcommunity.com").toString();
+  } catch {
+    return value;
+  }
+}
+
+function htmlLinks(value: string | null | undefined) {
+  if (!value) {
+    return [];
+  }
+
+  const links: Array<{ href: string; text: string; normalizedUrl: string | null; htmlOffset: number }> = [];
+  const pattern = /<a\b[^>]*\bhref=(["'])(.*?)\1[^>]*>([\s\S]*?)<\/a>/gi;
+  let match: RegExpExecArray | null;
+
+  while ((match = pattern.exec(value))) {
+    const href = absoluteForumUrl(decodeHtmlEntities(match[2] ?? ""));
+    const text = stripHtml(match[3] ?? "");
+
+    links.push({
+      href,
+      text,
+      normalizedUrl: normalizeForumTopicUrl(href),
+      htmlOffset: match.index
+    });
+  }
+
+  return links;
 }
 
 export function normalizeForumTopicUrl(value: string) {
@@ -266,6 +341,28 @@ async function fetchForumTopic(url: string, maxPosts: number): Promise<MirroredF
   };
 }
 
+function categoryJsonUrl(categoryUrl: string, page: number) {
+  const parsed = new URL(categoryUrl);
+  parsed.pathname = `${parsed.pathname.replace(/\/+$/g, "")}.json`;
+  parsed.search = page > 0 ? `?page=${page}` : "";
+  parsed.hash = "";
+  return parsed.toString();
+}
+
+function categoryTopicUrl(topic: DiscourseCategoryTopic) {
+  const slug = topic.slug ?? String(topic.id);
+  return normalizeForumTopicUrl(`https://forum.zcashcommunity.com/t/${slug}/${topic.id}`);
+}
+
+function isMeetingMinutesTopic(topic: DiscourseTopic | DiscourseCategoryTopic) {
+  const title = `${topic.title ?? ""} ${topic.fancy_title ?? ""}`.toLowerCase();
+  return title.includes("meeting minutes") && (
+    title.includes("zcg") ||
+    title.includes("zomg") ||
+    title.includes("zcash community grants")
+  );
+}
+
 function topicSummary(topic: MirroredForumTopic) {
   const firstPostText = topic.posts[0]?.plainText ?? "";
   return firstPostText.length > 300 ? `${firstPostText.slice(0, 297)}...` : firstPostText;
@@ -279,7 +376,7 @@ function topicUpdatedAt(topic: MirroredForumTopic) {
   return topic.topic.last_posted_at ?? topic.topic.updated_at ?? topic.topic.bumped_at ?? topic.topic.created_at ?? null;
 }
 
-function topicRecord(topic: MirroredForumTopic, fetchedAt: string): SourceMirrorRecord {
+function topicRecord(topic: MirroredForumTopic, fetchedAt: string, options: TopicRecordOptions = {}): SourceMirrorRecord {
   const posts = topic.posts.map((post) => ({
     id: post.id,
     postNumber: post.post_number ?? null,
@@ -289,11 +386,15 @@ function topicRecord(topic: MirroredForumTopic, fetchedAt: string): SourceMirror
     name: post.name ?? null,
     createdAt: post.created_at ?? null,
     updatedAt: post.updated_at ?? null,
-    plainText: post.plainText
+    plainText: post.plainText,
+    cookedHtml: post.cooked ?? null,
+    links: htmlLinks(post.cooked)
   }));
+  const sourceKind = options.sourceKind ?? "forum_link";
+  const mirrorKind = options.mirrorKind ?? "forum_topic";
 
   return {
-    sourceKind: "forum_link",
+    sourceKind,
     sourceId: topic.url,
     sourceUrl: topic.url,
     sourceUpdatedAt: topicUpdatedAt(topic),
@@ -324,11 +425,13 @@ function topicRecord(topic: MirroredForumTopic, fetchedAt: string): SourceMirror
     },
     metadata: {
       source: "forum_mirror",
-      mirrorKind: "forum_topic",
+      mirrorKind,
       fetchedAt,
       topicId: topic.topic.id,
+      categoryId: topic.topic.category_id ?? null,
       postCountFetched: posts.length,
-      postCountReported: topic.topic.posts_count ?? null
+      postCountReported: topic.topic.posts_count ?? null,
+      ...options.metadata
     }
   };
 }
@@ -421,6 +524,126 @@ export async function mirrorForumTopics(config: ForumMirrorConfig = {}): Promise
       topicCountFailed: failures.length,
       topicCountSkippedAfterRateLimit,
       maxTopics: maxTopicCount,
+      maxPostsPerTopic: maxPostCount,
+      fetchDelayMs: delayMs,
+      rateLimitedAt,
+      recordCount: records.length
+    }
+  };
+}
+
+export async function mirrorForumUpdatesCategory(config: ForumMirrorConfig = {}): Promise<SourceMirrorResult> {
+  const fetchedAt = new Date().toISOString();
+  const categoryUrl = updatesCategoryUrl(config);
+  const maxTopicCount = maxTopics(config);
+  const maxPostCount = maxPostsPerTopic(config);
+  const maxPages = maxCategoryPages(config);
+  const delayMs = fetchDelayMs(config);
+  const topicUrls: string[] = [];
+  const categoryFailures: Array<{ url: string; error: string }> = [];
+  const topicFailures: Array<{ url: string; error: string }> = [];
+  let moreTopicsUrl: string | null = null;
+  let rateLimitedAt: string | null = null;
+
+  for (let page = 0; page < maxPages && topicUrls.length < maxTopicCount; page += 1) {
+    const url = categoryJsonUrl(categoryUrl, page);
+
+    if (page > 0 && delayMs > 0) {
+      await sleep(delayMs);
+    }
+
+    try {
+      const category = await fetchJson<DiscourseCategoryResponse>(url);
+      const topics = category?.topic_list?.topics ?? [];
+      moreTopicsUrl = category?.topic_list?.more_topics_url ?? null;
+
+      for (const topic of topics) {
+        const topicUrl = categoryTopicUrl(topic);
+
+        if (topicUrl) {
+          topicUrls.push(topicUrl);
+        }
+      }
+
+      if (!moreTopicsUrl || topics.length === 0) {
+        break;
+      }
+    } catch (error) {
+      categoryFailures.push({ url, error: error instanceof Error ? error.message : String(error) });
+
+      if (error instanceof ForumRateLimitError) {
+        rateLimitedAt = url;
+        break;
+      }
+    }
+  }
+
+  const urls = [...new Set(topicUrls)].slice(0, maxTopicCount);
+  const records: SourceMirrorRecord[] = [];
+
+  for (const [index, url] of urls.entries()) {
+    if (index > 0 && delayMs > 0) {
+      await sleep(delayMs);
+    }
+
+    try {
+      const topic = await fetchForumTopic(url, maxPostCount);
+
+      if (!topic) {
+        topicFailures.push({ url, error: "Topic unavailable or not public." });
+        continue;
+      }
+
+      records.push(
+        topicRecord(topic, fetchedAt, {
+          sourceKind: isMeetingMinutesTopic(topic.topic) ? "forum_meeting_minutes" : "forum_update_topic",
+          mirrorKind: isMeetingMinutesTopic(topic.topic) ? "forum_meeting_minutes" : "forum_update_topic",
+          metadata: {
+            categorySourceUrl: categoryUrl,
+            categorySourceKind: "forum_updates_category"
+          }
+        })
+      );
+    } catch (error) {
+      topicFailures.push({ url, error: error instanceof Error ? error.message : String(error) });
+
+      if (error instanceof ForumRateLimitError) {
+        rateLimitedAt = url;
+        break;
+      }
+    }
+  }
+
+  return {
+    sourceKind: "forum_updates_category",
+    sourceId: categoryUrl,
+    sourceUrl: categoryUrl,
+    rawPayload: {
+      fetchedAt,
+      categoryUrl,
+      topicCountDiscovered: urls.length,
+      topicCountMirrored: records.length,
+      topicCountFailed: topicFailures.length,
+      maxTopics: maxTopicCount,
+      maxCategoryPages: maxPages,
+      maxPostsPerTopic: maxPostCount,
+      fetchDelayMs: delayMs,
+      moreTopicsUrl,
+      rateLimitedAt,
+      urls,
+      categoryFailures,
+      topicFailures
+    },
+    records,
+    metadata: {
+      fetchedAt,
+      categoryUrl,
+      topicCountDiscovered: urls.length,
+      topicCountMirrored: records.length,
+      topicCountFailed: topicFailures.length,
+      categoryFailureCount: categoryFailures.length,
+      maxTopics: maxTopicCount,
+      maxCategoryPages: maxPages,
       maxPostsPerTopic: maxPostCount,
       fetchDelayMs: delayMs,
       rateLimitedAt,

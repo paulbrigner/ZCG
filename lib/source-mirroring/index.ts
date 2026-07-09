@@ -1,4 +1,4 @@
-import { forumTopicUrlsFromSourceRecords, mirrorForumTopics } from "./forum";
+import { forumTopicUrlsFromSourceRecords, mirrorForumTopics, mirrorForumUpdatesCategory } from "./forum";
 import { mirrorGitHubIssues } from "./github";
 import { mirrorGoogleSheetTabs } from "./google-sheet";
 import type { SourceMirrorEvent, SourceMirrorResult } from "./types";
@@ -18,6 +18,10 @@ export async function collectSourceMirrors(event: SourceMirrorEvent = {}): Promi
     return [await mirrorForumTopics(event.forum)];
   }
 
+  if (source === "forum-updates") {
+    return [await mirrorForumUpdatesCategory(event.forum)];
+  }
+
   if (source === "phase1-all" || source === "phase1") {
     const github = await mirrorGitHubIssues(event.github);
     const googleSheet = await mirrorGoogleSheetTabs(event.googleSheet);
@@ -26,8 +30,9 @@ export async function collectSourceMirrors(event: SourceMirrorEvent = {}): Promi
       ...event.forum,
       urls: event.forum?.urls?.length ? event.forum.urls : forumUrls
     });
+    const forumUpdates = await mirrorForumUpdatesCategory(event.forum);
 
-    return [github, googleSheet, forum];
+    return [github, googleSheet, forum, forumUpdates];
   }
 
   throw new Error(`Unsupported Phase 1 mirror source: ${source}`);

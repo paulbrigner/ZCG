@@ -4,6 +4,7 @@ import {
   getActiveManualSourceLinkKeys,
   manualSourceLinkKey
 } from "./decisions";
+import { reconcileGrantDecisionMinutes } from "./decision-minutes";
 
 type RawSourceRecord = {
   id: string;
@@ -107,7 +108,11 @@ type ApplicationGitHubLabelInput = GitHubLabelInput & {
   applicationId: string;
 };
 
-type SourceLinkRelationshipRole = "source_evidence" | "primary_forum_thread" | "supporting_forum_reference";
+type SourceLinkRelationshipRole =
+  | "source_evidence"
+  | "primary_forum_thread"
+  | "supporting_forum_reference"
+  | "decision_minutes";
 
 type SourceLinkInput = {
   sourceRecordId: string;
@@ -151,6 +156,9 @@ export type ReconciliationRunResult = {
   manualDecisionsApplied: number;
   forumLinksCreatedOrUpdated: number;
   githubLabelsCreatedOrUpdated: number;
+  decisionSourcesParsed: number;
+  decisionMentionsLinked: number;
+  decisionMentionsNeedingReview: number;
   matchedApplications: number;
   unmatchedGitHubApplications: number;
   unmatchedSheetProjects: number;
@@ -1558,6 +1566,9 @@ export async function runGrantReconciliation(): Promise<ReconciliationRunResult>
     manualDecisionsApplied: 0,
     forumLinksCreatedOrUpdated: 0,
     githubLabelsCreatedOrUpdated: 0,
+    decisionSourcesParsed: 0,
+    decisionMentionsLinked: 0,
+    decisionMentionsNeedingReview: 0,
     matchedApplications: 0,
     unmatchedGitHubApplications: 0,
     unmatchedSheetProjects: 0
@@ -1958,6 +1969,11 @@ export async function runGrantReconciliation(): Promise<ReconciliationRunResult>
   );
   counts.linksCreated = await bulkLinkSources(links);
   counts.issuesCreated = await bulkCreateIssues(issues);
+  const decisionMinutesResult = await reconcileGrantDecisionMinutes();
+  counts.decisionSourcesParsed = decisionMinutesResult.sourcesParsed;
+  counts.decisionMentionsLinked = decisionMinutesResult.mentionsLinked;
+  counts.decisionMentionsNeedingReview = decisionMinutesResult.mentionsNeedingReview;
+  counts.issuesCreated += decisionMinutesResult.issuesCreated;
   const manualApplyResult = await applyManualReconciliationDecisions();
   counts.manualDecisionsApplied =
     manualApplyResult.linkedSources +

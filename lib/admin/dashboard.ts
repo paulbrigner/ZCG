@@ -92,6 +92,7 @@ export type GrantApplicationRow = {
   forum_link_count: string;
   primary_forum_thread_count: string;
   supporting_forum_reference_count: string;
+  decision_mention_count: string;
   github_label_count: string;
   github_labels: string;
   open_issue_count: string;
@@ -134,6 +135,24 @@ export type SourceEvidenceRow = {
   relationship_role: string;
   raw_payload: string;
   metadata: string;
+};
+
+export type DecisionMentionRow = {
+  id: string;
+  candidate_title: string;
+  normalized_decision: string;
+  decision_text: string | null;
+  rationale_text: string | null;
+  speaker_notes: string;
+  match_method: string;
+  confidence: string;
+  review_status: string;
+  linked_source_url: string | null;
+  meeting_date: string | null;
+  meeting_title: string;
+  topic_url: string;
+  source_record_id: string;
+  updated_at: string;
 };
 
 export type ReconciliationIssueRow = {
@@ -522,6 +541,12 @@ export async function getAdminDashboard({
             )::text as supporting_forum_reference_count,
             (
               select count(*)::text
+                from grant_decision_mentions gdm_count
+               where gdm_count.application_id = ga.id
+                 and gdm_count.review_status = 'accepted'
+            ) as decision_mention_count,
+            (
+              select count(*)::text
                 from grant_application_github_labels gal_count
                where gal_count.application_id = ga.id
             ) as github_label_count,
@@ -586,7 +611,7 @@ export async function getAdminDashboard({
 }
 
 export async function getGrantApplicationDetail(id: string) {
-  const [application, githubLabels, forumLinks, sources, issues] = await Promise.all([
+  const [application, githubLabels, forumLinks, decisionMentions, sources, issues] = await Promise.all([
     query<GrantApplicationRow>(
       `select ga.id::text,
               ga.title,
@@ -608,6 +633,12 @@ export async function getGrantApplicationDetail(id: string) {
                 where sr.source_kind = 'forum_link'
                   and coalesce(sl.relationship_role, 'source_evidence') <> 'primary_forum_thread'
               )::text as supporting_forum_reference_count,
+              (
+                select count(*)::text
+                  from grant_decision_mentions gdm_count
+                 where gdm_count.application_id = ga.id
+                   and gdm_count.review_status = 'accepted'
+              ) as decision_mention_count,
               (
                 select count(*)::text
                   from grant_application_github_labels gal_count
@@ -679,6 +710,29 @@ export async function getGrantApplicationDetail(id: string) {
         order by sr.source_url`,
       [id]
     ),
+    query<DecisionMentionRow>(
+      `select gdm.id::text,
+              gdm.candidate_title,
+              gdm.normalized_decision,
+              gdm.decision_text,
+              gdm.rationale_text,
+              gdm.speaker_notes::text,
+              gdm.match_method,
+              gdm.confidence::text,
+              gdm.review_status,
+              gdm.linked_source_url,
+              gds.meeting_date::text,
+              gds.title as meeting_title,
+              gds.topic_url,
+              gds.source_record_id::text,
+              gdm.updated_at::text
+         from grant_decision_mentions gdm
+         join grant_decision_sources gds on gds.id = gdm.decision_source_id
+        where gdm.application_id = $1
+          and gdm.review_status = 'accepted'
+        order by gds.meeting_date desc nulls last, gdm.updated_at desc`,
+      [id]
+    ),
     query<SourceEvidenceRow>(
       `select sr.id::text,
               sr.source_kind,
@@ -717,6 +771,7 @@ export async function getGrantApplicationDetail(id: string) {
     application: application.rows[0] ?? null,
     githubLabels: githubLabels.rows,
     forumLinks: forumLinks.rows,
+    decisionMentions: decisionMentions.rows,
     sources: sources.rows,
     issues: issues.rows
   };

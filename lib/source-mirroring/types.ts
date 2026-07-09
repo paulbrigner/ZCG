@@ -38,6 +38,8 @@ export type GoogleSheetMirrorConfig = {
 
 export type ForumMirrorConfig = {
   urls?: string[];
+  updatesCategoryUrl?: string;
+  maxCategoryPages?: number;
   maxTopics?: number;
   maxPostsPerTopic?: number;
   fetchDelayMs?: number;

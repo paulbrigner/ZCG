@@ -132,6 +132,7 @@ export class ZcgPrototypeStack extends Stack {
     const knowledgeEmbeddingTimeoutMs = contextNumber(this, "knowledgeEmbeddingTimeoutMs", 60000);
     const forumMaxTopics = contextNumber(this, "forumMaxTopics", 2000);
     const forumMaxPostsPerTopic = contextNumber(this, "forumMaxPostsPerTopic", 20);
+    const forumMaxCategoryPages = contextNumber(this, "forumMaxCategoryPages", 25);
     const forumFetchDelayMs = contextNumber(this, "forumFetchDelayMs", 500);
     const logRetention = logRetentionForDays(logRetentionDays);
 
@@ -478,6 +479,7 @@ export class ZcgPrototypeStack extends Stack {
         ...workerEnvironment,
         ZCG_FORUM_MAX_TOPICS: String(forumMaxTopics),
         ZCG_FORUM_MAX_POSTS_PER_TOPIC: String(forumMaxPostsPerTopic),
+        ZCG_FORUM_MAX_CATEGORY_PAGES: String(forumMaxCategoryPages),
         ZCG_FORUM_FETCH_DELAY_MS: String(forumFetchDelayMs),
         ...(githubTokenSecretId ? { ZCG_GITHUB_TOKEN_SECRET_ID: githubTokenSecretId } : {})
       };

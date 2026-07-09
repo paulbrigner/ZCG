@@ -17,6 +17,10 @@ Phase 1 begins the sync-first plan by importing read-only evidence from current 
   plain-text post bodies alongside the original cooked Discourse HTML so grant
   knowledge retrieval can use public application/discussion text, not only the
   forum URL.
+- Zcash Community Grants Updates category topics from
+  `https://forum.zcashcommunity.com/c/grants/zomg-updates/34`. Meeting-minutes
+  topics are mirrored as `forum_meeting_minutes`; other category posts are
+  mirrored as `forum_update_topic`.
 
 ## What the worker records
 
@@ -52,6 +56,26 @@ The current adapter maps:
 - `Forum Link` -> forum source evidence and a public Forum topic mirror target.
 - `Date Committee Approved/ Rejected`, `Decision Turnaround Days`, `Country`,
   and `Organization or Individual` -> source summary metadata.
+
+## ZCG meeting minutes and decision evidence
+
+As of 2026-07-09, reconciliation treats ZCG meeting minutes as decision
+evidence, not merely supporting forum links. The sync worker mirrors the
+Community Grants Updates category, stores meeting-minute topics as source
+records, and extracts per-application decision mentions into:
+
+- `grant_decision_sources`: one row per mirrored meeting-minutes topic.
+- `grant_decision_mentions`: one row per grant/application decision mention.
+
+The parser preserves the meeting source, meeting date, referenced proposal URL,
+normalized decision, decision text, committee rationale, speaker notes, match
+method, and confidence. Direct URL matches to already-linked GitHub, Sheet, or
+Forum evidence are accepted automatically. Low-confidence or unlinked mentions
+produce `reconciliation_issues` for review.
+
+Accepted decision mentions are also added to the grant knowledge index as
+`decision_minutes` documents so grounded retrieval can answer questions about
+committee rationale and recorded outcomes.
 
 ## Local invocation
 
@@ -96,6 +120,13 @@ ZCG_FORUM_TOPIC_URLS=https://forum.zcashcommunity.com/t/example/12345 \
   npm run worker:sync -- --source forum-topics
 ```
 
+Mirror the ZCG Updates category:
+
+```bash
+DATABASE_URL=postgres://zcg:zcg@localhost:5433/zcg \
+  npm run worker:sync -- --source forum-updates
+```
+
 ## Deployed Lambda invocation
 
 After the CDK backend is deployed and migrations have run:
@@ -136,8 +167,10 @@ Environment variables and matching CDK context:
 - `ZCG_GOOGLE_SHEET_TABS` / `-c googleSheetTabs=name:gid,name2:gid2`
 - `ZCG_FORUM_MAX_TOPICS`
 - `ZCG_FORUM_MAX_POSTS_PER_TOPIC`
+- `ZCG_FORUM_MAX_CATEGORY_PAGES`
 - `ZCG_FORUM_FETCH_DELAY_MS`
 - `ZCG_FORUM_TOPIC_URLS`
+- `ZCG_FORUM_UPDATES_CATEGORY_URL`
 
 `GITHUB_TOKEN`, `ZCG_GITHUB_TOKEN`, or a Secrets Manager secret referenced by
 `ZCG_GITHUB_TOKEN_SECRET_ID` should be supplied for reliable GitHub comment

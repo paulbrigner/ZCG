@@ -581,8 +581,9 @@ async function expandResultsWithApplicationSources({
                     when d.document_kind = 'application_summary' then 0
                     when d.document_kind = 'github_issue' then 1
                     when d.document_kind = 'google_sheet_row' then 2
-                    when d.document_kind = 'github_issue_comment' then 3
-                    when d.document_kind = 'forum_link' then 4
+                    when d.document_kind = 'decision_minutes' then 3
+                    when d.document_kind = 'github_issue_comment' then 4
+                    when d.document_kind = 'forum_link' then 5
                     else 9
                   end,
                   d.indexed_at desc,

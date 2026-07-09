@@ -229,6 +229,8 @@ Current capabilities include:
   - Public Google Sheet CSV exports.
   - Zcash Community Forum topic JSON for discovered forum links, preserving
     public discussion/application text as source evidence.
+  - ZCG Community Grants Updates category topics, with meeting minutes captured
+    as first-class decision evidence.
 - Reconciliation engine that:
   - normalizes GitHub application issues into canonical application records,
   - links GitHub issue comments to their parent canonical application,
@@ -238,7 +240,9 @@ Current capabilities include:
   - attaches source evidence,
   - surfaces reconciliation issues,
   - extracts and associates Zcash Community Forum links already present in
-    mirrored issues, issue comments, and Sheet rows.
+    mirrored issues, issue comments, and Sheet rows,
+  - parses ZCG meeting minutes into linked decision-history records with
+    outcomes, rationale, speaker notes, and source provenance.
 - Dashboard with:
   - source record counts,
   - canonical application and grant counts,
@@ -246,11 +250,13 @@ Current capabilities include:
   - matched, GitHub-only, Sheet-only, and needs-review filters,
   - server-side search,
   - pagination,
-  - application detail pages with source evidence and reconciliation issues.
+  - application detail pages with source evidence, decision history, and
+    reconciliation issues.
 - Grounded grant knowledge retrieval at `/admin/knowledge`:
   - canonical application summary documents,
   - source-evidence documents from GitHub issues, GitHub comments, Sheets, and
     mirrored Forum topic text,
+  - decision-minute documents from linked ZCG meeting notes,
   - keyword retrieval through Postgres full-text search,
   - semantic retrieval through `text-embedding-bge-m3` embeddings,
   - hybrid retrieval that blends keyword and embedding rank,
@@ -514,12 +520,14 @@ to CDK. The default deployment scripts use `zcg/prototype/github-mirror-token`,
 which can be overridden with `GITHUB_TOKEN_SECRET_ID`.
 
 Forum source mirroring reads public Discourse topic JSON for Forum URLs
-discovered in GitHub and Sheet source payloads. `ZCG_FORUM_MAX_TOPICS` bounds
-the number of topics fetched per sync run and `ZCG_FORUM_MAX_POSTS_PER_TOPIC`
-bounds post expansion per topic so the sync worker stays inside its Lambda
-timeout. `ZCG_FORUM_FETCH_DELAY_MS` paces topic requests to avoid Forum rate
-limits. `ZCG_FORUM_TOPIC_URLS` can be used for an explicit comma-separated
-topic list when invoking the `forum-topics` source directly.
+discovered in GitHub and Sheet source payloads, and it also crawls the ZCG
+Community Grants Updates category for meeting minutes. `ZCG_FORUM_MAX_TOPICS`
+bounds the number of topics fetched per sync run, `ZCG_FORUM_MAX_POSTS_PER_TOPIC`
+bounds post expansion per topic, and `ZCG_FORUM_MAX_CATEGORY_PAGES` bounds
+category pagination so the sync worker stays inside its Lambda timeout.
+`ZCG_FORUM_FETCH_DELAY_MS` paces topic requests to avoid Forum rate limits.
+`ZCG_FORUM_TOPIC_URLS` can be used for an explicit comma-separated topic list
+when invoking the `forum-topics` source directly.
 
 ## Deployment Posture
 

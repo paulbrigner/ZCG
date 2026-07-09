@@ -30,9 +30,25 @@ type GrantKnowledgeApplicationRow = {
   github_labels: string | null;
   updated_at: string;
   sources: GrantKnowledgeSourceRecord[];
+  decisionMentions: GrantKnowledgeDecisionMention[];
 };
 
-type GrantKnowledgeApplicationBaseRow = Omit<GrantKnowledgeApplicationRow, "sources">;
+type GrantKnowledgeApplicationBaseRow = Omit<GrantKnowledgeApplicationRow, "sources" | "decisionMentions">;
+
+type GrantKnowledgeDecisionMention = {
+  id: string;
+  source_record_id: string;
+  meeting_date: string | null;
+  meeting_title: string;
+  topic_url: string;
+  candidate_title: string;
+  normalized_decision: string;
+  decision_text: string | null;
+  rationale_text: string | null;
+  speaker_notes: string | null;
+  match_method: string;
+  confidence: string;
+};
 
 type KnowledgeDocumentInput = {
   documentKey: string;
@@ -234,6 +250,53 @@ function buildSourceDocument(
   };
 }
 
+function buildDecisionDocument(
+  row: GrantKnowledgeApplicationRow,
+  mention: GrantKnowledgeDecisionMention
+): KnowledgeDocumentInput {
+  const speakerNotes = collectStringValues(JSON.parse(mention.speaker_notes ?? "[]"));
+  const lines = uniqueLines([
+    `Grant application: ${row.title}`,
+    row.applicant_name ? `Applicant: ${row.applicant_name}` : null,
+    `Status: ${row.normalized_status}`,
+    `Decision evidence: ZCG meeting minutes`,
+    mention.meeting_date ? `Meeting date: ${mention.meeting_date}` : null,
+    `Meeting title: ${mention.meeting_title}`,
+    `Referenced proposal: ${mention.candidate_title}`,
+    `Normalized decision: ${mention.normalized_decision}`,
+    mention.decision_text ? `Decision text: ${mention.decision_text}` : null,
+    mention.rationale_text ? `Committee rationale: ${mention.rationale_text}` : null,
+    speakerNotes.length ? `Committee notes: ${speakerNotes.join(" | ")}` : null,
+    `Match method: ${mention.match_method}`,
+    `Match confidence: ${mention.confidence}`,
+    `Source URL: ${mention.topic_url}`
+  ]);
+  const content = truncateContent(lines.join("\n"));
+
+  return {
+    documentKey: `application:${row.id}:decision:${mention.id}`,
+    applicationId: row.id,
+    sourceRecordId: mention.source_record_id,
+    documentKind: "decision_minutes",
+    title: `${row.title} - decision minutes`,
+    applicantName: row.applicant_name,
+    sourceKind: "forum_meeting_minutes",
+    sourceId: mention.topic_url,
+    sourceUrl: mention.topic_url,
+    normalizedStatus: row.normalized_status,
+    requestedAmountUsd: row.requested_amount_usd,
+    content,
+    contentHash: hashContent(content),
+    metadata: {
+      generatedBy,
+      decisionMentionId: mention.id,
+      normalizedDecision: mention.normalized_decision,
+      meetingDate: mention.meeting_date,
+      canonicalKey: row.canonical_key
+    }
+  };
+}
+
 function forumSourceValues(raw: Record<string, unknown>) {
   const topic = raw.topic && typeof raw.topic === "object" && !Array.isArray(raw.topic)
     ? (raw.topic as Record<string, unknown>)
@@ -265,7 +328,8 @@ function forumSourceValues(raw: Record<string, unknown>) {
 function documentsFromApplication(row: GrantKnowledgeApplicationRow): KnowledgeDocumentInput[] {
   return [
     buildApplicationSummaryDocument(row),
-    ...row.sources.map((source) => buildSourceDocument(row, source))
+    ...row.sources.map((source) => buildSourceDocument(row, source)),
+    ...row.decisionMentions.map((mention) => buildDecisionDocument(row, mention))
   ];
 }
 
@@ -308,9 +372,15 @@ async function fetchApplicationRows() {
     );
 
     for (const row of result.rows) {
+      const [sources, decisionMentions] = await Promise.all([
+        fetchSourceRowsForApplication(row.id),
+        fetchDecisionRowsForApplication(row.id)
+      ]);
+
       rows.push({
         ...row,
-        sources: await fetchSourceRowsForApplication(row.id)
+        sources,
+        decisionMentions
       });
     }
 
@@ -322,6 +392,31 @@ async function fetchApplicationRows() {
   }
 
   return rows;
+}
+
+async function fetchDecisionRowsForApplication(applicationId: string) {
+  const result = await query<GrantKnowledgeDecisionMention>(
+    `select gdm.id::text,
+            gds.source_record_id::text,
+            gds.meeting_date::text,
+            gds.title as meeting_title,
+            gds.topic_url,
+            gdm.candidate_title,
+            gdm.normalized_decision,
+            gdm.decision_text,
+            gdm.rationale_text,
+            gdm.speaker_notes::text,
+            gdm.match_method,
+            gdm.confidence::text
+       from grant_decision_mentions gdm
+       join grant_decision_sources gds on gds.id = gdm.decision_source_id
+      where gdm.application_id = $1
+        and gdm.review_status = 'accepted'
+      order by gds.meeting_date desc nulls last, gdm.updated_at desc`,
+    [applicationId]
+  );
+
+  return result.rows;
 }
 
 async function fetchSourceRowsForApplication(applicationId: string) {

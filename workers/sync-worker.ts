@@ -17,6 +17,7 @@ const s3 = new S3Client({});
 
 type WorkerEvent = SourceMirrorEvent & {
   dryRun?: boolean;
+  reconcile?: boolean;
 };
 
 function safeSnapshotSegment(value: string) {
@@ -191,6 +192,22 @@ async function storeMirrorResult(
   return { ...counts, snapshotKey: snapshot?.key ?? null };
 }
 
+async function runGrantReconciliationForWorker(client: pg.Client, syncRunId: string, source: string) {
+  process.env.DATABASE_DRIVER = "pg";
+  process.env.DATABASE_URL = await workerDatabaseUrl();
+
+  const { runGrantReconciliation } = await import("../lib/reconciliation/grants");
+  const result = await runGrantReconciliation();
+
+  await client.query(
+    `insert into audit_events (action, target_type, target_id, metadata)
+     values ('sync_worker.reconciliation.completed', 'sync_run', $1, $2::jsonb)`,
+    [syncRunId, JSON.stringify({ source, result })]
+  );
+
+  return result;
+}
+
 export async function handler(event: WorkerEvent = {}) {
   const source = event.source ?? "phase1-all";
   const client = new Client({
@@ -206,6 +223,22 @@ export async function handler(event: WorkerEvent = {}) {
 
     if (source.startsWith("phase0")) {
       return await runPhase0Skeleton(client, syncRunId, event);
+    }
+
+    if (source === "reconcile-grants") {
+      const reconciliation = await runGrantReconciliationForWorker(client, syncRunId, source);
+
+      await completeSyncRun(client, {
+        syncRunId,
+        counts: { ...emptyCounts },
+        metadata: {
+          phase: "reconciliation",
+          dryRun: event.dryRun ?? false,
+          reconciliation
+        }
+      });
+
+      return { ok: true, syncRunId, reconciliation };
     }
 
     const results = await collectSourceMirrors(event);
@@ -240,7 +273,11 @@ export async function handler(event: WorkerEvent = {}) {
       [syncRunId, JSON.stringify({ source, phase: 1, counts, sources: sourceSummaries })]
     );
 
-    return { ok: true, syncRunId, ...counts, sources: sourceSummaries };
+    const reconciliation = event.reconcile
+      ? await runGrantReconciliationForWorker(client, syncRunId, source)
+      : null;
+
+    return { ok: true, syncRunId, ...counts, sources: sourceSummaries, reconciliation };
   } catch (error) {
     await failSyncRun(client, syncRunId, source, error);
     await client.query(
@@ -260,8 +297,9 @@ if (process.argv[1]?.endsWith("sync-worker.ts")) {
   const source =
     sourceArgIndex >= 0 ? args[sourceArgIndex + 1] : process.env.SYNC_SOURCE ?? "phase1-all";
   const dryRun = args.includes("--dry-run") || process.env.SYNC_DRY_RUN === "true";
+  const reconcile = args.includes("--reconcile") || process.env.SYNC_RECONCILE === "true";
 
-  handler({ source, dryRun })
+  handler({ source, dryRun, reconcile })
     .then((result) => {
       console.log(JSON.stringify(result, null, 2));
     })

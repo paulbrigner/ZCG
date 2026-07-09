@@ -16,6 +16,13 @@ function stringValue(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
+function uuidValue(value: unknown) {
+  const normalized = stringValue(value);
+  return normalized && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(normalized)
+    ? normalized
+    : null;
+}
+
 async function getKnowledgeIndexStatus(): Promise<KnowledgeIndexStatus> {
   const result = await query<{
     document_count: string;
@@ -53,7 +60,7 @@ async function recordIndexRun(
 
 export async function handler(event: WorkerEvent = {}) {
   const startedAt = new Date().toISOString();
-  const actorPrincipalId = stringValue(event.requestedByPrincipalId);
+  const actorPrincipalId = uuidValue(event.requestedByPrincipalId);
 
   try {
     const before = await getKnowledgeIndexStatus();

@@ -730,6 +730,7 @@ button:disabled {
 .badge.succeed,
 .badge.active,
 .badge.approved,
+.badge.approved_async,
 .badge.green {
   background: #ecfdf5;
   border-color: #a7f3d0;
@@ -739,6 +740,8 @@ button:disabled {
 .badge.running,
 .badge.submitted,
 .badge.under_review,
+.badge.remains_open,
+.badge.deferred,
 .badge.warning {
   background: #fffbeb;
   border-color: #fde68a;
@@ -748,6 +751,7 @@ button:disabled {
 .badge.failed,
 .badge.error,
 .badge.cancelled,
+.badge.withdrawn,
 .badge.declined {
   background: #fef2f2;
   border-color: #fecaca;
@@ -759,6 +763,7 @@ button:disabled {
 .badge.info,
 .badge.matched,
 .badge.sheet_github_linked,
+.badge.decision_minutes,
 .badge.primary_forum_thread {
   background: #eff6ff;
   border-color: #bfdbfe;
@@ -868,12 +873,31 @@ button:disabled {
   min-width: 0;
 }
 
+.evidence-list.compact {
+  gap: 6px;
+}
+
+.evidence-list.compact p {
+  margin: 0;
+}
+
 .evidence-item {
   border-bottom: 1px solid var(--line);
   display: grid;
   gap: 10px;
   min-width: 0;
   padding: 0 0 14px;
+}
+
+.decision-history-item {
+  gap: 14px;
+}
+
+.link-row {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
 }
 
 .evidence-item > *,
