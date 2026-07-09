@@ -51,6 +51,16 @@ function errorMessage(body: unknown, fallback: string) {
   return fallback;
 }
 
+function searchErrorMessage(error: unknown) {
+  const message = error instanceof Error ? error.message : "Search failed.";
+
+  if (["Load failed", "Failed to fetch", "NetworkError when attempting to fetch resource."].includes(message)) {
+    return "The search request did not complete. Try again, or use Evidence summary for a broad query.";
+  }
+
+  return message;
+}
+
 function moneyText(value: string | null) {
   if (!value) {
     return null;
@@ -60,6 +70,18 @@ function moneyText(value: string | null) {
   return Number.isFinite(parsed)
     ? parsed.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 })
     : null;
+}
+
+function answerBadgeText(status: GrantKnowledgeSearchResponse["answerStatus"]) {
+  if (status === "generated") {
+    return "AI";
+  }
+
+  if (status === "fallback") {
+    return "Evidence fallback";
+  }
+
+  return "Grounded";
 }
 
 export function KnowledgeSearchPanel({
@@ -132,7 +154,7 @@ export function KnowledgeSearchPanel({
 
       setResult(body as GrantKnowledgeSearchResponse);
     } catch (searchError) {
-      setError(searchError instanceof Error ? searchError.message : "Search failed.");
+      setError(searchErrorMessage(searchError));
     } finally {
       setIsSearching(false);
     }
@@ -322,7 +344,7 @@ export function KnowledgeSearchPanel({
               </span>
             </div>
             <span className={`badge ${result.answerStatus === "generated" ? "green" : "neutral"}`}>
-              {result.answerStatus === "generated" ? "AI" : "Grounded"}
+              {answerBadgeText(result.answerStatus)}
             </span>
           </div>
           {result.answerText ? <pre className="knowledge-answer">{result.answerText}</pre> : null}

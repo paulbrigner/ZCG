@@ -2,8 +2,9 @@ const defaultAiBaseUrl = "https://api.venice.ai/api/v1";
 const defaultAiModel = "openai-gpt-55";
 const defaultEmbeddingModel = "text-embedding-bge-m3";
 const defaultEmbeddingDims = 1024;
-const defaultAiTimeoutMs = 60000;
+const defaultAiTimeoutMs = 18000;
 const defaultEmbeddingTimeoutMs = 60000;
+const defaultQueryEmbeddingTimeoutMs = 12000;
 const defaultEmbeddingBatchSize = 2;
 
 function stringValue(value: string | undefined) {
@@ -72,6 +73,10 @@ export function knowledgeEmbeddingBaseUrl() {
 
 export function knowledgeEmbeddingTimeoutMs() {
   return positiveInteger(process.env.ZCG_KNOWLEDGE_EMBEDDING_TIMEOUT_MS, defaultEmbeddingTimeoutMs);
+}
+
+export function knowledgeQueryEmbeddingTimeoutMs() {
+  return positiveInteger(process.env.ZCG_KNOWLEDGE_QUERY_EMBEDDING_TIMEOUT_MS, defaultQueryEmbeddingTimeoutMs);
 }
 
 export function knowledgeEmbeddingBatchSize() {

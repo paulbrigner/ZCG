@@ -76,7 +76,7 @@ export type GrantKnowledgeSearchResponse = {
   answerMode: KnowledgeAnswerMode;
   retrievalMode: KnowledgeRetrievalMode;
   answerText: string | null;
-  answerStatus: "evidence" | "generated" | "disabled" | "not_requested";
+  answerStatus: "evidence" | "generated" | "fallback" | "disabled" | "not_requested";
   results: GrantKnowledgeSearchResult[];
   retrievalStats: {
     resultCount: number;
@@ -225,6 +225,14 @@ function extractiveAnswer(searchText: string, results: GrantKnowledgeSearchResul
     `Found ${results.length} grounded grant record${results.length === 1 ? "" : "s"} related to "${searchText}".`,
     "",
     ...lines
+  ].join("\n");
+}
+
+function aiFallbackAnswer(searchText: string, results: GrantKnowledgeSearchResult[]) {
+  return [
+    "The AI grounded answer did not complete within the live request budget. Showing grounded evidence instead.",
+    "",
+    extractiveAnswer(searchText, results)
   ].join("\n");
 }
 
@@ -627,10 +635,23 @@ async function searchHybridGrantKnowledge({
   limit: number;
 }) {
   const expandedLimit = Math.min(60, Math.max(limit * 4, limit));
-  const [keywordResults, semanticResults] = await Promise.all([
+  const [keywordOutcome, semanticOutcome] = await Promise.allSettled([
     searchKeywordGrantKnowledge({ searchText, limit: expandedLimit }),
     searchSemanticGrantKnowledge({ searchText, limit: expandedLimit })
   ]);
+
+  if (keywordOutcome.status === "rejected") {
+    throw keywordOutcome.reason;
+  }
+
+  const keywordResults = keywordOutcome.value;
+
+  if (semanticOutcome.status === "rejected") {
+    console.error("Grant knowledge semantic retrieval failed; falling back to keyword retrieval", semanticOutcome.reason);
+    return keywordResults.slice(0, limit);
+  }
+
+  const semanticResults = semanticOutcome.value;
   const maxKeywordRank = Math.max(...keywordResults.map((result) => result.rank), 0);
   const maxSemanticRank = Math.max(...semanticResults.map((result) => result.rank), 0);
   const merged = new Map<
@@ -721,8 +742,14 @@ export async function runGrantKnowledgeSearch({
         initialResults: results,
         candidateResults
       });
-      answerText = await composeGrantKnowledgeAnswer({ searchText, results: answerEvidenceResults });
-      answerStatus = "generated";
+      try {
+        answerText = await composeGrantKnowledgeAnswer({ searchText, results: answerEvidenceResults });
+        answerStatus = "generated";
+      } catch (error) {
+        console.error("Grant knowledge answer generation failed", error);
+        answerText = aiFallbackAnswer(searchText, answerEvidenceResults);
+        answerStatus = "fallback";
+      }
     } else {
       answerText = extractiveAnswer(searchText, results);
       answerStatus = "disabled";

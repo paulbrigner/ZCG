@@ -5,7 +5,8 @@ import {
   knowledgeEmbeddingBatchSize,
   knowledgeEmbeddingDims,
   knowledgeEmbeddingModel,
-  knowledgeEmbeddingTimeoutMs
+  knowledgeEmbeddingTimeoutMs,
+  knowledgeQueryEmbeddingTimeoutMs
 } from "@/lib/knowledge/config";
 
 type EmbeddingCandidateRow = {
@@ -78,7 +79,7 @@ function parseEmbeddingVector(value: unknown, expectedDims: number) {
   return vector;
 }
 
-async function createEmbeddings(inputs: string[]) {
+async function createEmbeddings(inputs: string[], timeoutMs = knowledgeEmbeddingTimeoutMs()) {
   const apiKey = knowledgeEmbeddingApiKey();
 
   if (!apiKey) {
@@ -86,7 +87,7 @@ async function createEmbeddings(inputs: string[]) {
   }
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), knowledgeEmbeddingTimeoutMs());
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     const response = await fetch(`${knowledgeEmbeddingBaseUrl()}/embeddings`, {
@@ -248,7 +249,7 @@ export async function refreshGrantKnowledgeEmbeddings({
 }
 
 export async function createQueryEmbedding(searchText: string) {
-  const [vector] = await createEmbeddings([searchText]);
+  const [vector] = await createEmbeddings([searchText], knowledgeQueryEmbeddingTimeoutMs());
   return vector;
 }
 
