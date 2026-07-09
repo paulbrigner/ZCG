@@ -236,15 +236,22 @@ function normalizeForumUrl(value: string) {
       return null;
     }
 
-    const slug = parsed.pathname.split("/").filter(Boolean)[1];
+    const segments = parsed.pathname.split("/").filter(Boolean);
+    const slug = segments[1];
+    const topicIdMatch = segments[2]?.match(/^\d+/) ?? (slug?.match(/^\d+/) ?? null);
+    const topicId = topicIdMatch?.[0] ?? null;
+    const postNumberMatch = segments[3]?.match(/^\d+/) ?? null;
+    const postNumber = postNumberMatch?.[0] ?? null;
 
-    if (!slug || genericForumTopicSlugs.has(slug)) {
+    if (!slug || !topicId || genericForumTopicSlugs.has(slug)) {
       return null;
     }
 
     parsed.hash = "";
     parsed.search = "";
-    parsed.pathname = parsed.pathname.replace(/\/+$/g, "");
+    parsed.pathname = slug === topicId
+      ? `/t/${topicId}${postNumber ? `/${postNumber}` : ""}`
+      : `/t/${slug}/${topicId}${postNumber ? `/${postNumber}` : ""}`;
     return parsed.toString();
   } catch {
     return null;
@@ -299,8 +306,6 @@ function mergeForumRelationshipRole(
 function forumLinksFromRecord(record: RawSourceRecord) {
   const raw = parseJsonRecord(record.raw_payload);
   const entries = [
-    { path: ["title"], value: record.title },
-    { path: ["summary"], value: record.summary },
     { path: ["source_url"], value: record.source_url },
     ...collectStringEntries(raw)
   ].filter((entry): entry is StringEntry => typeof entry.value === "string");
@@ -1344,10 +1349,33 @@ async function bulkUpsertForumSourceRecords(forumLinks: ForumLinkInput[]) {
          )
        on conflict (source_kind, source_id)
        do update set source_url = excluded.source_url,
-                     title = excluded.title,
-                     summary = excluded.summary,
-                     raw_payload = excluded.raw_payload,
-                     metadata = excluded.metadata,
+                     title = case
+                       when source_records.metadata->>'mirrorKind' = 'forum_topic'
+                         then coalesce(source_records.title, excluded.title)
+                       else excluded.title
+                     end,
+                     summary = case
+                       when source_records.metadata->>'mirrorKind' = 'forum_topic'
+                         then coalesce(source_records.summary, excluded.summary)
+                       else excluded.summary
+                     end,
+                     raw_payload = case
+                       when source_records.metadata->>'mirrorKind' = 'forum_topic'
+                         then source_records.raw_payload || jsonb_strip_nulls(jsonb_build_object(
+                           'discoveredFrom', excluded.raw_payload->'discoveredFrom',
+                           'relationshipRole', excluded.raw_payload->'relationshipRole'
+                         ))
+                       else excluded.raw_payload
+                     end,
+                     metadata = case
+                       when source_records.metadata->>'mirrorKind' = 'forum_topic'
+                         then source_records.metadata || jsonb_strip_nulls(jsonb_build_object(
+                           'discoveredFrom', excluded.metadata->'discoveredFrom',
+                           'relationshipRole', excluded.metadata->'relationshipRole',
+                           'reconciliationGeneratedBy', excluded.metadata->>'generatedBy'
+                         ))
+                       else excluded.metadata
+                     end,
                      updated_at = now()
        returning source_id, id`,
       [JSON.stringify(payload)]

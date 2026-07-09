@@ -40,6 +40,8 @@ export type GrantKnowledgeEmbeddingStatus = {
   latestEmbeddingIndexedAt: string | null;
 };
 
+const embeddingInputMaxChars = 16000;
+
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -55,7 +57,7 @@ function vectorLiteral(vector: number[]) {
 }
 
 function embeddingInput(row: EmbeddingCandidateRow) {
-  return [`Title: ${row.title}`, "", row.content].join("\n").slice(0, 24000);
+  return [`Title: ${row.title}`, "", row.content].join("\n").slice(0, embeddingInputMaxChars);
 }
 
 function parseEmbeddingVector(value: unknown, expectedDims: number) {

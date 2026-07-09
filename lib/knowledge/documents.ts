@@ -2,9 +2,9 @@ import crypto from "node:crypto";
 import { query } from "@/lib/db";
 
 const generatedBy = "grant_knowledge_index_v1";
-const contentMaxChars = 14000;
+const contentMaxChars = 24000;
 const sourceRecordBatchSize = 10;
-const writeBatchSize = 30;
+const writeBatchSize = 15;
 
 type GrantKnowledgeSourceRecord = {
   id: string;
@@ -29,8 +29,10 @@ type GrantKnowledgeApplicationRow = {
   source_summary: string | null;
   github_labels: string | null;
   updated_at: string;
-  sources: string;
+  sources: GrantKnowledgeSourceRecord[];
 };
+
+type GrantKnowledgeApplicationBaseRow = Omit<GrantKnowledgeApplicationRow, "sources">;
 
 type KnowledgeDocumentInput = {
   documentKey: string;
@@ -73,6 +75,10 @@ function parseJsonRecord(value: string | null): Record<string, unknown> {
 
 function compactWhitespace(value: string) {
   return value.replace(/\s+/g, " ").trim();
+}
+
+function stringValue(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
 function hashContent(value: string) {
@@ -190,7 +196,9 @@ function buildSourceDocument(
 ): KnowledgeDocumentInput {
   const raw = parseJsonRecord(source.raw_payload);
   const metadata = parseJsonRecord(source.metadata);
-  const rawValues = collectStringValues(raw);
+  const rawValues = source.source_kind === "forum_link"
+    ? forumSourceValues(raw)
+    : collectStringValues(raw);
   const lines = uniqueLines([
     `Grant application: ${row.title}`,
     row.applicant_name ? `Applicant: ${row.applicant_name}` : null,
@@ -226,20 +234,38 @@ function buildSourceDocument(
   };
 }
 
-function parseSources(value: string): GrantKnowledgeSourceRecord[] {
-  try {
-    const parsed = JSON.parse(value);
-    return Array.isArray(parsed) ? (parsed as GrantKnowledgeSourceRecord[]) : [];
-  } catch {
-    return [];
-  }
+function forumSourceValues(raw: Record<string, unknown>) {
+  const topic = raw.topic && typeof raw.topic === "object" && !Array.isArray(raw.topic)
+    ? (raw.topic as Record<string, unknown>)
+    : {};
+  const posts = Array.isArray(raw.posts) ? raw.posts : [];
+  const postTexts = posts
+    .map((post) => {
+      if (!post || typeof post !== "object" || Array.isArray(post)) {
+        return null;
+      }
+
+      const record = post as Record<string, unknown>;
+      const postNumber = record.postNumber ? `Post #${record.postNumber}` : "Forum post";
+      const username = stringValue(record.username);
+      const plainText = stringValue(record.plainText);
+
+      return plainText ? `${postNumber}${username ? ` by ${username}` : ""}: ${plainText}` : null;
+    })
+    .filter((value): value is string => Boolean(value));
+  const fullText = stringValue(raw.fullText);
+
+  return uniqueLines([
+    ...collectStringValues(topic),
+    fullText,
+    ...(fullText ? [] : postTexts)
+  ]);
 }
 
 function documentsFromApplication(row: GrantKnowledgeApplicationRow): KnowledgeDocumentInput[] {
-  const sourceRecords = parseSources(row.sources);
   return [
     buildApplicationSummaryDocument(row),
-    ...sourceRecords.map((source) => buildSourceDocument(row, source))
+    ...row.sources.map((source) => buildSourceDocument(row, source))
   ];
 }
 
@@ -248,7 +274,7 @@ async function fetchApplicationRows() {
   let offset = 0;
 
   while (true) {
-    const result = await query<GrantKnowledgeApplicationRow>(
+    const result = await query<GrantKnowledgeApplicationBaseRow>(
       `select ga.id::text,
               ga.canonical_key,
               ga.title,
@@ -274,31 +300,61 @@ async function fetchApplicationRows() {
                   from grant_application_github_labels gal
                  where gal.application_id = ga.id
               ) as github_labels,
-              ga.updated_at::text,
-              coalesce(
-                jsonb_agg(
-                  jsonb_build_object(
-                    'id', sr.id::text,
-                    'source_kind', sr.source_kind,
-                    'source_id', sr.source_id,
-                    'source_url', sr.source_url,
-                    'title', sr.title,
-                    'summary', sr.summary,
-                    'raw_payload', sr.raw_payload::text,
-                    'metadata', sr.metadata::text
-                  )
-                  order by sr.source_kind, sr.source_id
-                ) filter (where sr.id is not null),
-                '[]'::jsonb
-              )::text as sources
+              ga.updated_at::text
          from grant_applications ga
-         left join source_links sl on sl.canonical_type = 'grant_application'
-                                  and sl.canonical_id = ga.id
-         left join source_records sr on sr.id = sl.source_record_id
-        group by ga.id
         order by ga.updated_at desc, ga.id desc
         limit $1 offset $2`,
       [sourceRecordBatchSize, offset]
+    );
+
+    for (const row of result.rows) {
+      rows.push({
+        ...row,
+        sources: await fetchSourceRowsForApplication(row.id)
+      });
+    }
+
+    if (result.rows.length < sourceRecordBatchSize) {
+      break;
+    }
+
+    offset += sourceRecordBatchSize;
+  }
+
+  return rows;
+}
+
+async function fetchSourceRowsForApplication(applicationId: string) {
+  const rows: GrantKnowledgeSourceRecord[] = [];
+  let offset = 0;
+
+  while (true) {
+    const result = await query<GrantKnowledgeSourceRecord>(
+      `select sr.id::text,
+              sr.source_kind,
+              sr.source_id,
+              sr.source_url,
+              sr.title,
+              sr.summary,
+              case
+                when sr.source_kind = 'forum_link'
+                  and sr.metadata->>'mirrorKind' = 'forum_topic'
+                  then jsonb_build_object(
+                    'url', sr.raw_payload->'url',
+                    'jsonUrl', sr.raw_payload->'jsonUrl',
+                    'topic', sr.raw_payload->'topic',
+                    'fullText', left(coalesce(sr.raw_payload->>'fullText', ''), $4::integer)
+                  )::text
+                else sr.raw_payload::text
+              end as raw_payload,
+              sr.metadata::text
+         from source_links sl
+         join source_records sr on sr.id = sl.source_record_id
+        where sl.canonical_type = 'grant_application'
+          and sl.canonical_id = $1
+        order by sr.source_kind, sr.source_id
+        limit $2 offset $3`,
+      [applicationId, sourceRecordBatchSize, offset, contentMaxChars]
     );
 
     rows.push(...result.rows);

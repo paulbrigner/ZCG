@@ -36,8 +36,16 @@ export type GoogleSheetMirrorConfig = {
   tabs?: GoogleSheetTabConfig[];
 };
 
+export type ForumMirrorConfig = {
+  urls?: string[];
+  maxTopics?: number;
+  maxPostsPerTopic?: number;
+  fetchDelayMs?: number;
+};
+
 export type SourceMirrorEvent = {
   source?: string;
   github?: GitHubMirrorConfig;
   googleSheet?: GoogleSheetMirrorConfig;
+  forum?: ForumMirrorConfig;
 };

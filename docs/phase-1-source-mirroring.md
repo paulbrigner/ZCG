@@ -13,6 +13,10 @@ Phase 1 begins the sync-first plan by importing read-only evidence from current 
   - `all_grants_tracking:1164534734` for the comprehensive historical list of
     every ZCG proposal/grant considered.
   - `milestone_details:803214474` for milestone, payment, and detail rows.
+- Zcash Community Forum topic JSON for discovered forum URLs. The mirror stores
+  plain-text post bodies alongside the original cooked Discourse HTML so grant
+  knowledge retrieval can use public application/discussion text, not only the
+  forum URL.
 
 ## What the worker records
 
@@ -45,7 +49,7 @@ The current adapter maps:
 - `Grant Status` -> normalized status.
 - `Grant Platform Link` -> GitHub issue link when it points to GitHub, or a
   legacy proposal-platform source URL otherwise.
-- `Forum Link` -> forum source evidence.
+- `Forum Link` -> forum source evidence and a public Forum topic mirror target.
 - `Date Committee Approved/ Rejected`, `Decision Turnaround Days`, `Country`,
   and `Organization or Individual` -> source summary metadata.
 
@@ -84,6 +88,14 @@ Mirror all configured Phase 1 public sources:
 DATABASE_URL=postgres://zcg:zcg@localhost:5433/zcg npm run worker:sync
 ```
 
+Mirror only explicit Forum topics:
+
+```bash
+ZCG_FORUM_TOPIC_URLS=https://forum.zcashcommunity.com/t/example/12345 \
+  DATABASE_URL=postgres://zcg:zcg@localhost:5433/zcg \
+  npm run worker:sync -- --source forum-topics
+```
+
 ## Deployed Lambda invocation
 
 After the CDK backend is deployed and migrations have run:
@@ -102,6 +114,13 @@ aws lambda invoke \
   --function-name SYNC_WORKER_FUNCTION_NAME \
   --payload '{"source":"google-sheet"}' \
   /tmp/zcg-sheet-sync.json
+
+aws lambda invoke \
+  --profile zodldashboard \
+  --region us-east-1 \
+  --function-name SYNC_WORKER_FUNCTION_NAME \
+  --payload '{"source":"forum-topics","forum":{"urls":["https://forum.zcashcommunity.com/t/example/12345"]}}' \
+  /tmp/zcg-forum-sync.json
 ```
 
 ## Configuration
@@ -115,6 +134,10 @@ Environment variables and matching CDK context:
 - `ZCG_GITHUB_TOKEN_SECRET_ID` / `-c githubTokenSecretId=...`
 - `ZCG_GOOGLE_SHEET_ID` / `-c googleSheetId=...`
 - `ZCG_GOOGLE_SHEET_TABS` / `-c googleSheetTabs=name:gid,name2:gid2`
+- `ZCG_FORUM_MAX_TOPICS`
+- `ZCG_FORUM_MAX_POSTS_PER_TOPIC`
+- `ZCG_FORUM_FETCH_DELAY_MS`
+- `ZCG_FORUM_TOPIC_URLS`
 
 `GITHUB_TOKEN`, `ZCG_GITHUB_TOKEN`, or a Secrets Manager secret referenced by
 `ZCG_GITHUB_TOKEN_SECRET_ID` should be supplied for reliable GitHub comment
@@ -126,6 +149,12 @@ secret name `zcg/prototype/github-mirror-token`; override
 The secret may contain the raw token string or JSON with a `token`,
 `GITHUB_TOKEN`, or `ZCG_GITHUB_TOKEN` field. Use a fine-grained GitHub PAT with
 read-only Issues permission for `ZcashCommunityGrants/zcashcommunitygrants`.
+
+Forum mirroring is public and unauthenticated. `phase1-all` discovers Forum
+URLs from mirrored GitHub and Sheet payloads, then fetches topic JSON for up to
+`ZCG_FORUM_MAX_TOPICS` topics per run. `ZCG_FORUM_MAX_POSTS_PER_TOPIC` limits
+post expansion for long discussion threads. `ZCG_FORUM_FETCH_DELAY_MS` adds a
+pause between topic requests so the mirror is polite to Discourse rate limits.
 
 ## Admin inspection
 

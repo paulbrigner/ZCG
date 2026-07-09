@@ -3,8 +3,8 @@ const defaultAiModel = "openai-gpt-55";
 const defaultEmbeddingModel = "text-embedding-bge-m3";
 const defaultEmbeddingDims = 1024;
 const defaultAiTimeoutMs = 20000;
-const defaultEmbeddingTimeoutMs = 20000;
-const defaultEmbeddingBatchSize = 8;
+const defaultEmbeddingTimeoutMs = 60000;
+const defaultEmbeddingBatchSize = 2;
 
 function stringValue(value: string | undefined) {
   const trimmed = value?.trim();

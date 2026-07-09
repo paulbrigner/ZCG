@@ -1,0 +1,430 @@
+import type { ForumMirrorConfig, SourceMirrorRecord, SourceMirrorResult } from "./types";
+
+type DiscoursePost = {
+  id: number;
+  name?: string | null;
+  username?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  cooked?: string | null;
+  post_number?: number | null;
+  post_type?: number | null;
+  reply_to_post_number?: number | null;
+  topic_id?: number | null;
+  topic_slug?: string | null;
+};
+
+type DiscourseTopic = {
+  id: number;
+  title?: string | null;
+  fancy_title?: string | null;
+  slug?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  last_posted_at?: string | null;
+  bumped_at?: string | null;
+  posts_count?: number | null;
+  reply_count?: number | null;
+  views?: number | null;
+  tags?: string[];
+  category_id?: number | null;
+  post_stream?: {
+    posts?: DiscoursePost[];
+    stream?: number[];
+  };
+};
+
+type MirroredForumTopic = {
+  url: string;
+  jsonUrl: string;
+  topic: DiscourseTopic;
+  posts: Array<DiscoursePost & { plainText: string }>;
+};
+
+const forumUrlPattern = /https?:\/\/forum\.zcashcommunity\.com\/t\/[^\s)"'<\]}]+/gi;
+const genericForumTopicSlugs = new Set(["zcg-code-of-conduct", "zcg-communication-guidelines"]);
+const defaultMaxTopics = 2000;
+const defaultMaxPostsPerTopic = 20;
+const defaultFetchDelayMs = 500;
+
+class ForumRateLimitError extends Error {
+  constructor(url: string) {
+    super(`Zcash Forum mirror was rate limited while fetching ${url}.`);
+    this.name = "ForumRateLimitError";
+  }
+}
+
+function numberConfig(value: unknown, fallback: number) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function configuredUrls(config?: ForumMirrorConfig) {
+  if (config?.urls?.length) {
+    return config.urls;
+  }
+
+  return (process.env.ZCG_FORUM_TOPIC_URLS ?? "")
+    .split(",")
+    .map((url) => url.trim())
+    .filter(Boolean);
+}
+
+function maxTopics(config?: ForumMirrorConfig) {
+  return numberConfig(config?.maxTopics ?? process.env.ZCG_FORUM_MAX_TOPICS, defaultMaxTopics);
+}
+
+function maxPostsPerTopic(config?: ForumMirrorConfig) {
+  return numberConfig(
+    config?.maxPostsPerTopic ?? process.env.ZCG_FORUM_MAX_POSTS_PER_TOPIC,
+    defaultMaxPostsPerTopic
+  );
+}
+
+function fetchDelayMs(config?: ForumMirrorConfig) {
+  return numberConfig(config?.fetchDelayMs ?? process.env.ZCG_FORUM_FETCH_DELAY_MS, defaultFetchDelayMs);
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function decodeHtmlEntities(value: string) {
+  const namedEntities: Record<string, string> = {
+    amp: "&",
+    apos: "'",
+    gt: ">",
+    hellip: "...",
+    ldquo: '"',
+    lsquo: "'",
+    lt: "<",
+    mdash: "-",
+    nbsp: " ",
+    ndash: "-",
+    quot: '"',
+    rdquo: '"',
+    rsquo: "'"
+  };
+
+  return value.replace(/&(#x?[0-9a-f]+|[a-z]+);/gi, (match, entity: string) => {
+    const normalizedEntity = entity.toLowerCase();
+
+    if (normalizedEntity.startsWith("#x")) {
+      const codePoint = Number.parseInt(normalizedEntity.slice(2), 16);
+      return Number.isInteger(codePoint) && codePoint >= 0 && codePoint <= 0x10ffff
+        ? String.fromCodePoint(codePoint)
+        : match;
+    }
+
+    if (normalizedEntity.startsWith("#")) {
+      const codePoint = Number.parseInt(normalizedEntity.slice(1), 10);
+      return Number.isInteger(codePoint) && codePoint >= 0 && codePoint <= 0x10ffff
+        ? String.fromCodePoint(codePoint)
+        : match;
+    }
+
+    return namedEntities[normalizedEntity] ?? match;
+  });
+}
+
+function htmlToPlainText(value: string | null | undefined) {
+  if (!value) {
+    return "";
+  }
+
+  return decodeHtmlEntities(
+    value
+      .replace(/<br\s*\/?>/gi, "\n")
+      .replace(/<\/(p|div|li|h[1-6]|blockquote|pre)>/gi, "\n")
+      .replace(/<[^>]*>/g, " ")
+      .replace(/[ \t]+\n/g, "\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .replace(/[ \t]{2,}/g, " ")
+      .trim()
+  );
+}
+
+export function normalizeForumTopicUrl(value: string) {
+  const trimmed = value.replace(/[.,;:]+$/g, "").replace(/\/+$/g, "");
+
+  try {
+    const parsed = new URL(trimmed);
+
+    if (parsed.hostname !== "forum.zcashcommunity.com" || !parsed.pathname.startsWith("/t/")) {
+      return null;
+    }
+
+    const segments = parsed.pathname.split("/").filter(Boolean);
+    const slug = segments[1];
+    const topicIdMatch = segments[2]?.match(/^\d+/) ?? (slug?.match(/^\d+/) ?? null);
+    const topicId = topicIdMatch?.[0] ?? null;
+    const postNumberMatch = segments[3]?.match(/^\d+/) ?? null;
+    const postNumber = postNumberMatch?.[0] ?? null;
+
+    if (!slug || !topicId || genericForumTopicSlugs.has(slug)) {
+      return null;
+    }
+
+    parsed.hash = "";
+    parsed.search = "";
+    parsed.pathname = slug === topicId
+      ? `/t/${topicId}${postNumber ? `/${postNumber}` : ""}`
+      : `/t/${slug}/${topicId}${postNumber ? `/${postNumber}` : ""}`;
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+}
+
+export function forumTopicUrlsFromText(value: string) {
+  const urls = new Set<string>();
+  const matches = value.match(forumUrlPattern) ?? [];
+
+  for (const match of matches) {
+    const url = normalizeForumTopicUrl(match);
+
+    if (url) {
+      urls.add(url);
+    }
+  }
+
+  return [...urls];
+}
+
+function topicJsonUrl(topicUrl: string) {
+  const parsed = new URL(topicUrl);
+  parsed.pathname = `${parsed.pathname}.json`;
+  parsed.search = "";
+  parsed.hash = "";
+  return parsed.toString();
+}
+
+function forumHeaders() {
+  return {
+    accept: "application/json",
+    "user-agent": "zcg-grants-prototype"
+  };
+}
+
+async function fetchJson<T>(url: string) {
+  const response = await fetch(url, { headers: forumHeaders() });
+
+  if (response.status === 404 || response.status === 403 || response.status === 410) {
+    return null;
+  }
+
+  if (response.status === 429) {
+    throw new ForumRateLimitError(url);
+  }
+
+  if (!response.ok) {
+    throw new Error(`Zcash Forum mirror failed for ${url}: ${response.status} ${response.statusText}`);
+  }
+
+  return (await response.json()) as T;
+}
+
+async function fetchAdditionalPosts(topic: DiscourseTopic, maxPosts: number) {
+  const loadedPosts = topic.post_stream?.posts ?? [];
+  const loadedPostIds = new Set(loadedPosts.map((post) => post.id));
+  const stream = topic.post_stream?.stream ?? [];
+  const missingPostIds = stream
+    .filter((postId) => !loadedPostIds.has(postId))
+    .slice(0, Math.max(0, maxPosts - loadedPosts.length));
+  const posts: DiscoursePost[] = [...loadedPosts];
+
+  for (const postId of missingPostIds) {
+    const post = await fetchJson<DiscoursePost>(`https://forum.zcashcommunity.com/posts/${postId}.json`);
+
+    if (post) {
+      posts.push(post);
+    }
+  }
+
+  return posts
+    .slice(0, maxPosts)
+    .sort((left, right) => Number(left.post_number ?? 0) - Number(right.post_number ?? 0))
+    .map((post) => ({
+      ...post,
+      plainText: htmlToPlainText(post.cooked)
+    }));
+}
+
+async function fetchForumTopic(url: string, maxPosts: number): Promise<MirroredForumTopic | null> {
+  const jsonUrl = topicJsonUrl(url);
+  const topic = await fetchJson<DiscourseTopic>(jsonUrl);
+
+  if (!topic) {
+    return null;
+  }
+
+  return {
+    url,
+    jsonUrl,
+    topic,
+    posts: await fetchAdditionalPosts(topic, maxPosts)
+  };
+}
+
+function topicSummary(topic: MirroredForumTopic) {
+  const firstPostText = topic.posts[0]?.plainText ?? "";
+  return firstPostText.length > 300 ? `${firstPostText.slice(0, 297)}...` : firstPostText;
+}
+
+function topicTitle(topic: MirroredForumTopic) {
+  return topic.topic.title ?? topic.topic.fancy_title ?? `Forum topic ${topic.topic.id}`;
+}
+
+function topicUpdatedAt(topic: MirroredForumTopic) {
+  return topic.topic.last_posted_at ?? topic.topic.updated_at ?? topic.topic.bumped_at ?? topic.topic.created_at ?? null;
+}
+
+function topicRecord(topic: MirroredForumTopic, fetchedAt: string): SourceMirrorRecord {
+  const posts = topic.posts.map((post) => ({
+    id: post.id,
+    postNumber: post.post_number ?? null,
+    postType: post.post_type ?? null,
+    replyToPostNumber: post.reply_to_post_number ?? null,
+    username: post.username ?? null,
+    name: post.name ?? null,
+    createdAt: post.created_at ?? null,
+    updatedAt: post.updated_at ?? null,
+    plainText: post.plainText
+  }));
+
+  return {
+    sourceKind: "forum_link",
+    sourceId: topic.url,
+    sourceUrl: topic.url,
+    sourceUpdatedAt: topicUpdatedAt(topic),
+    title: topicTitle(topic),
+    summary: topicSummary(topic),
+    rawPayload: {
+      url: topic.url,
+      jsonUrl: topic.jsonUrl,
+      topic: {
+        id: topic.topic.id,
+        title: topic.topic.title ?? null,
+        fancyTitle: topic.topic.fancy_title ?? null,
+        slug: topic.topic.slug ?? null,
+        createdAt: topic.topic.created_at ?? null,
+        updatedAt: topic.topic.updated_at ?? null,
+        lastPostedAt: topic.topic.last_posted_at ?? null,
+        bumpedAt: topic.topic.bumped_at ?? null,
+        postsCount: topic.topic.posts_count ?? null,
+        replyCount: topic.topic.reply_count ?? null,
+        views: topic.topic.views ?? null,
+        tags: topic.topic.tags ?? [],
+        categoryId: topic.topic.category_id ?? null
+      },
+      posts,
+      fullText: posts
+        .map((post) => [`Post #${post.postNumber ?? "?"} by ${post.username ?? "unknown"}`, post.plainText].join("\n"))
+        .join("\n\n")
+    },
+    metadata: {
+      source: "forum_mirror",
+      mirrorKind: "forum_topic",
+      fetchedAt,
+      topicId: topic.topic.id,
+      postCountFetched: posts.length,
+      postCountReported: topic.topic.posts_count ?? null
+    }
+  };
+}
+
+export function forumTopicUrlsFromSourceRecords(records: SourceMirrorRecord[]) {
+  const urls = new Set<string>();
+
+  for (const record of records) {
+    const text = JSON.stringify({
+      sourceUrl: record.sourceUrl,
+      rawPayload: record.rawPayload
+    });
+
+    for (const url of forumTopicUrlsFromText(text)) {
+      urls.add(url);
+    }
+  }
+
+  return [...urls].sort((left, right) => left.localeCompare(right));
+}
+
+export async function mirrorForumTopics(config: ForumMirrorConfig = {}): Promise<SourceMirrorResult> {
+  const fetchedAt = new Date().toISOString();
+  const maxTopicCount = maxTopics(config);
+  const maxPostCount = maxPostsPerTopic(config);
+  const delayMs = fetchDelayMs(config);
+  const urls = [
+    ...new Set(
+      configuredUrls(config)
+        .map((url) => normalizeForumTopicUrl(url))
+        .filter((url): url is string => Boolean(url))
+    )
+  ]
+    .sort((left, right) => left.localeCompare(right))
+    .slice(0, maxTopicCount);
+  const records: SourceMirrorRecord[] = [];
+  const failures: Array<{ url: string; error: string }> = [];
+  let rateLimitedAt: string | null = null;
+
+  for (const [index, url] of urls.entries()) {
+    if (index > 0 && delayMs > 0) {
+      await sleep(delayMs);
+    }
+
+    try {
+      const topic = await fetchForumTopic(url, maxPostCount);
+
+      if (!topic) {
+        failures.push({ url, error: "Topic unavailable or not public." });
+        continue;
+      }
+
+      records.push(topicRecord(topic, fetchedAt));
+    } catch (error) {
+      failures.push({ url, error: error instanceof Error ? error.message : String(error) });
+
+      if (error instanceof ForumRateLimitError) {
+        rateLimitedAt = url;
+        break;
+      }
+    }
+  }
+
+  const topicCountSkippedAfterRateLimit = rateLimitedAt
+    ? urls.slice(urls.indexOf(rateLimitedAt) + 1).length
+    : 0;
+
+  return {
+    sourceKind: "forum_topics",
+    sourceId: "forum.zcashcommunity.com",
+    sourceUrl: "https://forum.zcashcommunity.com",
+    rawPayload: {
+      fetchedAt,
+      topicCountRequested: urls.length,
+      topicCountMirrored: records.length,
+      topicCountFailed: failures.length,
+      topicCountSkippedAfterRateLimit,
+      maxTopics: maxTopicCount,
+      maxPostsPerTopic: maxPostCount,
+      fetchDelayMs: delayMs,
+      rateLimitedAt,
+      urls,
+      failures
+    },
+    records,
+    metadata: {
+      fetchedAt,
+      topicCountRequested: urls.length,
+      topicCountMirrored: records.length,
+      topicCountFailed: failures.length,
+      topicCountSkippedAfterRateLimit,
+      maxTopics: maxTopicCount,
+      maxPostsPerTopic: maxPostCount,
+      fetchDelayMs: delayMs,
+      rateLimitedAt,
+      recordCount: records.length
+    }
+  };
+}

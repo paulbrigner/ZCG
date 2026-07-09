@@ -227,6 +227,8 @@ Current capabilities include:
   - GitHub issue comments, including follow-up comments that link forum posts
     back to grant applications.
   - Public Google Sheet CSV exports.
+  - Zcash Community Forum topic JSON for discovered forum links, preserving
+    public discussion/application text as source evidence.
 - Reconciliation engine that:
   - normalizes GitHub application issues into canonical application records,
   - links GitHub issue comments to their parent canonical application,
@@ -248,7 +250,7 @@ Current capabilities include:
 - Grounded grant knowledge retrieval at `/admin/knowledge`:
   - canonical application summary documents,
   - source-evidence documents from GitHub issues, GitHub comments, Sheets, and
-    discovered forum links,
+    mirrored Forum topic text,
   - keyword retrieval through Postgres full-text search,
   - semantic retrieval through `text-embedding-bge-m3` embeddings,
   - hybrid retrieval that blends keyword and embedding rank,
@@ -320,10 +322,11 @@ Status: started.
 
 - Mirror GitHub issue records.
 - Mirror public Google Sheet rows.
+- Mirror public Zcash Community Forum topic text from discovered Forum links.
 - Store source records and source snapshots.
 - Track sync runs.
 - Preserve source URLs, IDs, checksums, and metadata.
-- Add Discourse/Jotform mirroring next, subject to API/access decisions.
+- Add Jotform mirroring next, subject to API/access decisions.
 
 ### Phase 2 - Reconciliation Console
 
@@ -331,7 +334,8 @@ Status: started and usable as a public read-only prototype.
 
 - Canonical application and grant model.
 - GitHub-to-Sheet matching.
-- Forum link association from existing source payloads.
+- Forum link association and public Forum topic-text mirroring from existing
+  source payloads.
 - Dashboard filters, search, pagination, and application detail pages.
 - Reconciliation issue generation.
 - Grounded grant knowledge index built from canonical applications and source
@@ -494,17 +498,28 @@ not copy production secrets into local files or commits.
 Knowledge retrieval environment variables are documented in `.env.example`.
 Important knobs include `ZCG_KNOWLEDGE_AI_API_KEY`,
 `ZCG_KNOWLEDGE_AI_MODEL`, `ZCG_KNOWLEDGE_SEMANTIC_ENABLED`,
-`ZCG_KNOWLEDGE_EMBEDDING_MODEL`, and `ZCG_KNOWLEDGE_EMBEDDING_DIMS`.
+`ZCG_KNOWLEDGE_EMBEDDING_MODEL`, `ZCG_KNOWLEDGE_EMBEDDING_DIMS`,
+`ZCG_KNOWLEDGE_EMBEDDING_BATCH_SIZE`, and
+`ZCG_KNOWLEDGE_EMBEDDING_TIMEOUT_MS`.
 The scheduled embedding worker reads the provider key from Secrets Manager via
 `knowledgeEmbeddingApiSecretId`; the deployment scripts default that to
 `zcg/prototype/venice-api-key`. The worker embeds up to
 `knowledgeEmbeddingMaxDocuments` documents per run, defaulting to 200 every 60
-minutes.
+minutes, using small batches by default so large Forum-derived documents stay
+within provider latency and context limits.
 GitHub source mirroring also supports `ZCG_GITHUB_COMMENT_MAX_PAGES` for the
 per-issue comment pagination pass. The deployed sync worker reads a GitHub
 fine-grained PAT from AWS Secrets Manager when `githubTokenSecretId` is passed
 to CDK. The default deployment scripts use `zcg/prototype/github-mirror-token`,
 which can be overridden with `GITHUB_TOKEN_SECRET_ID`.
+
+Forum source mirroring reads public Discourse topic JSON for Forum URLs
+discovered in GitHub and Sheet source payloads. `ZCG_FORUM_MAX_TOPICS` bounds
+the number of topics fetched per sync run and `ZCG_FORUM_MAX_POSTS_PER_TOPIC`
+bounds post expansion per topic so the sync worker stays inside its Lambda
+timeout. `ZCG_FORUM_FETCH_DELAY_MS` paces topic requests to avoid Forum rate
+limits. `ZCG_FORUM_TOPIC_URLS` can be used for an explicit comma-separated
+topic list when invoking the `forum-topics` source directly.
 
 ## Deployment Posture
 

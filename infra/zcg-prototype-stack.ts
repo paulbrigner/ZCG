@@ -128,6 +128,11 @@ export class ZcgPrototypeStack extends Stack {
     const logRetentionDays = contextNumber(this, "logRetentionDays", isPrototypeLowCost ? 7 : 30);
     const knowledgeEmbeddingMaxDocuments = contextNumber(this, "knowledgeEmbeddingMaxDocuments", 200);
     const knowledgeEmbeddingScheduleMinutes = contextNumber(this, "knowledgeEmbeddingScheduleMinutes", 60);
+    const knowledgeEmbeddingBatchSize = contextNumber(this, "knowledgeEmbeddingBatchSize", 2);
+    const knowledgeEmbeddingTimeoutMs = contextNumber(this, "knowledgeEmbeddingTimeoutMs", 60000);
+    const forumMaxTopics = contextNumber(this, "forumMaxTopics", 2000);
+    const forumMaxPostsPerTopic = contextNumber(this, "forumMaxPostsPerTopic", 20);
+    const forumFetchDelayMs = contextNumber(this, "forumFetchDelayMs", 500);
     const logRetention = logRetentionForDays(logRetentionDays);
 
     if (dbMinAcu === 0 && (dbAutoPauseSeconds < 300 || dbAutoPauseSeconds > 86400)) {
@@ -465,6 +470,9 @@ export class ZcgPrototypeStack extends Stack {
     if (enableWorkers) {
       const syncWorkerEnvironment = {
         ...workerEnvironment,
+        ZCG_FORUM_MAX_TOPICS: String(forumMaxTopics),
+        ZCG_FORUM_MAX_POSTS_PER_TOPIC: String(forumMaxPostsPerTopic),
+        ZCG_FORUM_FETCH_DELAY_MS: String(forumFetchDelayMs),
         ...(githubTokenSecretId ? { ZCG_GITHUB_TOKEN_SECRET_ID: githubTokenSecretId } : {})
       };
 
@@ -472,8 +480,8 @@ export class ZcgPrototypeStack extends Stack {
         entry: path.join(__dirname, "..", "workers", "sync-worker.ts"),
         handler: "handler",
         runtime: lambda.Runtime.NODEJS_24_X,
-        timeout: Duration.minutes(5),
-        memorySize: 512,
+        timeout: Duration.minutes(15),
+        memorySize: 1024,
         vpc,
         vpcSubnets: {
           subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS
@@ -528,6 +536,8 @@ export class ZcgPrototypeStack extends Stack {
           DB_SECRET_ARN: database.secret!.secretArn,
           DB_NAME: "zcg",
           ZCG_KNOWLEDGE_EMBED_MAX_DOCUMENTS: String(knowledgeEmbeddingMaxDocuments),
+          ZCG_KNOWLEDGE_EMBEDDING_BATCH_SIZE: String(knowledgeEmbeddingBatchSize),
+          ZCG_KNOWLEDGE_EMBEDDING_TIMEOUT_MS: String(knowledgeEmbeddingTimeoutMs),
           ...(knowledgeEmbeddingApiSecretId
             ? { ZCG_KNOWLEDGE_EMBEDDING_API_KEY_SECRET_ID: knowledgeEmbeddingApiSecretId }
             : {})
