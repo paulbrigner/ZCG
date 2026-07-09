@@ -114,69 +114,6 @@ export default async function GrantKnowledgePage() {
         </div>
       </section>
 
-      <section className="metric-grid" aria-label="Grant knowledge summary">
-        <article className="metric-card">
-          <MetricLabel body={knowledgeHelp.documents} label="Knowledge documents" text="Knowledge documents" />
-          <strong>{numberText(overview.documentCount)}</strong>
-        </article>
-        <article className="metric-card">
-          <MetricLabel body={knowledgeHelp.applications} label="Applications covered" text="Applications covered" />
-          <strong>{numberText(overview.applicationCount)}</strong>
-        </article>
-        <article className="metric-card">
-          <MetricLabel body={knowledgeHelp.latestIndex} label="Latest index" text="Latest index" />
-          <strong>{dateText(overview.latestIndexedAt)}</strong>
-        </article>
-        <article className="metric-card">
-          <MetricLabel body={knowledgeHelp.embeddings} label="Embeddings" text="Embeddings" />
-          <strong>{numberText(overview.embeddingCount)}</strong>
-          <span className="metric-note">
-            {providerStatus.embeddingModel} · {numberText(overview.documentCount)} total
-          </span>
-        </article>
-        <article className="metric-card">
-          <MetricLabel body={knowledgeHelp.embeddingBacklog} label="Embedding backlog" text="Embedding backlog" />
-          <strong>{embeddingBacklogText(overview.embeddingBacklogCount)}</strong>
-          <span className="metric-note">
-            {lastEmbeddingRunText({
-              action: overview.lastEmbeddingRunAction,
-              createdAt: overview.lastEmbeddingRunAt,
-              embedded: overview.lastEmbeddingRunDocumentsEmbedded,
-              skipped: overview.lastEmbeddingRunDocumentsSkipped
-            })}
-          </span>
-        </article>
-        <article className="metric-card">
-          <MetricLabel body={knowledgeHelp.aiAnswers} label="AI answers" text="AI answers" />
-          <strong>{providerStatus.aiConfigured ? "Configured" : "Not set"}</strong>
-          <span className="metric-note">{providerStatus.aiModel}</span>
-        </article>
-      </section>
-
-      <section className="panel">
-        <div className="section-heading">
-          <div className="heading-with-help">
-            <h2>Indexed sources</h2>
-            <MetricHelp body={knowledgeHelp.indexedSource} label="Indexed source counts" />
-          </div>
-        </div>
-        <div className="source-counts compact-source-counts">
-          {overview.sourceKinds.length ? (
-            overview.sourceKinds.map((sourceKind) => (
-              <div className="source-count" key={sourceKind.sourceKind}>
-                <span>
-                  {sourceKind.sourceKind}
-                  <MetricHelp align="left" body={knowledgeHelp.indexedSource} label={`${sourceKind.sourceKind} knowledge documents`} />
-                </span>
-                <strong>{numberText(sourceKind.documentCount)}</strong>
-              </div>
-            ))
-          ) : (
-            <p>No knowledge documents indexed yet.</p>
-          )}
-        </div>
-      </section>
-
       <KnowledgeSearchPanel
         canComposeAi={canComposeAi}
         canIndex={canIndex}
@@ -184,6 +121,77 @@ export default async function GrantKnowledgePage() {
         initialAiConfigured={providerStatus.aiConfigured}
         initialSemanticEnabled={providerStatus.semanticSearchEnabled}
       />
+
+      <details className="operations-disclosure knowledge-operations">
+        <summary>
+          <span>Corpus and index status</span>
+          <small>Index, embedding, provider, and source coverage</small>
+        </summary>
+        <div className="operations-disclosure-body">
+          <section className="metric-grid" aria-label="Grant knowledge summary">
+            <article className="metric-card">
+              <MetricLabel body={knowledgeHelp.documents} label="Knowledge documents" text="Knowledge documents" />
+              <strong>{numberText(overview.documentCount)}</strong>
+            </article>
+            <article className="metric-card">
+              <MetricLabel body={knowledgeHelp.applications} label="Applications covered" text="Applications covered" />
+              <strong>{numberText(overview.applicationCount)}</strong>
+            </article>
+            <article className="metric-card">
+              <MetricLabel body={knowledgeHelp.latestIndex} label="Latest index" text="Latest index" />
+              <strong>{dateText(overview.latestIndexedAt)}</strong>
+            </article>
+            <article className="metric-card">
+              <MetricLabel body={knowledgeHelp.embeddings} label="Embeddings" text="Embeddings" />
+              <strong>{numberText(overview.embeddingCount)}</strong>
+              <span className="metric-note">
+                {providerStatus.embeddingModel} · {numberText(overview.documentCount)} total
+              </span>
+            </article>
+            <article className="metric-card">
+              <MetricLabel body={knowledgeHelp.embeddingBacklog} label="Embedding backlog" text="Embedding backlog" />
+              <strong>{embeddingBacklogText(overview.embeddingBacklogCount)}</strong>
+              <span className="metric-note">
+                {lastEmbeddingRunText({
+                  action: overview.lastEmbeddingRunAction,
+                  createdAt: overview.lastEmbeddingRunAt,
+                  embedded: overview.lastEmbeddingRunDocumentsEmbedded,
+                  skipped: overview.lastEmbeddingRunDocumentsSkipped
+                })}
+              </span>
+            </article>
+            <article className="metric-card">
+              <MetricLabel body={knowledgeHelp.aiAnswers} label="AI answers" text="AI answers" />
+              <strong>{providerStatus.aiConfigured ? "Configured" : "Not set"}</strong>
+              <span className="metric-note">{providerStatus.aiModel}</span>
+            </article>
+          </section>
+
+          <section className="panel">
+            <div className="section-heading">
+              <div className="heading-with-help">
+                <h2>Indexed sources</h2>
+                <MetricHelp body={knowledgeHelp.indexedSource} label="Indexed source counts" />
+              </div>
+            </div>
+            <div className="source-counts compact-source-counts">
+              {overview.sourceKinds.length ? (
+                overview.sourceKinds.map((sourceKind) => (
+                  <div className="source-count" key={sourceKind.sourceKind}>
+                    <span>
+                      {sourceKind.sourceKind}
+                      <MetricHelp align="left" body={knowledgeHelp.indexedSource} label={`${sourceKind.sourceKind} knowledge documents`} />
+                    </span>
+                    <strong>{numberText(sourceKind.documentCount)}</strong>
+                  </div>
+                ))
+              ) : (
+                <p>No knowledge documents indexed yet.</p>
+              )}
+            </div>
+          </section>
+        </div>
+      </details>
     </main>
   );
 }

@@ -343,37 +343,7 @@ export function KnowledgeSearchPanel({
       <form className="knowledge-query-panel panel" onSubmit={submitSearch}>
         <div className="section-heading">
           <h2>Grant knowledge retrieval</h2>
-          {canIndex ? (
-            <div className="result-actions">
-              <button disabled={indexState.status === "running"} onClick={rebuildIndex} type="button">
-                {indexState.status === "running" ? "Indexing" : "Rebuild index"}
-              </button>
-              <button
-                className="ghost-button"
-                disabled={embeddingState.status === "running"}
-                onClick={rebuildEmbeddings}
-                type="button"
-              >
-                {embeddingState.status === "running" ? "Embedding" : "Embed next batch"}
-              </button>
-            </div>
-          ) : null}
         </div>
-        {canIndex ? (
-          <details className="maintenance-callout">
-            <summary>How rebuild and embedding work</summary>
-            <p>
-              Rebuild index regenerates the searchable text documents from canonical grant applications and their linked
-              GitHub, Google Sheet, Forum, label, and reconciliation evidence. Embed next batch writes BGE-M3 vector
-              embeddings for indexed documents that are new, missing, or stale. Keyword search can use rebuilt text
-              immediately; semantic and hybrid retrieval are strongest after the embedding backlog is caught up.
-            </p>
-            <p>
-              The scheduled embedding worker continues catching up in the background, so manual embedding is mainly for
-              one-time catch-up or verification after a large rebuild.
-            </p>
-          </details>
-        ) : null}
         <label className="knowledge-query-field">
           <span>Search</span>
           <textarea
@@ -424,6 +394,34 @@ export function KnowledgeSearchPanel({
             {isSearching ? "Searching" : "Search"}
           </button>
         </div>
+        {canIndex ? (
+          <details className="maintenance-callout knowledge-maintenance">
+            <summary>Index maintenance</summary>
+            <div className="result-actions">
+              <button disabled={indexState.status === "running"} onClick={rebuildIndex} type="button">
+                {indexState.status === "running" ? "Indexing" : "Rebuild index"}
+              </button>
+              <button
+                className="ghost-button"
+                disabled={embeddingState.status === "running"}
+                onClick={rebuildEmbeddings}
+                type="button"
+              >
+                {embeddingState.status === "running" ? "Embedding" : "Embed next batch"}
+              </button>
+            </div>
+            <p>
+              Rebuild index regenerates the searchable text documents from canonical grant applications and their linked
+              GitHub, Google Sheet, Forum, label, and reconciliation evidence. Embed next batch writes BGE-M3 vector
+              embeddings for indexed documents that are new, missing, or stale. Keyword search can use rebuilt text
+              immediately; semantic and hybrid retrieval are strongest after the embedding backlog is caught up.
+            </p>
+            <p>
+              The scheduled embedding worker continues catching up in the background, so manual embedding is mainly for
+              one-time catch-up or verification after a large rebuild.
+            </p>
+          </details>
+        ) : null}
         {retrievalModeNote ? <p className="form-status neutral-status">{retrievalModeNote}</p> : null}
         {answerModeNote ? <p className="form-status neutral-status">{answerModeNote}</p> : null}
         {indexState.message ? (

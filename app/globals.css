@@ -312,12 +312,84 @@ button:disabled {
 }
 
 .admin-header {
+  order: 1;
   padding: 28px 0 8px;
 }
 
 .admin-header h1 {
   font-size: clamp(34px, 4vw, 56px);
   line-height: 1.02;
+}
+
+.application-workflow {
+  order: 2;
+}
+
+.dashboard-operations {
+  order: 3;
+}
+
+.knowledge-operations {
+  order: 3;
+}
+
+.operations-disclosure {
+  display: grid;
+  min-width: 0;
+}
+
+.operations-disclosure > summary {
+  align-items: center;
+  background: #f8fafc;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: #273244;
+  cursor: pointer;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  list-style: none;
+  padding: 14px 16px;
+}
+
+.operations-disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+
+.operations-disclosure > summary span {
+  font-weight: 900;
+}
+
+.operations-disclosure > summary small {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+  margin-left: auto;
+}
+
+.operations-disclosure > summary::after {
+  align-items: center;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 999px;
+  color: var(--blue);
+  content: "+";
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-weight: 900;
+  height: 26px;
+  justify-content: center;
+  width: 26px;
+}
+
+.operations-disclosure[open] > summary::after {
+  content: "-";
+}
+
+.operations-disclosure-body {
+  display: grid;
+  gap: 24px;
+  margin-top: 16px;
 }
 
 .metric-grid {
@@ -1137,6 +1209,10 @@ button:disabled {
 
 .knowledge-controls {
   margin-bottom: 0;
+}
+
+.knowledge-maintenance .result-actions {
+  margin-top: 12px;
 }
 
 .neutral-status {

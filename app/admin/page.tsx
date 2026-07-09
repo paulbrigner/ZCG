@@ -388,194 +388,202 @@ export default async function AdminPage({
         </div>
       </section>
 
-      <section className="metric-grid" aria-label="Operational summary">
-        <article className="metric-card">
-          <MetricLabel body={metricHelp.sourceRecords} label="Source records" text="Source records" />
-          <strong>{numberText(totalSourceRecords)}</strong>
-        </article>
-        <article className="metric-card">
-          <MetricLabel body={metricHelp.canonicalApplications} label="Canonical applications" text="Canonical applications" />
-          <strong>{numberText(totals.total_applications)}</strong>
-          <span className="metric-note">Total normalized application records</span>
-        </article>
-        <article className="metric-card">
-          <MetricLabel body={metricHelp.canonicalGrants} label="Canonical grants" text="Canonical grants" />
-          <strong>{numberText(totals.total_grants)}</strong>
-          <span className="metric-note">Applications with grant records</span>
-        </article>
-        <article className="metric-card">
-          <MetricLabel body={metricHelp.openReconciliation} label="Open reconciliation" text="Open reconciliation" />
-          <strong>{numberText(openReconciliationIssues)}</strong>
-          <span className="metric-note">Items needing review or confirmation</span>
-        </article>
-      </section>
+      <details className="operations-disclosure dashboard-operations">
+        <summary>
+          <span>Operational telemetry</span>
+          <small>Sync, source, reconciliation, and system counts</small>
+        </summary>
+        <div className="operations-disclosure-body">
+          <section className="metric-grid" aria-label="Operational summary">
+            <article className="metric-card">
+              <MetricLabel body={metricHelp.sourceRecords} label="Source records" text="Source records" />
+              <strong>{numberText(totalSourceRecords)}</strong>
+            </article>
+            <article className="metric-card">
+              <MetricLabel body={metricHelp.canonicalApplications} label="Canonical applications" text="Canonical applications" />
+              <strong>{numberText(totals.total_applications)}</strong>
+              <span className="metric-note">Total normalized application records</span>
+            </article>
+            <article className="metric-card">
+              <MetricLabel body={metricHelp.canonicalGrants} label="Canonical grants" text="Canonical grants" />
+              <strong>{numberText(totals.total_grants)}</strong>
+              <span className="metric-note">Applications with grant records</span>
+            </article>
+            <article className="metric-card">
+              <MetricLabel body={metricHelp.openReconciliation} label="Open reconciliation" text="Open reconciliation" />
+              <strong>{numberText(openReconciliationIssues)}</strong>
+              <span className="metric-note">Items needing review or confirmation</span>
+            </article>
+          </section>
 
-      <section className="admin-grid two-column">
-        <article className="panel">
-          <div className="section-heading">
-            <h2>Sync runs</h2>
-          </div>
-          <div className="table-wrap">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Source</th>
-                  <th>Status</th>
-                  <th>
-                    <span className="table-heading-with-help">
-                      Seen
-                      <MetricHelp body={metricHelp.syncSeen} label="Sync records seen" />
-                    </span>
-                  </th>
-                  <th>
-                    <span className="table-heading-with-help">
-                      Updated
-                      <MetricHelp body={metricHelp.syncUpdated} label="Sync records updated" />
-                    </span>
-                  </th>
-                  <th>Completed</th>
-                </tr>
-              </thead>
-              <tbody>
-                {dashboard.syncRuns.map((run) => (
-                  <tr key={run.id}>
-                    <td>{run.source}</td>
-                    <td>
-                      <span className={`badge ${run.status}`}>{run.status}</span>
-                    </td>
-                    <td>{numberText(run.records_seen)}</td>
-                    <td>{numberText(Number(run.records_created) + Number(run.records_updated))}</td>
-                    <td>{dateText(run.completed_at)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </article>
-
-        <article className="panel">
-          <div className="section-heading">
-            <h2>
-              Source records
-              <MetricHelp body={metricHelp.sourceKind} label="Source record counts" />
-            </h2>
-          </div>
-          <div className="source-counts">
-            {dashboard.sourceCounts.map((row) => (
-              <div className="source-count" key={row.source_kind}>
-                <span>
-                  {row.source_kind}
-                  <MetricHelp align="left" body={metricHelp.sourceKind} label={`${row.source_kind} records`} />
-                </span>
-                <strong>{numberText(row.record_count)}</strong>
-                <small>{dateText(row.latest_updated_at)}</small>
+          <section className="admin-grid two-column">
+            <article className="panel">
+              <div className="section-heading">
+                <h2>Sync runs</h2>
               </div>
-            ))}
-          </div>
-        </article>
-      </section>
+              <div className="table-wrap">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Source</th>
+                      <th>Status</th>
+                      <th>
+                        <span className="table-heading-with-help">
+                          Seen
+                          <MetricHelp body={metricHelp.syncSeen} label="Sync records seen" />
+                        </span>
+                      </th>
+                      <th>
+                        <span className="table-heading-with-help">
+                          Updated
+                          <MetricHelp body={metricHelp.syncUpdated} label="Sync records updated" />
+                        </span>
+                      </th>
+                      <th>Completed</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {dashboard.syncRuns.map((run) => (
+                      <tr key={run.id}>
+                        <td>{run.source}</td>
+                        <td>
+                          <span className={`badge ${run.status}`}>{run.status}</span>
+                        </td>
+                        <td>{numberText(run.records_seen)}</td>
+                        <td>{numberText(Number(run.records_created) + Number(run.records_updated))}</td>
+                        <td>{dateText(run.completed_at)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </article>
 
-      <section className="admin-grid two-column">
-        <article className="panel">
-          <div className="section-heading">
-            <h2>
-              Reconciliation
-              <MetricHelp body={metricHelp.reconciliationGroup} label="Reconciliation counts" />
-            </h2>
-          </div>
-          <div className="status-list">
-            {dashboard.reconciliationSummary.length ? (
-              dashboard.reconciliationSummary.map((row) => (
-                <p className="status-item" key={`${row.status}-${row.severity}`}>
-                  <span className={`dot ${row.severity === "error" ? "red" : row.severity === "warning" ? "amber" : "blue"}`} />
-                  <span>{row.status}</span>
-                  <span>{row.severity}</span>
+            <article className="panel">
+              <div className="section-heading">
+                <h2>
+                  Source records
+                  <MetricHelp body={metricHelp.sourceKind} label="Source record counts" />
+                </h2>
+              </div>
+              <div className="source-counts">
+                {dashboard.sourceCounts.map((row) => (
+                  <div className="source-count" key={row.source_kind}>
+                    <span>
+                      {row.source_kind}
+                      <MetricHelp align="left" body={metricHelp.sourceKind} label={`${row.source_kind} records`} />
+                    </span>
+                    <strong>{numberText(row.record_count)}</strong>
+                    <small>{dateText(row.latest_updated_at)}</small>
+                  </div>
+                ))}
+              </div>
+            </article>
+          </section>
+
+          <section className="admin-grid two-column">
+            <article className="panel">
+              <div className="section-heading">
+                <h2>
+                  Reconciliation
+                  <MetricHelp body={metricHelp.reconciliationGroup} label="Reconciliation counts" />
+                </h2>
+              </div>
+              <div className="status-list">
+                {dashboard.reconciliationSummary.length ? (
+                  dashboard.reconciliationSummary.map((row) => (
+                    <p className="status-item" key={`${row.status}-${row.severity}`}>
+                      <span className={`dot ${row.severity === "error" ? "red" : row.severity === "warning" ? "amber" : "blue"}`} />
+                      <span>{row.status}</span>
+                      <span>{row.severity}</span>
+                      <strong className="count-with-help">
+                        {numberText(row.issue_count)}
+                        <MetricHelp align="left" body={metricHelp.reconciliationGroup} label={`${row.status} ${row.severity} reconciliation issues`} />
+                      </strong>
+                    </p>
+                  ))
+                ) : (
+                  <p>No reconciliation issues recorded.</p>
+                )}
+              </div>
+            </article>
+
+            <article className="panel">
+              <div className="section-heading">
+                <h2>Phase 2 slice</h2>
+              </div>
+              <div className="status-list">
+                <p className="status-item">
+                  <span className="dot green" />
+                  Matched GitHub + Sheet records
                   <strong className="count-with-help">
-                    {numberText(row.issue_count)}
-                    <MetricHelp align="left" body={metricHelp.reconciliationGroup} label={`${row.status} ${row.severity} reconciliation issues`} />
+                    {numberText(totals.matched_applications)}
+                    <MetricHelp align="left" body={metricHelp.matched} label="Matched GitHub + Sheet records" />
                   </strong>
                 </p>
-              ))
-            ) : (
-              <p>No reconciliation issues recorded.</p>
-            )}
-          </div>
-        </article>
+                <p className="status-item">
+                  <span className="dot amber" />
+                  GitHub-only records
+                  <strong className="count-with-help">
+                    {numberText(totals.github_only_applications)}
+                    <MetricHelp align="left" body={metricHelp.githubOnly} label="GitHub-only records" />
+                  </strong>
+                </p>
+                <p className="status-item">
+                  <span className="dot amber" />
+                  Sheet-only records
+                  <strong className="count-with-help">
+                    {numberText(totals.sheet_only_applications)}
+                    <MetricHelp align="left" body={metricHelp.sheetOnly} label="Sheet-only records" />
+                  </strong>
+                </p>
+                <p className="status-item">
+                  <span className="dot blue" />
+                  Primary forum threads
+                  <strong className="count-with-help">
+                    {numberText(forumRoleTotals.primary_forum_threads)}
+                    <MetricHelp align="left" body={metricHelp.primaryForumThreads} label="Primary forum threads" />
+                  </strong>
+                </p>
+                <p className="status-item">
+                  <span className="dot blue" />
+                  Supporting forum references
+                  <strong className="count-with-help">
+                    {numberText(forumRoleTotals.supporting_forum_references)}
+                    <MetricHelp align="left" body={metricHelp.supportingForumReferences} label="Supporting forum references" />
+                  </strong>
+                </p>
+                <p className="status-item">
+                  <span className="dot blue" />
+                  Manual reconciliation workspace
+                  <Link className="table-link" href="/admin/reconciliations">
+                    Open
+                  </Link>
+                </p>
+              </div>
+            </article>
 
-        <article className="panel">
-          <div className="section-heading">
-            <h2>Phase 2 slice</h2>
-          </div>
-          <div className="status-list">
-            <p className="status-item">
-              <span className="dot green" />
-              Matched GitHub + Sheet records
-              <strong className="count-with-help">
-                {numberText(totals.matched_applications)}
-                <MetricHelp align="left" body={metricHelp.matched} label="Matched GitHub + Sheet records" />
-              </strong>
-            </p>
-            <p className="status-item">
-              <span className="dot amber" />
-              GitHub-only records
-              <strong className="count-with-help">
-                {numberText(totals.github_only_applications)}
-                <MetricHelp align="left" body={metricHelp.githubOnly} label="GitHub-only records" />
-              </strong>
-            </p>
-            <p className="status-item">
-              <span className="dot amber" />
-              Sheet-only records
-              <strong className="count-with-help">
-                {numberText(totals.sheet_only_applications)}
-                <MetricHelp align="left" body={metricHelp.sheetOnly} label="Sheet-only records" />
-              </strong>
-            </p>
-            <p className="status-item">
-              <span className="dot blue" />
-              Primary forum threads
-              <strong className="count-with-help">
-                {numberText(forumRoleTotals.primary_forum_threads)}
-                <MetricHelp align="left" body={metricHelp.primaryForumThreads} label="Primary forum threads" />
-              </strong>
-            </p>
-            <p className="status-item">
-              <span className="dot blue" />
-              Supporting forum references
-              <strong className="count-with-help">
-                {numberText(forumRoleTotals.supporting_forum_references)}
-                <MetricHelp align="left" body={metricHelp.supportingForumReferences} label="Supporting forum references" />
-              </strong>
-            </p>
-            <p className="status-item">
-              <span className="dot blue" />
-              Manual reconciliation workspace
-              <Link className="table-link" href="/admin/reconciliations">
-                Open
-              </Link>
-            </p>
-          </div>
-        </article>
+            {canManageUsers ? (
+              <article className="panel">
+                <div className="section-heading">
+                  <h2>Dashboard tools</h2>
+                </div>
+                <div className="status-list">
+                  <p className="status-item">
+                    <span className="dot blue" />
+                    User access management
+                    <Link className="table-link" href="/admin/users">
+                      Open
+                    </Link>
+                  </p>
+                </div>
+              </article>
+            ) : null}
+          </section>
+        </div>
+      </details>
 
-        {canManageUsers ? (
-          <article className="panel">
-            <div className="section-heading">
-              <h2>Dashboard tools</h2>
-            </div>
-            <div className="status-list">
-              <p className="status-item">
-                <span className="dot blue" />
-                User access management
-                <Link className="table-link" href="/admin/users">
-                  Open
-                </Link>
-              </p>
-            </div>
-          </article>
-        ) : null}
-      </section>
-
-      <section className="panel">
+      <section className="panel application-workflow">
         <div className="section-heading">
           <div>
             <h2>Application reconciliation</h2>
