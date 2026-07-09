@@ -23,6 +23,7 @@
     "reconciliation:import": "tsx scripts/import-reconciliation-decisions.ts",
     "reconcile:grants": "tsx scripts/reconcile.ts",
     "worker:sync": "tsx workers/sync-worker.ts",
+    "worker:knowledge-index": "tsx workers/knowledge-index-worker.ts",
     "worker:knowledge-embed": "tsx workers/knowledge-embedding-worker.ts",
     "infra:synth": "cdk synth --app \"npx tsx infra/app.ts\"",
     "infra:diff": "cdk diff --app \"npx tsx infra/app.ts\"",
@@ -37,6 +38,7 @@
     "infra:web-task-url": "bash scripts/ecs-public-task-url.sh"
   },
   "dependencies": {
+    "@aws-sdk/client-lambda": "^3.1075.0",
     "@aws-sdk/client-rds-data": "^3.1075.0",
     "@aws-sdk/client-s3": "^3.1075.0",
     "@aws-sdk/client-secrets-manager": "^3.1075.0",

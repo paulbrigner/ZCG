@@ -434,6 +434,9 @@ Current rules:
   `role:assignment:manage`.
 - Rebuilding grant knowledge documents and embedding new batches requires the
   Administrator role and `knowledge:index`.
+- In deployed environments, the rebuild button enqueues the knowledge index
+  worker with `ZCG_KNOWLEDGE_INDEX_WORKER_FUNCTION_NAME` instead of holding the
+  browser request open for the full rebuild.
 - A scheduled backend worker periodically embeds stale or missing grant
   knowledge documents so semantic retrieval can catch up without repeated
   manual clicks.
@@ -474,6 +477,7 @@ Useful commands:
 ```bash
 npm run check
 npm run worker:sync
+npm run worker:knowledge-index
 npm run reconcile:grants
 npm run knowledge:index
 npm run knowledge:embed

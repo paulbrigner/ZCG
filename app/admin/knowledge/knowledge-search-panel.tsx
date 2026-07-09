@@ -24,6 +24,33 @@ const knowledgeSearchHelp = {
     "Number of retrieved evidence documents returned for this query after the selected keyword, semantic, or hybrid retrieval mode runs."
 };
 
+async function responseJson(response: Response) {
+  const text = await response.text();
+
+  if (!text.trim()) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    throw new Error(
+      response.ok
+        ? "The server returned an invalid response."
+        : `The server returned a non-JSON error response (${response.status}).`
+    );
+  }
+}
+
+function errorMessage(body: unknown, fallback: string) {
+  if (body && typeof body === "object" && "error" in body) {
+    const value = (body as { error?: unknown }).error;
+    return typeof value === "string" && value.trim() ? value : fallback;
+  }
+
+  return fallback;
+}
+
 function moneyText(value: string | null) {
   if (!value) {
     return null;
@@ -97,10 +124,10 @@ export function KnowledgeSearchPanel({
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ query, limit: Number(limit), retrievalMode, answerMode })
       });
-      const body = await response.json();
+      const body = await responseJson(response);
 
       if (!response.ok) {
-        throw new Error(typeof body?.error === "string" ? body.error : "Search failed.");
+        throw new Error(errorMessage(body, "Search failed."));
       }
 
       setResult(body as GrantKnowledgeSearchResponse);
@@ -116,15 +143,28 @@ export function KnowledgeSearchPanel({
 
     try {
       const response = await fetch("/api/admin/knowledge/index", { method: "POST" });
-      const body = await response.json();
+      const body = await responseJson(response) as {
+        accepted?: boolean;
+        applicationsSeen?: number;
+        documentsIndexed?: number;
+        message?: string;
+      } | null;
 
       if (!response.ok) {
-        throw new Error(typeof body?.error === "string" ? body.error : "Indexing failed.");
+        throw new Error(errorMessage(body, "Indexing failed."));
+      }
+
+      if (body?.accepted) {
+        setIndexState({
+          status: "done",
+          message: body.message ?? "Knowledge index rebuild started. Refresh the page after it completes."
+        });
+        return;
       }
 
       setIndexState({
         status: "done",
-        message: `${body.documentsIndexed.toLocaleString()} documents indexed from ${body.applicationsSeen.toLocaleString()} applications.`
+        message: `${(body?.documentsIndexed ?? 0).toLocaleString()} documents indexed from ${(body?.applicationsSeen ?? 0).toLocaleString()} applications.`
       });
     } catch (indexError) {
       setIndexState({
@@ -139,15 +179,18 @@ export function KnowledgeSearchPanel({
 
     try {
       const response = await fetch("/api/admin/knowledge/embeddings", { method: "POST" });
-      const body = await response.json();
+      const body = await responseJson(response) as {
+        documentsEmbedded?: number;
+        model?: string;
+      } | null;
 
       if (!response.ok) {
-        throw new Error(typeof body?.error === "string" ? body.error : "Embedding failed.");
+        throw new Error(errorMessage(body, "Embedding failed."));
       }
 
       setEmbeddingState({
         status: "done",
-        message: `${body.documentsEmbedded.toLocaleString()} documents embedded with ${body.model}.`
+        message: `${(body?.documentsEmbedded ?? 0).toLocaleString()} documents embedded with ${body?.model ?? "the configured embedding model"}.`
       });
     } catch (embeddingError) {
       setEmbeddingState({

@@ -452,8 +452,14 @@ export class ZcgPrototypeStack extends Stack {
       removalPolicy
     });
 
+    const knowledgeIndexWorkerLogGroup = new logs.LogGroup(this, "KnowledgeIndexWorkerLogGroup", {
+      retention: logRetention,
+      removalPolicy
+    });
+
     let syncWorkerFunctionName = "disabled";
     let migrationRunnerFunctionName = "disabled";
+    let knowledgeIndexWorkerFunctionName = "disabled";
     let knowledgeEmbeddingWorkerFunctionName = "disabled";
 
     if (enableWorkers) {
@@ -532,18 +538,52 @@ export class ZcgPrototypeStack extends Stack {
         }
       });
 
+      const knowledgeIndexWorker = new lambdaNodejs.NodejsFunction(this, "KnowledgeIndexWorker", {
+        entry: path.join(__dirname, "..", "workers", "knowledge-index-worker.ts"),
+        handler: "handler",
+        runtime: lambda.Runtime.NODEJS_24_X,
+        timeout: Duration.minutes(15),
+        memorySize: 1024,
+        environment: {
+          APP_ENV: environmentName,
+          DATABASE_DRIVER: "data-api",
+          DB_CLUSTER_ARN: database.clusterArn,
+          DB_SECRET_ARN: database.secret!.secretArn,
+          DB_NAME: "zcg"
+        },
+        logGroup: knowledgeIndexWorkerLogGroup,
+        bundling: {
+          externalModules: []
+        }
+      });
+
       syncWorkerFunctionName = syncWorker.functionName;
       migrationRunnerFunctionName = migrationRunner.functionName;
+      knowledgeIndexWorkerFunctionName = knowledgeIndexWorker.functionName;
       knowledgeEmbeddingWorkerFunctionName = knowledgeEmbeddingWorker.functionName;
       snapshotBucket.grantReadWrite(syncWorker);
       snapshotBucket.grantReadWrite(migrationRunner);
       database.secret!.grantRead(syncWorker);
       database.secret!.grantRead(migrationRunner);
+      database.secret!.grantRead(knowledgeIndexWorker);
       database.secret!.grantRead(knowledgeEmbeddingWorker);
       githubTokenSecret?.grantRead(syncWorker);
       knowledgeEmbeddingApiSecret?.grantRead(knowledgeEmbeddingWorker);
+      knowledgeIndexWorker.grantInvoke(amplifyComputeRole);
       database.connections.allowDefaultPortFrom(syncWorker);
       database.connections.allowDefaultPortFrom(migrationRunner);
+      knowledgeIndexWorker.addToRolePolicy(
+        new iam.PolicyStatement({
+          actions: [
+            "rds-data:ExecuteStatement",
+            "rds-data:BatchExecuteStatement",
+            "rds-data:BeginTransaction",
+            "rds-data:CommitTransaction",
+            "rds-data:RollbackTransaction"
+          ],
+          resources: [database.clusterArn]
+        })
+      );
       knowledgeEmbeddingWorker.addToRolePolicy(
         new iam.PolicyStatement({
           actions: [
@@ -589,6 +629,13 @@ export class ZcgPrototypeStack extends Stack {
           evaluationPeriods: 1,
           comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD
         });
+
+        knowledgeIndexWorker.metricErrors().createAlarm(this, "KnowledgeIndexWorkerErrorsAlarm", {
+          alarmName: `${appName}-${environmentName}-knowledge-index-worker-errors`,
+          threshold: 1,
+          evaluationPeriods: 1,
+          comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD
+        });
       }
     }
 
@@ -624,6 +671,9 @@ export class ZcgPrototypeStack extends Stack {
     });
     new cdk.CfnOutput(this, "MigrationRunnerFunctionName", {
       value: migrationRunnerFunctionName
+    });
+    new cdk.CfnOutput(this, "KnowledgeIndexWorkerFunctionName", {
+      value: knowledgeIndexWorkerFunctionName
     });
     new cdk.CfnOutput(this, "KnowledgeEmbeddingWorkerFunctionName", {
       value: knowledgeEmbeddingWorkerFunctionName
