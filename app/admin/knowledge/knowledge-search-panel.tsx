@@ -19,9 +19,9 @@ type IndexState = {
 
 const knowledgeSearchHelp = {
   resultLimit:
-    "Maximum number of evidence documents returned for the query. These are grant_knowledge_documents rows, not unique grant applications.",
+    "Initial search-result size for the query. Evidence-summary mode returns this many documents. AI grounded-answer mode can use a larger answer-preparation pass behind the scenes.",
   evidenceMatches:
-    "Number of evidence documents available for this answer. AI grounded answers expand the initial retrieval matches with nearby source documents from the same top grant applications."
+    "Number of evidence documents prepared for this answer. AI grounded answers run a wider candidate pass, expand top grant applications with nearby source documents, and include compact summaries for broader matching applications."
 };
 
 async function responseJson(response: Response) {
@@ -307,6 +307,12 @@ export function KnowledgeSearchPanel({
                 <MetricHelp align="left" body={knowledgeSearchHelp.evidenceMatches} label="Evidence matches" />
                 {" | "}
                 {result.retrievalStats.mode} retrieval
+                {result.retrievalStats.candidateResultCount > result.retrievalStats.initialResultCount ? (
+                  <>
+                    {" | "}
+                    {result.retrievalStats.candidateResultCount.toLocaleString()} candidates
+                  </>
+                ) : null}
                 {result.retrievalStats.expandedEvidenceCount > result.retrievalStats.initialResultCount ? (
                   <>
                     {" | "}

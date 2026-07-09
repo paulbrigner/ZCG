@@ -14,20 +14,25 @@ type ChatCompletionResponse = {
   }>;
 };
 
-const maxEvidenceItems = 20;
+const maxEvidenceItems = 100;
+const maxEvidencePromptChars = 120000;
 const maxEvidenceTextChars = 7000;
+const minEvidenceTextChars = 700;
+const richEvidenceItems = 8;
+const expandedEvidenceItems = 20;
 
-function promptEvidenceText(result: GrantKnowledgeSearchResult) {
+function promptEvidenceText(result: GrantKnowledgeSearchResult, maxChars: number) {
   const text = result.content.replace(/\n{3,}/g, "\n\n").trim() || result.excerpt;
+  const effectiveMaxChars = Math.max(200, Math.min(maxChars, maxEvidenceTextChars));
 
-  if (text.length <= maxEvidenceTextChars) {
+  if (text.length <= effectiveMaxChars) {
     return text;
   }
 
-  return `${text.slice(0, maxEvidenceTextChars - 90)}\n\n[Evidence text truncated for prompt size.]`;
+  return `${text.slice(0, effectiveMaxChars - 90)}\n\n[Evidence text truncated for prompt size.]`;
 }
 
-function resultForPrompt(result: GrantKnowledgeSearchResult, index: number) {
+function resultForPrompt(result: GrantKnowledgeSearchResult, index: number, maxTextChars: number) {
   const source = result.sourceUrl ? `Source URL: ${result.sourceUrl}` : `Source: ${result.sourceKind ?? "unknown"}`;
   return [
     `[${index + 1}] ${result.title}`,
@@ -35,10 +40,39 @@ function resultForPrompt(result: GrantKnowledgeSearchResult, index: number) {
     result.normalizedStatus ? `Status: ${result.normalizedStatus}` : null,
     result.requestedAmountUsd ? `Requested USD: ${result.requestedAmountUsd}` : null,
     source,
-    `Evidence text:\n${promptEvidenceText(result)}`
+    `Evidence text:\n${promptEvidenceText(result, maxTextChars)}`
   ]
     .filter(Boolean)
     .join("\n");
+}
+
+function evidenceForPrompt(results: GrantKnowledgeSearchResult[]) {
+  const selectedResults = results.slice(0, maxEvidenceItems);
+  const blocks: string[] = [];
+  let usedChars = 0;
+
+  for (const [index, result] of selectedResults.entries()) {
+    const preferredTextBudget =
+      index < richEvidenceItems
+        ? 5000
+        : index < expandedEvidenceItems
+          ? 2500
+          : minEvidenceTextChars;
+    let block = resultForPrompt(result, index, preferredTextBudget);
+
+    if (usedChars + block.length > maxEvidencePromptChars && preferredTextBudget > minEvidenceTextChars) {
+      block = resultForPrompt(result, index, minEvidenceTextChars);
+    }
+
+    if (usedChars + block.length > maxEvidencePromptChars) {
+      break;
+    }
+
+    blocks.push(block);
+    usedChars += block.length + 2;
+  }
+
+  return blocks.join("\n\n");
 }
 
 function responseText(payload: ChatCompletionResponse) {
@@ -81,7 +115,7 @@ export async function composeGrantKnowledgeAnswer({
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), knowledgeAiTimeoutMs());
-  const evidence = results.slice(0, maxEvidenceItems).map(resultForPrompt).join("\n\n");
+  const evidence = evidenceForPrompt(results);
 
   try {
     const response = await fetch(`${knowledgeAiBaseUrl()}/chat/completions`, {
