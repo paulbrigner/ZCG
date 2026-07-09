@@ -101,6 +101,14 @@ function configuredUrls(config?: ForumMirrorConfig) {
     .filter(Boolean);
 }
 
+function skippedUrls(config?: ForumMirrorConfig) {
+  return new Set(
+    (config?.skipUrls ?? [])
+      .map((url) => normalizeForumTopicUrl(url))
+      .filter((url): url is string => Boolean(url))
+  );
+}
+
 function maxTopics(config?: ForumMirrorConfig) {
   return numberConfig(config?.maxTopics ?? process.env.ZCG_FORUM_MAX_TOPICS, defaultMaxTopics);
 }
@@ -458,6 +466,7 @@ export async function mirrorForumTopics(config: ForumMirrorConfig = {}): Promise
   const maxTopicCount = maxTopics(config);
   const maxPostCount = maxPostsPerTopic(config);
   const delayMs = fetchDelayMs(config);
+  const skippedTopicUrls = skippedUrls(config);
   const urls = [
     ...new Set(
       configuredUrls(config)
@@ -465,6 +474,7 @@ export async function mirrorForumTopics(config: ForumMirrorConfig = {}): Promise
         .filter((url): url is string => Boolean(url))
     )
   ]
+    .filter((url) => !skippedTopicUrls.has(url))
     .sort((left, right) => left.localeCompare(right))
     .slice(0, maxTopicCount);
   const records: SourceMirrorRecord[] = [];
@@ -506,6 +516,7 @@ export async function mirrorForumTopics(config: ForumMirrorConfig = {}): Promise
     rawPayload: {
       fetchedAt,
       topicCountRequested: urls.length,
+      topicCountSkippedConfigured: skippedTopicUrls.size,
       topicCountMirrored: records.length,
       topicCountFailed: failures.length,
       topicCountSkippedAfterRateLimit,
@@ -520,6 +531,7 @@ export async function mirrorForumTopics(config: ForumMirrorConfig = {}): Promise
     metadata: {
       fetchedAt,
       topicCountRequested: urls.length,
+      topicCountSkippedConfigured: skippedTopicUrls.size,
       topicCountMirrored: records.length,
       topicCountFailed: failures.length,
       topicCountSkippedAfterRateLimit,
@@ -539,46 +551,61 @@ export async function mirrorForumUpdatesCategory(config: ForumMirrorConfig = {})
   const maxPostCount = maxPostsPerTopic(config);
   const maxPages = maxCategoryPages(config);
   const delayMs = fetchDelayMs(config);
+  const skippedTopicUrls = skippedUrls(config);
   const topicUrls: string[] = [];
+  const directTopicUrls = config.urls?.length
+    ? [
+        ...new Set(
+          config.urls
+            .map((url) => normalizeForumTopicUrl(url))
+            .filter((url): url is string => Boolean(url))
+        )
+      ]
+    : null;
   const categoryFailures: Array<{ url: string; error: string }> = [];
   const topicFailures: Array<{ url: string; error: string }> = [];
   let moreTopicsUrl: string | null = null;
   let rateLimitedAt: string | null = null;
 
-  for (let page = 0; page < maxPages && topicUrls.length < maxTopicCount; page += 1) {
-    const url = categoryJsonUrl(categoryUrl, page);
+  if (directTopicUrls) {
+    topicUrls.push(...directTopicUrls);
+  } else {
+    for (let page = 0; page < maxPages && topicUrls.length < maxTopicCount; page += 1) {
+      const url = categoryJsonUrl(categoryUrl, page);
 
-    if (page > 0 && delayMs > 0) {
-      await sleep(delayMs);
-    }
+      if (page > 0 && delayMs > 0) {
+        await sleep(delayMs);
+      }
 
-    try {
-      const category = await fetchJson<DiscourseCategoryResponse>(url);
-      const topics = category?.topic_list?.topics ?? [];
-      moreTopicsUrl = category?.topic_list?.more_topics_url ?? null;
+      try {
+        const category = await fetchJson<DiscourseCategoryResponse>(url);
+        const topics = category?.topic_list?.topics ?? [];
+        moreTopicsUrl = category?.topic_list?.more_topics_url ?? null;
 
-      for (const topic of topics) {
-        const topicUrl = categoryTopicUrl(topic);
+        for (const topic of topics) {
+          const topicUrl = categoryTopicUrl(topic);
 
-        if (topicUrl) {
-          topicUrls.push(topicUrl);
+          if (topicUrl) {
+            topicUrls.push(topicUrl);
+          }
         }
-      }
 
-      if (!moreTopicsUrl || topics.length === 0) {
-        break;
-      }
-    } catch (error) {
-      categoryFailures.push({ url, error: error instanceof Error ? error.message : String(error) });
+        if (!moreTopicsUrl || topics.length === 0) {
+          break;
+        }
+      } catch (error) {
+        categoryFailures.push({ url, error: error instanceof Error ? error.message : String(error) });
 
-      if (error instanceof ForumRateLimitError) {
-        rateLimitedAt = url;
-        break;
+        if (error instanceof ForumRateLimitError) {
+          rateLimitedAt = url;
+          break;
+        }
       }
     }
   }
 
-  const urls = [...new Set(topicUrls)].slice(0, maxTopicCount);
+  const discoveredUrls = [...new Set(topicUrls)];
+  const urls = discoveredUrls.filter((url) => !skippedTopicUrls.has(url)).slice(0, maxTopicCount);
   const records: SourceMirrorRecord[] = [];
 
   for (const [index, url] of urls.entries()) {
@@ -621,7 +648,10 @@ export async function mirrorForumUpdatesCategory(config: ForumMirrorConfig = {})
     rawPayload: {
       fetchedAt,
       categoryUrl,
-      topicCountDiscovered: urls.length,
+      directUrlMode: Boolean(directTopicUrls),
+      topicCountDiscovered: discoveredUrls.length,
+      topicCountSelected: urls.length,
+      topicCountSkippedConfigured: discoveredUrls.length - urls.length,
       topicCountMirrored: records.length,
       topicCountFailed: topicFailures.length,
       maxTopics: maxTopicCount,
@@ -638,7 +668,10 @@ export async function mirrorForumUpdatesCategory(config: ForumMirrorConfig = {})
     metadata: {
       fetchedAt,
       categoryUrl,
-      topicCountDiscovered: urls.length,
+      directUrlMode: Boolean(directTopicUrls),
+      topicCountDiscovered: discoveredUrls.length,
+      topicCountSelected: urls.length,
+      topicCountSkippedConfigured: discoveredUrls.length - urls.length,
       topicCountMirrored: records.length,
       topicCountFailed: topicFailures.length,
       categoryFailureCount: categoryFailures.length,

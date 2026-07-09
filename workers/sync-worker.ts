@@ -192,6 +192,35 @@ async function storeMirrorResult(
   return { ...counts, snapshotKey: snapshot?.key ?? null };
 }
 
+async function existingForumUpdateSourceIds(client: pg.Client) {
+  const result = await client.query<{ source_id: string }>(
+    `select source_id
+       from source_records
+      where source_kind in ('forum_meeting_minutes', 'forum_update_topic')`
+  );
+
+  return result.rows.map((row) => row.source_id);
+}
+
+async function sourceEventWithResumeSkips(client: pg.Client, event: WorkerEvent): Promise<WorkerEvent> {
+  if (!event.forum?.skipExistingSourceRecords) {
+    return event;
+  }
+
+  const skipUrls = [
+    ...(event.forum.skipUrls ?? []),
+    ...(await existingForumUpdateSourceIds(client))
+  ];
+
+  return {
+    ...event,
+    forum: {
+      ...event.forum,
+      skipUrls
+    }
+  };
+}
+
 async function runGrantReconciliationForWorker(client: pg.Client, syncRunId: string, source: string) {
   process.env.DATABASE_DRIVER = "pg";
   process.env.DATABASE_URL = await workerDatabaseUrl();
@@ -241,7 +270,8 @@ export async function handler(event: WorkerEvent = {}) {
       return { ok: true, syncRunId, reconciliation };
     }
 
-    const results = await collectSourceMirrors(event);
+    const mirrorEvent = await sourceEventWithResumeSkips(client, event);
+    const results = await collectSourceMirrors(mirrorEvent);
     let counts = { ...emptyCounts };
     const sourceSummaries: Record<string, unknown>[] = [];
 
