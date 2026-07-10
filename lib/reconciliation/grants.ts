@@ -685,6 +685,21 @@ function statusFromSheet(status: string | null) {
   return normalized ? normalized.replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") : "unknown";
 }
 
+function resolveCanonicalStatus(sheetStatus: string | null, githubStatus: string) {
+  if (!sheetStatus || sheetStatus === "unknown") {
+    return githubStatus;
+  }
+
+  if (
+    sheetStatus === "under_review" &&
+    (githubStatus === "approved" || githubStatus === "declined")
+  ) {
+    return githubStatus;
+  }
+
+  return sheetStatus;
+}
+
 function extractMarkdownSection(body: string | null, heading: string) {
   if (!body) {
     return null;
@@ -1586,7 +1601,7 @@ export async function runGrantReconciliation(): Promise<ReconciliationRunResult>
     const githubComments = githubCommentsByIssue.get(app.sourceRecord.source_id) ?? [];
     const sourceStatus = historicalMatch?.group.status ?? paymentMatch?.group.status ?? null;
     const sheetStatus = sourceStatus ? statusFromSheet(sourceStatus) : null;
-    const normalizedStatus = sheetStatus && sheetStatus !== "unknown" ? sheetStatus : statusFromGitHub(app);
+    const normalizedStatus = resolveCanonicalStatus(sheetStatus, statusFromGitHub(app));
     const requestedAmountUsd =
       app.requestedAmountUsd ??
       paymentMatch?.group.requestedAmountUsd ??
@@ -1991,3 +2006,9 @@ export async function runGrantReconciliation(): Promise<ReconciliationRunResult>
 
   return counts;
 }
+
+export const grantReconciliationTestHooks = {
+  resolveCanonicalStatus,
+  statusFromGitHub,
+  statusFromSheet
+};
