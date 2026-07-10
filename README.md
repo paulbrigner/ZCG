@@ -1,610 +1,410 @@
 # ZCG Grants Prototype
 
-A working proposal and prototype for re-architecting the Zcash Community Grants
-systems.
+An independent, working proposal for turning Zcash Community Grants (ZCG) from
+a collection of manually synchronized public tools into a structured grants
+operating system.
 
-This repository exists to make a practical case: Zcash Community Grants should
-move from a human-synchronized network of GitHub issues, Discourse forum posts,
-Google Sheets, public website links, Jotform intake, and private operational
-steps toward a purpose-built grants operating system.
+The prototype mirrors existing public records, preserves their provenance,
+reconciles them into canonical applications and grants, and exposes public and
+administrator views without asking ZCG to replace its current tools first.
 
-The goal is not to erase the public record or abruptly replace familiar tools.
-The goal is to preserve transparency while creating one structured operational
-model for applications, review, milestones, progress updates, payments,
-reporting, audit, and eventual public publishing.
-
-That makes the work both simpler and more complex than it may first appear. The
-simple part is the architectural destination: create one canonical grants model
-and publish the right public, private, and operational views from it. The
-complex part is earning the right to become that model by preserving history,
-respecting current community habits, reconciling imperfect source data, and
-making public/private boundaries explicit before any cutover.
-
-Prototype deployment: https://zcg.pgpz.org
-
-Useful public prototype routes:
-
+- [Live prototype](https://zcg.pgpz.org)
 - [Source mirror and reconciliation dashboard](https://zcg.pgpz.org/admin)
 - [Grounded grant knowledge search](https://zcg.pgpz.org/admin/knowledge)
-- [Health check](https://zcg.pgpz.org/api/health)
 - [Public grants API](https://zcg.pgpz.org/api/public/grants)
+- [Health check](https://zcg.pgpz.org/api/health)
 
-> Status: independent prototype and architecture proposal. This is not an
-> official ZCG production system unless and until the Zcash ecosystem and the
-> relevant operating stakeholders adopt it.
+> **Status:** independent prototype and architecture proposal. It is not an
+> official ZCG production system unless and until the relevant Zcash ecosystem
+> stakeholders adopt it.
 
-## Why This Exists
+## Current Implementation at a Glance
 
-The current ZCG process has grown around public, flexible, low-cost tools. That
-was a reasonable starting point. GitHub issues provide public application
-history. The Zcash Community Forum provides public discussion and progress
-updates. Google Sheets provide treasury and grant tracking. The public website
-routes applicants and community members to those systems.
+| Area | Current state |
+| --- | --- |
+| Source mirroring | GitHub issues and comments, two public ZCG Google Sheet tabs, linked Zcash Community Forum topics, and the Forum's Community Grants Updates category |
+| Evidence preservation | Checksum-tracked source records in PostgreSQL and optional aggregate JSON snapshots in private S3 |
+| Reconciliation | Canonical applications, funded-grant records, GitHub label normalization, source links, confidence scores, generated issues, and durable reviewer decisions |
+| Decision history | Meeting-minute topics parsed into decision sources and grant mentions with rationale, speaker notes, provenance, and review status |
+| Knowledge retrieval | PostgreSQL full-text search, pgvector embeddings, hybrid retrieval, and optional citation-grounded answer composition |
+| Product surfaces | Public read-only dashboard, application details, reconciliation workspace, knowledge search, user access management, and an allowlisted public API |
+| Access and audit | Better Auth email codes, application-owned roles and permissions, server-side authorization, and audit events |
+| Deployment | Next.js on AWS Amplify SSR, Aurora PostgreSQL through the RDS Data API, and CDK-managed workers, snapshots, secrets, logs, and optional alarms |
 
-The problem is that those tools do not share one grant object, one workflow
-model, one audit trail, or one permission boundary.
+Not yet implemented as first-class workflow data: milestones, progress updates,
+payment requests and disbursements, RFPs, KYC, agreements, attachments, an
+applicant portal, or controlled writeback to the current public systems.
 
-The real operating system is therefore not GitHub, Sheets, or Discourse. It is
-the human work required to keep them aligned.
+### Last-observed prototype corpus
 
-That creates predictable problems:
-
-- Status can mean a GitHub label, a Sheet row, a forum narrative, or private
-  FPF/ZCG operational state.
-- Milestones, payment requests, progress updates, and grant liabilities are
-  spread across tools with different data shapes.
-- Public and private data boundaries are conceptually mixed even when the data
-  itself lives in different places.
-- Applicants must navigate GitHub, forum posting, issue-form conventions, and
-  follow-up requirements.
-- Reporting depends on reconstructing workflow truth from public artifacts and
-  manually curated spreadsheet rows.
-- Historical continuity depends on links, labels, archived tabs, and human
-  convention rather than a durable model.
-
-The architectural smell is not that any one tool is bad. The smell is that each
-tool holds part of the truth.
-
-## Simple Thesis, Complex Migration
-
-The redesign argument is intentionally simple:
-
-- ZCG should have one durable grant object instead of separate partial records
-  scattered across GitHub, Sheets, Discourse, Jotform, and manual operations.
-- Existing public tools should become source systems, mirrors, archives, or
-  publishing surfaces rather than the only places where operational truth
-  exists.
-- Public transparency should improve because the system can publish structured
-  grant pages, exports, timelines, and source evidence from a coherent model.
-- Private operational work should become safer because KYC, agreements,
-  internal review, and payment-state records can live behind explicit
-  permissions and audit controls.
-
-The implementation is complex because the current process carries more than
-data. It carries history, community expectations, informal workflows, applicant
-habits, committee judgment, FPF operations, treasury context, and public trust.
-Those cannot be replaced by a clean schema alone.
-
-That is why this prototype takes a sync-first path. The first job is not to ask
-ZCG to abandon familiar tools. The first job is to prove that a new platform can
-read the existing corpus, preserve source evidence, reveal inconsistencies,
-reduce manual reconciliation, and generate better public views without breaking
-the transparency model that already matters to the community.
-
-## Current State
-
-The current ZCG system appears to involve at least these public and operational
-surfaces:
-
-- ZCG public website: public routing, program information, dashboard links, RFP
-  links, and grant process guidance.
-- GitHub issue-intake repository: grant applications submitted as issues, with
-  labels acting as workflow state.
-- Zcash Community Forum: required application threads, community review,
-  applicant communication, and progress updates.
-- Google Sheet: grant/milestone ledger, dashboards, payouts, distributions,
-  budgets, liquidity, inputs, and archives.
-- Jotform: RFP idea intake.
-- FPF/ZCG manual operations: eligibility, KYC, agreements, payment approvals,
-  committee coordination, and private records.
-
-![ZCG current-state operating model](docs/images/figma/zcg-current-state-operating-model.png)
-
-The diagram is intentionally busy. That is the point: the current system is a
-network of useful tools, but not a coherent grants platform.
-
-More detail is available in:
-
-- [Current-state discovery](docs/zcg-current-state-discovery.md)
-- [Refined current-state discovery](docs/zcg-current-state-discovery-refined.md)
-- [Architectural assessment](docs/zcg-architectural-assessment.md)
-- [Refined architectural assessment](docs/zcg-architectural-assessment-refined.md)
-
-## Target Direction
-
-The target architecture is a structured grants operating system that can import,
-reconcile, govern, and publish the grant lifecycle.
-
-![ZCG target grants operating system](docs/images/figma/zcg-target-grants-operating-system.png)
-
-The most important shift is:
-
-> Move from many tools each holding part of the truth to one structured workflow
-> system publishing appropriate views to many tools.
-
-The intended target system should include:
-
-- Applicant portal for guided submissions, drafts, milestones, budgets,
-  supporting documents, status timelines, progress updates, and payment
-  requests.
-- FPF/ZCG admin console for eligibility, community review, committee review,
-  decisions, KYC/agreement gates, milestones, payment review, and portfolio
-  operations.
-- Public transparency layer for grant pages, statuses, source links,
-  milestones, progress updates, public payment summaries, and exports.
-- Reporting and finance layer for commitments, liabilities, ZEC/USD valuation
-  snapshots, paid milestones, and historical reporting.
-- Source mirroring and reconciliation for GitHub, Sheets, Discourse, Jotform,
-  and later approved private operational records.
-- Append-only audit and explicit public/private projection boundaries.
-
-## Ethos
-
-This work is guided by a few operating principles.
-
-### Preserve Public Trust
-
-ZCG has a public legitimacy requirement. GitHub issues, forum discussions,
-public dashboards, and historical records should not disappear behind a private
-tool. A better system should preserve and improve transparency, not reduce it.
-
-### Migrate Before Replacing
-
-The safe path is sync-first. Mirror current systems, reconcile records into a
-canonical grants model, expose gaps, and only then introduce controlled
-writebacks or replacement workflows. A clean-room rewrite would lose too much
-context and create too much adoption risk.
-
-### Make Source Evidence First-Class
-
-Every imported record should keep its source ID, source URL, raw snapshot, and
-link to the canonical grant object. The system should be able to explain why it
-believes two records refer to the same grant.
-
-### Separate Public and Private Data
-
-Public transparency and private operations must be modeled deliberately. KYC,
-agreements, payment instructions, internal deliberation, and sensitive
-compliance data need stronger boundaries than public application text or forum
-updates.
-
-### Build Audit In From Phase 0
-
-Audit, authorization, and public projection rules are not afterthoughts. They
-are part of the core architecture because the system will eventually touch
-workflow decisions, status changes, private data boundaries, and payment-state
-records.
-
-### Improve Applicant Experience Without Losing Openness
-
-GitHub is powerful for technical contributors, but ZCG should be accessible to
-excellent applicants who do not live in GitHub. A purpose-built portal can guide
-people through the process while still publishing appropriate public records.
-
-### Be Honest About Uncertainty
-
-This prototype should surface reconciliation issues rather than hiding them.
-Unmatched Sheet rows, missing forum links, status conflicts, low-confidence
-matches, and stale state are not failures. They are exactly the kind of
-operational ambiguity a better system must expose.
-
-## What Has Been Built
-
-The current prototype now covers Phase 0 foundation work and meaningful Phase 1
-and Phase 2 slices: deployment packaging, authentication, source mirroring,
-canonical reconciliation, administrator access management, public read-only
-prototype browsing, and grounded grant knowledge retrieval.
-
-Current capabilities include:
-
-- Next.js 15 application with React 19 and TypeScript.
-- Node 24 local/container/runtime posture.
-- Better Auth email one-time-code authentication.
-- Server-side role and permission checks.
-- Dedicated admin user-access page for granting and revoking app-owned roles by
-  email.
-- Email-based role grants that can pre-authorize users before their first sign-in
-  and attach roles to their Better Auth principal after authentication.
-- Postgres data model for principals, roles, permissions, audit events, source
-  snapshots, source records, source links, sync runs, reconciliation issues,
-  canonical applications, grants, grant knowledge documents, and query logs.
-- AWS CDK infrastructure for portable deployment packaging.
-- AWS Amplify SSR deployment for `zcg.pgpz.org`.
-- RDS Data API backend connection for Amplify-hosted SSR routes.
-- Aurora PostgreSQL 16.13 with pgvector for semantic retrieval.
-- Source mirroring from:
-  - GitHub issues.
-  - GitHub issue comments, including follow-up comments that link forum posts
-    back to grant applications.
-  - Public Google Sheet CSV exports.
-  - Zcash Community Forum topic JSON for discovered forum links, preserving
-    public discussion/application text as source evidence.
-  - ZCG Community Grants Updates category topics, with meeting minutes captured
-    as first-class decision evidence.
-- Reconciliation engine that:
-  - normalizes GitHub application issues into canonical application records,
-  - links GitHub issue comments to their parent canonical application,
-  - groups Google Sheet grant rows by project,
-  - matches GitHub issues to Sheet projects by title confidence,
-  - creates canonical grants,
-  - attaches source evidence,
-  - surfaces reconciliation issues,
-  - extracts and associates Zcash Community Forum links already present in
-    mirrored issues, issue comments, and Sheet rows,
-  - parses ZCG meeting minutes into linked decision-history records with
-    outcomes, rationale, speaker notes, and source provenance.
-- Dashboard with:
-  - source record counts,
-  - canonical application and grant counts,
-  - reconciliation issue summary,
-  - matched, GitHub-only, Sheet-only, and needs-review filters,
-  - server-side search,
-  - pagination,
-  - application detail pages with source evidence, decision history, and
-    reconciliation issues.
-- Grounded grant knowledge retrieval at `/admin/knowledge`:
-  - canonical application summary documents,
-  - source-evidence documents from GitHub issues, GitHub comments, Sheets, and
-    mirrored Forum topic text,
-  - decision-minute documents from linked ZCG meeting notes,
-  - keyword retrieval through Postgres full-text search,
-  - semantic retrieval through `text-embedding-bge-m3` embeddings,
-  - hybrid retrieval that blends keyword and embedding rank,
-  - optional Venice-backed grounded answer composition with citations.
-- Public read-only prototype access for source browsing and keyword/evidence
-  search.
-- Administrator-only maintenance controls for rebuilding the knowledge index,
-  embedding the next batch, and managing user access.
-- Public grants API with allowlisted public projection.
-
-At the time of this README update on July 8, 2026, the live prototype has
-produced:
+These are reconciliation outputs, not authoritative ZCG production totals.
+They were observed on the live prototype on **July 10, 2026** after source
+syncs completed on July 9 and the decision-minute reconciliation was refreshed.
 
 | Metric | Count |
 | --- | ---: |
-| Total mirrored source records | 4,389 |
-| GitHub issue source records | 330 |
-| Google Sheet row source records | 1,428 |
-| Canonical application records | 624 |
-| Canonical grant records | 161 |
-| Forum links associated from mirrored sources | 1,057 |
-| Open generated reconciliation issues | 1 |
-| Grant knowledge documents | 3,153 |
-| Knowledge applications covered | 301 |
-| Embedded knowledge documents | 1,104 |
+| Mirrored source records | 4,336 |
+| Canonical applications | 624 |
+| Funded-status grant records | 164 |
+| Open reconciliation items | 31 |
+| Open warning items | 19 |
+| Grant knowledge documents | 6,052 |
+| Embedded knowledge documents | 5,557 |
 
-These numbers are prototype reconciliation outputs, not final ZCG production
-truth. They are useful because they show both the value and the messiness of the
-existing data model.
+## How ZCG Operates Today
 
-## Why This Is a Credible Next Step
+ZCG currently works across public routing, application intake, community
+discussion, financial tracking, and private/manual operations. No single tool
+owns the full grant lifecycle.
 
-This repository is not only a written proposal. It is already wired to real
-source systems and real deployment infrastructure.
+![ZCG current-state operating model](docs/images/figma/zcg-current-state-operating-model.png)
 
-The prototype demonstrates that it is possible to:
+The diagram is based on public-system discovery performed on June 28, 2026.
+The private/manual steps need validation with ZCG and Financial Privacy
+Foundation (FPF) system owners. The
+[editable Figma source](https://www.figma.com/design/R9cVXb7xXLK6b3mCWRBhDp)
+and [detailed discovery notes](docs/zcg-current-state-discovery-refined.md)
+record the evidence and open questions.
 
-- Import public ZCG source systems without disrupting them.
-- Preserve raw source evidence.
-- Build a canonical grant model incrementally.
-- Show cross-source match quality instead of pretending the data is clean.
-- Identify missing or mismatched source relationships.
-- Search historical grants through grounded evidence before the migration is
-  complete.
-- Keep public projection separate from admin workflows.
-- Deploy with repeatable AWS packaging rather than a one-off local demo.
+The documented public workflow is broadly:
 
-That is the right kind of proof for a project like this. ZCG should not approve
-a big-bang rewrite. It should approve a careful, evidence-backed migration path
-that earns trust by reconciling the real corpus first.
+1. The ZCG website routes an applicant to the GitHub grant issue form.
+2. The applicant cross-posts the application to the Zcash Community Forum.
+3. FPF performs eligibility review and coordinates revisions.
+4. The community reviews the application publicly before ZCG decides.
+5. FPF coordinates applicant notification, KYC, and the grant agreement.
+6. Forum updates gate milestone payouts, while payment and portfolio summaries
+   are maintained in the ZCG Google Sheet.
 
-## Proposed Project Path
+In parallel, GitHub labels and comments, Forum discussions, the Google Sheet,
+Jotform RFP intake, meeting minutes, and private operational records each hold
+part of the state. People are the integration layer that keeps those records
+aligned.
 
-### Phase 0 - Foundation
+## How Sources Map to Stored Data
 
-Status: substantially implemented in this prototype.
+The current prototype is deliberately read-only at the source boundary. It
+**mirrors** public evidence, **reconciles** related records, and only then
+publishes canonical and search-oriented views.
 
-- App scaffold.
-- Auth decision and Better Auth implementation.
-- Role/permission/audit model.
-- Deployment packaging.
-- Database migrations.
-- Health checks.
-- Portable AWS posture.
+```mermaid
+flowchart LR
+    subgraph currentSources ["Currently ingested"]
+        github["GitHub issues and comments"]
+        sheet["Two Google Sheet tabs"]
+        linkedForum["Linked Forum topics"]
+        forumUpdates["Forum updates category"]
+    end
 
-### Phase 1 - Source Mirroring
+    notConnected["Website, Jotform, private operations"]
+    syncWorker["Sync worker"]
+    reconcile["Grant reconciliation"]
+    minuteParser["Meeting-minute parser"]
+    knowledgeIndex["Knowledge indexing"]
+    reviewer["Reviewer decisions"]
 
-Status: started.
+    subgraph evidenceStore ["Evidence storage"]
+        snapshots[("S3 snapshots and source_snapshots")]
+        sourceRecords[("source_records")]
+        runRecords[("sync_runs and audit_events")]
+    end
 
-- Mirror GitHub issue records.
-- Mirror public Google Sheet rows.
-- Mirror public Zcash Community Forum topic text from discovered Forum links.
-- Store source records and source snapshots.
-- Track sync runs.
-- Preserve source URLs, IDs, checksums, and metadata.
-- Add Jotform mirroring next, subject to API/access decisions.
+    subgraph canonicalStore ["Canonical and review storage"]
+        applications[("grant_applications and grants")]
+        applicationLabels[("grant_application_github_labels")]
+        sourceLinks[("source_links")]
+        reconciliationIssues[("reconciliation_issues")]
+        manualDecisions[("reconciliation decisions")]
+        decisionHistory[("decision sources and mentions")]
+    end
 
-### Phase 2 - Reconciliation Console
+    subgraph retrievalStore ["Retrieval storage"]
+        knowledgeDocs[("grant_knowledge_documents")]
+        knowledgeActivity[("queries and answer jobs")]
+    end
 
-Status: started and usable as a public read-only prototype.
+    github --> syncWorker
+    sheet --> syncWorker
+    github -->|"Discovers URLs"| linkedForum
+    sheet -->|"Discovers URLs"| linkedForum
+    linkedForum --> syncWorker
+    forumUpdates --> syncWorker
+    notConnected -.->|"No connector"| syncWorker
 
-- Canonical application and grant model.
-- GitHub-to-Sheet matching.
-- Forum link association and public Forum topic-text mirroring from existing
-  source payloads.
-- Dashboard filters, search, pagination, and application detail pages.
-- Reconciliation issue generation.
-- Grounded grant knowledge index built from canonical applications and source
-  evidence.
-- Keyword, semantic, and hybrid retrieval over historical grant material.
+    syncWorker --> snapshots
+    syncWorker --> sourceRecords
+    syncWorker --> runRecords
 
-Next work:
+    sourceRecords --> reconcile
+    sourceRecords --> minuteParser
+    reviewer --> manualDecisions
+    manualDecisions --> reconcile
+    reconcile --> applications
+    reconcile --> applicationLabels
+    reconcile --> sourceLinks
+    reconcile --> reconciliationIssues
+    reconcile --> minuteParser
+    minuteParser --> decisionHistory
+    minuteParser --> sourceLinks
+    minuteParser --> reconciliationIssues
 
-- Add first-class Discourse topic/post mirror.
-- Build richer milestone and payment extraction.
-- Add manual reconciliation workflow for resolving unmatched records.
-- Add status normalization review UI.
-- Add application/grant timeline.
-- Improve role-specific retrieval workflows for ZCG, FPF operations, and
-  reviewers.
+    applications --> knowledgeIndex
+    applicationLabels --> knowledgeIndex
+    sourceLinks --> knowledgeIndex
+    decisionHistory --> knowledgeIndex
+    knowledgeIndex --> knowledgeDocs
+    knowledgeDocs --> knowledgeActivity
+```
 
-### Phase 3 - Public Transparency Prototype
+The dotted line means there is **no implemented connector** for the website,
+Jotform, or private FPF/ZCG operations. They are shown so the absence is
+explicit rather than silently treated as complete coverage.
 
-Partially started through the public read-only dashboard, grant detail pages, and
-public grants API. Still planned as a dedicated public transparency surface.
+### Source-to-table mapping
 
-- Public grant directory.
-- Public grant detail pages.
-- Public status timeline.
-- Source-linked milestones, progress updates, and payment summaries.
-- CSV/JSON exports.
+| Source or input | Mirrored storage | Canonical or derived storage |
+| --- | --- | --- |
+| GitHub issues | `source_records` as `github_issue` | `grant_applications`; normalized `grant_application_github_labels`; `source_links`; possible `grants` and `reconciliation_issues` |
+| GitHub comments | `source_records` as `github_issue_comment` | Parent-application evidence; discovered Forum URLs can produce linked Forum records |
+| ZCG Google Sheet | `google_sheet_tab` and `google_sheet_row` records for the configured All Grants Tracking and ZCG Grants/milestone-detail tabs | Historical applications, funded-status grants, source links, and reconciliation issues |
+| Forum topics discovered in GitHub or Sheet data | `source_records` as `forum_link`, including topic metadata, posts, plain text, and rendered post HTML | Primary-thread or supporting-reference `source_links`; knowledge documents |
+| Forum Community Grants Updates category | `forum_meeting_minutes` or `forum_update_topic` source records | Meeting minutes become `grant_decision_sources`, `grant_decision_mentions`, decision links, and review issues; generic update topics currently remain raw evidence |
+| Reviewer judgments | Reconciliation UI/API or portable JSON import into `reconciliation_decisions` | Link/unlink decisions, application relationships, and issue resolutions are replayed after generated reconciliation; field-override decisions are persisted but not yet applied |
+| Canonical, linked-source, and accepted decision evidence | Derived from the rows above | `grant_knowledge_documents` with full-text vectors and optional embeddings; `grant_knowledge_queries` and `grant_knowledge_answer_jobs` |
+| Website, Jotform, KYC/agreement files, and payment/custody systems | Not ingested | No current tables or connectors |
 
-### Phase 4 - Applicant and Operations Workflow
+Important boundaries:
 
-Planned after source confidence is established.
+- The operational Google Sheet has 24 documented tabs; only two are mirrored by
+  default.
+- A `grant_application` represents a proposal broadly. A `grant` is created only
+  for applications normalized to `approved`, `active`, or `completed`.
+- Milestone and payment detail is still source evidence and coarse summary data,
+  not normalized milestone or payment objects.
+- Forum topic mirroring defaults to at most 20 posts per topic.
+- S3 snapshots are optional. When no snapshot bucket is configured, raw payloads
+  still live in PostgreSQL `source_records`.
 
-- Applicant portal.
-- Draft application workflow.
-- Guided milestone and budget builder.
-- Progress update submission.
-- Payment request submission.
-- Committee/FPF review queues.
-- Controlled writeback previews to public systems.
+## Product Surfaces
 
-### Phase 5 - Cutover Planning
+| Route | Purpose | Access |
+| --- | --- | --- |
+| `/admin` | Source telemetry, canonical applications, filters, and evidence links | Authenticated roles, or public read-only mode |
+| `/admin/grants/:id` | Application details, labels, sources, decisions, and reconciliation issues | Authenticated roles, or public read-only mode |
+| `/admin/reconciliations` | Review and persist ambiguous source-to-application decisions | Public read-only mode; persistence requires reconciliation write access |
+| `/admin/knowledge` | Keyword, semantic, hybrid, and grounded evidence search | Public keyword/evidence search; richer modes require permissions |
+| `/admin/users` | Email and domain role grants | Administrator |
+| `/api/public/grants` | Allowlisted public grant projection, currently capped at 100 rows | Public |
+| `/api/health` and `/api/health/db` | Application and database health | Public deployment checks |
 
-Planned only after stakeholder approval.
+`PUBLIC_PROTOTYPE_READONLY=true` exposes selected server-rendered dashboard,
+detail, reconciliation, and keyword-search views without enabling semantic
+search, AI answers, user management, indexing, embedding, synchronization, or
+writes.
 
-- Decide which system becomes authoritative for which object.
-- Define public mirror policy for GitHub/forum.
-- Define Sheet export policy.
-- Define rollback and archive strategy.
-- Migrate operational ownership with explicit controls.
+## Runtime Architecture
 
-## Architecture Overview
+- **Web:** Next.js 15, React 19, and TypeScript. The live web tier runs on AWS
+  Amplify SSR and reaches private Aurora through an IAM compute role and the RDS
+  Data API.
+- **Database:** Aurora PostgreSQL 16.13 with pgvector. Local development can use
+  PostgreSQL directly through `pg`; serverless routes and knowledge workers can
+  use the Data API.
+- **Source workers:** Lambda or local workers fetch public GitHub, Google Sheet,
+  and Forum data, store optional snapshots in S3, and write source evidence to
+  PostgreSQL.
+- **Knowledge workers:** deployed index, embedding, and asynchronous answer
+  workers use the Data API. Embeddings and answer composition use a configurable
+  OpenAI-compatible endpoint.
+- **Authentication:** Better Auth sends email one-time codes through SES in
+  deployed environments and logs them to the server console locally when SES is
+  unset.
+- **Scheduling:** the embedding schedule can be enabled in CDK. The six-hour
+  source-sync rule is defined but disabled by default, so source refreshes are
+  currently operator-triggered.
 
-The prototype separates three layers:
-
-1. Raw source evidence: snapshots and records from existing systems.
-2. Source mirror tables: source-specific records with source IDs, URLs,
-   timestamps, checksums, and metadata.
-3. Canonical grants model: normalized applications, grants, source links,
-   reconciliation issues, and future workflow objects.
-4. Knowledge retrieval layer: grounded documents, Postgres full-text search,
-   pgvector embeddings, query logs, and citation-bearing answer composition.
-
-Key local areas:
+### Repository map
 
 | Path | Purpose |
 | --- | --- |
-| `app/` | Next.js application routes and UI |
-| `app/admin/` | Source dashboard, grant detail pages, knowledge search, and user access UI |
-| `app/api/` | Health, auth, admin, sync, and public API routes |
-| `lib/source-mirroring/` | GitHub and Google Sheet mirror collectors |
-| `lib/reconciliation/` | Canonical grant reconciliation engine |
-| `lib/knowledge/` | Grant knowledge indexing, keyword/semantic retrieval, and answer composition |
-| `lib/admin/` | Dashboard and admin data access |
-| `lib/auth.ts` | Better Auth configuration |
-| `lib/authorization.ts` | Server-side permission enforcement |
-| `scripts/index-knowledge.ts` | Rebuild the grant knowledge document index |
-| `scripts/embed-knowledge.ts` | Embed unembedded grant knowledge documents |
-| `migrations/` | Database schema migrations |
-| `workers/` | Sync worker and migration runner |
-| `infra/` | AWS CDK stack |
-| `docs/` | Discovery, assessment, deployment, and prototype planning docs |
-
-## Public and Private Boundaries
-
-This repo is public, but it should never contain secrets or private operational
-data.
-
-Current rules:
-
-- `.env.example` contains placeholders only.
-- `.env` and `.env.*` are ignored except `.env.example`.
-- `cdk.context.json` is ignored because it can include account-specific context.
-- `PUBLIC_PROTOTYPE_READONLY=true` can temporarily expose the server-rendered
-  reconciliation dashboard, application detail pages, and keyword grant
-  knowledge search as read-only prototype views while keeping Better Auth and
-  protected admin APIs in place.
-- User access is managed in app-owned Postgres tables, not inside Better Auth
-  itself. Better Auth establishes identity; ZCG roles and permissions determine
-  application access.
-- User access management lives on `/admin/users` and requires
-  `role:assignment:manage`.
-- Exact-email grants and domain grants are durable access records. The prototype
-  seeds `zcashcommunitygrants.org` as a `committee` domain grant so matching
-  email addresses receive committee workflow access after sign-in.
-- Rebuilding grant knowledge documents and embedding new batches requires the
-  Administrator role and `knowledge:index`.
-- In deployed environments, the rebuild button enqueues the knowledge index
-  worker with `ZCG_KNOWLEDGE_INDEX_WORKER_FUNCTION_NAME` instead of holding the
-  browser request open for the full rebuild.
-- A scheduled backend worker periodically embeds stale or missing grant
-  knowledge documents so semantic retrieval can catch up without repeated
-  manual clicks.
-- Semantic and hybrid retrieval require `knowledge:semantic`; AI grounded answer
-  composition requires `knowledge:compose`.
-- The public prototype can use keyword/evidence retrieval, but it cannot run
-  semantic, hybrid, AI compose, user-management, indexing, embedding, sync, or
-  write operations.
-- Private KYC, agreements, payment instructions, treasury custody operations,
-  and internal deliberation are out of scope for public commits.
-- Public APIs should be generated from explicit allowlisted projections.
-- Authenticated admin APIs and write routes must enforce server-side
-  permissions.
+| `app/` | Next.js pages, layouts, and route handlers |
+| `app/admin/` | Dashboard, grant details, reconciliation, knowledge, and user access UI |
+| `app/api/` | Health, auth, administration, synchronization, and public API routes |
+| `lib/source-mirroring/` | GitHub, Google Sheet, and Forum collectors plus source storage |
+| `lib/reconciliation/` | Canonical grant reconciliation, durable reviewer decisions, and meeting-minute parsing |
+| `lib/knowledge/` | Knowledge documents, retrieval, embeddings, answer jobs, and composition |
+| `lib/admin/` | Dashboard and user-management data access |
+| `lib/auth.ts` and `lib/authorization.ts` | Authentication and server-side permission enforcement |
+| `workers/` | Sync, migration, knowledge index, embedding, and answer workers |
+| `migrations/` | Better Auth, authorization, source, canonical, decision, and retrieval schema |
+| `infra/` | AWS CDK backend stack |
+| `docs/` | Discovery, architecture, migration, reconciliation, and deployment notes |
 
 ## Local Development
 
-Requirements:
+### Requirements
 
-- Node 24.x. Local tooling currently pins `24.18.0`.
+- Node.js 24.x; repository tooling and containers currently pin `24.18.0`.
 - npm 11.
-- PostgreSQL for local database work, or RDS Data API configuration for the
-  deployed environment.
-- A Venice API key or compatible OpenAI-style endpoint only if using semantic
-  retrieval or grounded AI answer composition.
+- PostgreSQL 16 with the `pgvector` extension available.
 
-Setup:
+An optional local database using Docker:
+
+```bash
+docker run --name zcg-postgres \
+  -e POSTGRES_USER=zcg \
+  -e POSTGRES_PASSWORD=zcg \
+  -e POSTGRES_DB=zcg \
+  -p 5432:5432 \
+  -v zcg-postgres:/var/lib/postgresql/data \
+  -d pgvector/pgvector:pg16
+```
+
+### Setup
 
 ```bash
 npm ci
 cp .env.example .env
+```
+
+Before continuing, set a strong `BETTER_AUTH_SECRET` in `.env`. To receive the
+Administrator role on first sign-in, also set `BOOTSTRAP_ADMIN_EMAILS` to your
+email address. The default `DATABASE_URL` matches the optional Docker database
+above.
+
+Standalone scripts and workers read process environment variables directly;
+they do not load `.env` themselves. Export the file before running migrations or
+workers:
+
+```bash
+set -a
+source .env
+set +a
 npm run db:migrate
-npm run db:seed
 npm run dev
 ```
 
-Useful commands:
+Open `http://localhost:3000/sign-in`. With `SES_FROM_EMAIL` unset, the one-time
+sign-in code appears in the development-server console.
+
+`npm run db:seed` is a legacy/manual seed path and requires `SEED_ADMIN_EMAIL`.
+For a normal Better Auth sign-in, prefer `BOOTSTRAP_ADMIN_EMAILS` as described
+above.
+
+### Refresh the local corpus
+
+The normal operator sequence is mirror, reconcile, rebuild the knowledge index,
+and optionally embed documents:
+
+Reliable full-corpus GitHub comment mirroring requires `GITHUB_TOKEN` or
+`ZCG_GITHUB_TOKEN` with read-only Issues access; anonymous API rate limits are
+usually too low for this workflow.
 
 ```bash
-npm run check
-npm run worker:sync
-npm run worker:knowledge-index
-npm run reconcile:grants
+npm run worker:sync -- --reconcile
 npm run knowledge:index
 npm run knowledge:embed
+```
+
+The embedding command requires a configured embedding API key. Keyword search
+works without embeddings or AI answer composition.
+
+Useful maintenance commands:
+
+```bash
+npm run reconcile:grants
+npm --silent run reconciliation:export > data/reconciliation-decisions.json
+npm run reconciliation:import -- ./data/reconciliation-decisions.json
+npm run worker:knowledge-index
 npm run worker:knowledge-embed
 npm run infra:synth
 ```
 
-The deployed prototype uses AWS-managed secrets and environment variables. Do
-not copy production secrets into local files or commits.
+Run the repository checks with:
 
-Knowledge retrieval environment variables are documented in `.env.example`.
-Important knobs include `ZCG_KNOWLEDGE_AI_API_KEY`,
-`ZCG_KNOWLEDGE_AI_MODEL`, `ZCG_KNOWLEDGE_SEMANTIC_ENABLED`,
-`ZCG_KNOWLEDGE_EMBEDDING_MODEL`, `ZCG_KNOWLEDGE_EMBEDDING_DIMS`,
-`ZCG_KNOWLEDGE_EMBEDDING_BATCH_SIZE`, and
-`ZCG_KNOWLEDGE_EMBEDDING_TIMEOUT_MS`.
-The scheduled embedding worker reads the provider key from Secrets Manager via
-`knowledgeEmbeddingApiSecretId`; the deployment scripts default that to
-`zcg/prototype/venice-api-key`. The worker embeds up to
-`knowledgeEmbeddingMaxDocuments` documents per run, defaulting to 200 every 60
-minutes, using small batches by default so large Forum-derived documents stay
-within provider latency and context limits.
-GitHub source mirroring also supports `ZCG_GITHUB_COMMENT_MAX_PAGES` for the
-per-issue comment pagination pass. The deployed sync worker reads a GitHub
-fine-grained PAT from AWS Secrets Manager when `githubTokenSecretId` is passed
-to CDK. The default deployment scripts use `zcg/prototype/github-mirror-token`,
-which can be overridden with `GITHUB_TOKEN_SECRET_ID`.
+```bash
+npm run check
+```
 
-Forum source mirroring reads public Discourse topic JSON for Forum URLs
-discovered in GitHub and Sheet source payloads, and it also crawls the ZCG
-Community Grants Updates category for meeting minutes. `ZCG_FORUM_MAX_TOPICS`
-bounds the number of topics fetched per sync run, `ZCG_FORUM_MAX_POSTS_PER_TOPIC`
-bounds post expansion per topic, and `ZCG_FORUM_MAX_CATEGORY_PAGES` bounds
-category pagination so the sync worker stays inside its Lambda timeout.
-`ZCG_FORUM_FETCH_DELAY_MS` paces topic requests to avoid Forum rate limits.
-`ZCG_FORUM_TOPIC_URLS` can be used for an explicit comma-separated topic list
-when invoking the `forum-topics` source directly.
+`check` runs TypeScript checking, ESLint, and a production build. The repository
+does not currently include an automated test suite.
 
-## Deployment Posture
+## Deployment
 
-The repository includes both:
+The current public deployment combines:
 
-- `amplify.yml` for the public web tier on AWS Amplify SSR.
-- CDK infrastructure for backend packaging, workers, database, snapshots,
-  secrets, roles, logs, and alarms.
+- `amplify.yml` for the Amplify SSR web tier at `zcg.pgpz.org`;
+- private Aurora PostgreSQL with the RDS Data API;
+- an encrypted, versioned, non-public S3 snapshot bucket;
+- Lambda workers for migration, synchronization, indexing, embedding, and
+  grounded answer jobs;
+- Secrets Manager, IAM roles, CloudWatch logs, and optional alarms; and
+- an optional ECS/Fargate and load-balancer web path for production-style
+  deployments.
 
-The current deployment target is `zcg.pgpz.org`, with Amplify handling the
-web-tier deployment and custom domain. Backend state is private and accessed
-from Amplify SSR through the CDK-created compute role, RDS Data API, and
-Secrets Manager rather than a public database endpoint.
+Two CDK cost modes are available: `prototype-low-cost`, which omits the optional
+ECS/ALB web tier and permits Aurora scale-to-zero, and `production-ready`, which
+restores production-style web compute, minimum database capacity, monitoring,
+and alarms.
 
-Current backend posture:
+See [AWS account portability](docs/deployment/aws-account-portability.md),
+[Amplify target](docs/deployment/amplify-zcg-target.md),
+[backend connection](docs/deployment/backend-connection-spike.md), and
+[deployment cost modes](docs/deployment/cost-modes.md).
 
-- Aurora PostgreSQL 16.13.
-- Aurora Serverless v2 with the cost-mode settings documented under
-  `docs/deployment/`.
-- RDS Data API enabled for Amplify-hosted SSR routes.
-- pgvector enabled for `text-embedding-bge-m3` semantic retrieval.
-- GitHub push-triggered Amplify deployment on the `main` branch.
-- Deployment package designed so the repo can be moved into another AWS account
-  with low friction once account, domain, bootstrap-admin, and secret values are
-  supplied.
+## Design and Data Principles
 
-See:
+- **Preserve public trust.** Existing public records should remain available and
+  traceable during any migration.
+- **Migrate before replacing.** Read-only mirroring and explicit reconciliation
+  should precede writeback or cutover.
+- **Make provenance first-class.** Store source IDs, URLs, checksums, payloads,
+  confidence, relationship roles, and reviewer rationale.
+- **Surface uncertainty.** Unmatched rows, ambiguous titles, stale state, and
+  missing links belong in a review queue rather than being hidden.
+- **Separate public and private data.** KYC, agreements, payment instructions,
+  custody, and internal deliberation require explicit private boundaries.
+- **Publish from allowlists.** Public APIs and views should expose deliberate
+  projections rather than raw operational rows.
 
-- [AWS account portability](docs/deployment/aws-account-portability.md)
-- [Amplify target](docs/deployment/amplify-zcg-target.md)
-- [Backend connection spike](docs/deployment/backend-connection-spike.md)
-- [Deployment cost modes](docs/deployment/cost-modes.md)
+This public repository must not contain production secrets or private
+operational data. `.env.example` contains placeholders only; local environment
+files and account-specific CDK context are ignored.
 
-## Documentation Map
+## Proposed Next Work
 
-- [Current-state discovery](docs/zcg-current-state-discovery.md)
-- [Current-state discovery, refined](docs/zcg-current-state-discovery-refined.md)
-- [Architectural assessment](docs/zcg-architectural-assessment.md)
-- [Architectural assessment, refined](docs/zcg-architectural-assessment-refined.md)
+1. Normalize milestones, progress updates, payment requests, disbursements, and
+   status timelines from the mirrored corpus.
+2. Add reviewer-assisted status normalization and richer decision-link review.
+3. Decide whether and how to mirror Jotform, website content, and approved
+   private operational records.
+4. Build dedicated public grant pages and exports from explicit projections.
+5. Add applicant and FPF/ZCG workflow surfaces only after source confidence and
+   privacy boundaries are agreed.
+6. Define incremental sync, writeback, cutover, archive, and rollback policies
+   with system owners.
+
+The [architectural assessment](docs/zcg-architectural-assessment-refined.md)
+contains the fuller target-system argument and proposed architecture.
+
+## Documentation
+
+- [Current-state discovery](docs/zcg-current-state-discovery-refined.md)
+- [Architectural assessment](docs/zcg-architectural-assessment-refined.md)
 - [Prototype development plan](docs/zcg-prototype-development-plan.md)
 - [Phase 0 build checklist](docs/phase-0-build-checklist.md)
 - [Phase 1 source mirroring](docs/phase-1-source-mirroring.md)
-- [AWS account portability](docs/deployment/aws-account-portability.md)
-- [Amplify target](docs/deployment/amplify-zcg-target.md)
-- [Backend connection spike](docs/deployment/backend-connection-spike.md)
+- [Manual reconciliation decisions](docs/manual-reconciliation-decisions.md)
 - [Deployment cost modes](docs/deployment/cost-modes.md)
+- [AWS account portability](docs/deployment/aws-account-portability.md)
 
-## Stewardship Case
-
-This work should be evaluated as an ecosystem infrastructure proposal, not just
-as an app build.
-
-The Zcash ecosystem should want ZCG operations to be:
-
-- easier for applicants,
-- clearer for reviewers,
-- safer for private operational data,
-- more auditable for the community,
-- less dependent on manual synchronization,
-- better at preserving historical context,
-- and more capable of producing public transparency artifacts on demand.
-
-The right mandate is not "replace everything immediately." The right mandate is
-"lead a careful transition from scattered public tools into a coherent grants
-operating system, while preserving public trust and historical continuity."
-
-This repository is intended to make that transition concrete enough to discuss,
-test, fund, critique, and improve.
-
-## License and Governance
+## License, Governance, and Security
 
 A license has not yet been selected. Before external contribution or production
-adoption, the project should choose an open-source license, define maintainers,
-and document contribution, security disclosure, and governance expectations.
+adoption, the project should choose an open-source license, identify
+maintainers, and document contribution, governance, and security-disclosure
+processes.
 
-## Security
-
-If you discover a security issue in this prototype, do not open a public issue
-with exploit details. Contact the repository owner privately until a formal
-security policy is added.
+If you discover a security issue, do not open a public issue containing exploit
+details. Contact the repository owner privately until a formal security policy
+is added.
