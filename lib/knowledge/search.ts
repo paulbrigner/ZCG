@@ -101,6 +101,55 @@ const maxExpandedSourceDocuments = 20;
 const maxInitialEvidenceDocuments = 8;
 const searchResultContentMaxChars = 6000;
 const clientResultContentMaxChars = 1200;
+const maxLooseKeywordTerms = 28;
+
+const looseKeywordStopWords = new Set([
+  "about",
+  "after",
+  "again",
+  "against",
+  "also",
+  "appear",
+  "application",
+  "author",
+  "because",
+  "before",
+  "brief",
+  "community",
+  "consideration",
+  "contributing",
+  "could",
+  "does",
+  "factor",
+  "forum",
+  "github",
+  "grant",
+  "grants",
+  "have",
+  "into",
+  "list",
+  "owner",
+  "project",
+  "provide",
+  "record",
+  "related",
+  "significant",
+  "status",
+  "that",
+  "their",
+  "there",
+  "this",
+  "track",
+  "working",
+  "would",
+  "zcash"
+]);
+
+type LooseKeywordTerm = {
+  term: string;
+  weight: number;
+  ordinal: number;
+};
 
 function boundedContentSql(tableAlias: string) {
   return `left(${tableAlias}.content, ${searchResultContentMaxChars})`;
@@ -124,6 +173,79 @@ function parseJsonRecord(value: string | null): Record<string, unknown> {
 function numberValue(value: unknown) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function normalizedLooseTerm(value: string) {
+  return value.trim().replace(/\s+/g, " ");
+}
+
+function isDistinctiveToken(value: string) {
+  return value.length >= 4 && !looseKeywordStopWords.has(value);
+}
+
+function looseKeywordTerms(searchText: string): LooseKeywordTerm[] {
+  const terms = new Map<string, LooseKeywordTerm>();
+
+  function addTerm(term: string, weight: number) {
+    const normalized = normalizedLooseTerm(term);
+    const key = normalized.toLowerCase();
+
+    if (!key || key.length < 3) {
+      return;
+    }
+
+    const existing = terms.get(key);
+
+    if (existing) {
+      existing.weight = Math.max(existing.weight, weight);
+      return;
+    }
+
+    terms.set(key, {
+      term: normalized,
+      weight,
+      ordinal: terms.size
+    });
+  }
+
+  for (const match of searchText.matchAll(/["“]([^"”]{3,})["”]/g)) {
+    addTerm(match[1], 5);
+  }
+
+  const tokens = [...searchText.toLowerCase().matchAll(/[a-z0-9][a-z0-9_-]{2,}/g)]
+    .map((match) => match[0].replace(/^[_-]+|[_-]+$/g, ""))
+    .filter(isDistinctiveToken);
+
+  for (const token of tokens) {
+    addTerm(token, token.length >= 10 ? 2.5 : 1);
+  }
+
+  for (let index = 0; index < tokens.length - 1; index += 1) {
+    addTerm(`${tokens[index]} ${tokens[index + 1]}`, 2);
+  }
+
+  return [...terms.values()]
+    .sort((left, right) => right.weight - left.weight || left.ordinal - right.ordinal)
+    .slice(0, maxLooseKeywordTerms)
+    .map((term, ordinal) => ({ ...term, ordinal }));
+}
+
+function mergeSearchResults(resultSets: GrantKnowledgeSearchResult[][], limit: number) {
+  const merged = new Map<string, GrantKnowledgeSearchResult>();
+
+  for (const results of resultSets) {
+    for (const result of results) {
+      const existing = merged.get(result.id);
+
+      if (!existing || result.rank > existing.rank) {
+        merged.set(result.id, result);
+      }
+    }
+  }
+
+  return [...merged.values()]
+    .sort((left, right) => right.rank - left.rank)
+    .slice(0, limit);
 }
 
 export function normalizeKnowledgeQuery(value: unknown) {
@@ -228,9 +350,24 @@ function extractiveAnswer(searchText: string, results: GrantKnowledgeSearchResul
   ].join("\n");
 }
 
-function aiFallbackAnswer(searchText: string, results: GrantKnowledgeSearchResult[]) {
+function aiFallbackReason(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  const normalized = message.toLowerCase();
+
+  if (normalized.includes("spend limit exceeded") || normalized.includes("402")) {
+    return "The AI provider rejected the request because the configured API key has reached its spend limit. Showing grounded evidence instead.";
+  }
+
+  if (error instanceof DOMException && error.name === "AbortError") {
+    return "The AI grounded answer did not complete within the configured provider timeout. Showing grounded evidence instead.";
+  }
+
+  return "The AI grounded answer could not be generated. Showing grounded evidence instead.";
+}
+
+function aiFallbackAnswer(searchText: string, results: GrantKnowledgeSearchResult[], error: unknown) {
   return [
-    "The AI grounded answer did not complete within the live request budget. Showing grounded evidence instead.",
+    aiFallbackReason(error),
     "",
     extractiveAnswer(searchText, results)
   ].join("\n");
@@ -313,7 +450,7 @@ async function searchKeywordGrantKnowledge({
   limit: number;
 }) {
   const likePattern = `%${searchText}%`;
-  const result = await query<GrantKnowledgeSearchRow>(
+  const strictResult = await query<GrantKnowledgeSearchRow>(
     `with search_query as (
        select websearch_to_tsquery('english', $1) as query
      )
@@ -344,6 +481,78 @@ async function searchKeywordGrantKnowledge({
       order by rank desc, d.indexed_at desc
       limit $3`,
     [searchText, likePattern, limit]
+  );
+  const strictResults = strictResult.rows.map((row) => mapSearchRow(row, searchText));
+
+  if (strictResults.length >= limit) {
+    return strictResults;
+  }
+
+  const looseResults = await searchLooseKeywordGrantKnowledge({
+    searchText,
+    limit: limit * 2
+  });
+
+  return mergeSearchResults([strictResults, looseResults], limit);
+}
+
+async function searchLooseKeywordGrantKnowledge({
+  searchText,
+  limit
+}: {
+  searchText: string;
+  limit: number;
+}) {
+  const terms = looseKeywordTerms(searchText);
+
+  if (!terms.length) {
+    return [];
+  }
+
+  const result = await query<GrantKnowledgeSearchRow>(
+    `with terms as (
+       select term,
+              weight,
+              ordinal
+         from jsonb_to_recordset($1::jsonb) as x(
+           term text,
+           weight numeric,
+           ordinal integer
+         )
+     ),
+     matched as (
+       select d.id,
+              sum(
+                case when d.title ilike '%' || terms.term || '%' then 9 * terms.weight else 0 end +
+                case when d.applicant_name ilike '%' || terms.term || '%' then 7 * terms.weight else 0 end +
+                case when d.source_id ilike '%' || terms.term || '%' then 4 * terms.weight else 0 end +
+                case when d.content ilike '%' || terms.term || '%' then 2 * terms.weight else 0 end
+              ) as rank,
+              min(terms.ordinal) as first_term_order
+         from grant_knowledge_documents d
+         join terms on d.title ilike '%' || terms.term || '%'
+                   or d.applicant_name ilike '%' || terms.term || '%'
+                   or d.source_id ilike '%' || terms.term || '%'
+                   or d.content ilike '%' || terms.term || '%'
+        group by d.id
+     )
+     select d.id::text,
+            d.application_id::text,
+            d.document_kind,
+            d.title,
+            d.applicant_name,
+            d.source_kind,
+            d.source_id,
+            d.source_url,
+            d.normalized_status,
+            d.requested_amount_usd::text,
+            matched.rank,
+            ${boundedContentSql("d")} as content
+       from matched
+       join grant_knowledge_documents d on d.id = matched.id
+      order by matched.rank desc, matched.first_term_order, d.indexed_at desc
+      limit $2`,
+    [JSON.stringify(terms), limit]
   );
 
   return result.rows.map((row) => mapSearchRow(row, searchText));
@@ -748,7 +957,7 @@ export async function runGrantKnowledgeSearch({
         answerStatus = "generated";
       } catch (error) {
         console.error("Grant knowledge answer generation failed", error);
-        answerText = aiFallbackAnswer(searchText, answerEvidenceResults);
+        answerText = aiFallbackAnswer(searchText, answerEvidenceResults, error);
         answerStatus = "fallback";
       }
     } else {
