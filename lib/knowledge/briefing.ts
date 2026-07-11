@@ -11,6 +11,7 @@ export const COMMITTEE_BRIEFING_TEMPLATE_KEY = "zcg_committee_briefing";
 export const COMMITTEE_BRIEFING_TEMPLATE_VERSION = "2";
 export const CUSTOM_GRANT_ANALYSIS_TEMPLATE_KEY = "zcg_custom_grounded_analysis";
 export const CUSTOM_GRANT_ANALYSIS_TEMPLATE_VERSION = "1";
+export const TEMPORARY_GRANT_ANALYSIS_CITATION_LIMIT = 24;
 
 const positiveComparisonStatuses = new Set(["approved", "active", "completed"]);
 const negativeComparisonStatuses = new Set(["declined", "filtered", "cancelled"]);
@@ -427,6 +428,25 @@ export function assembleGrantBriefingEvidence(
     fingerprint: computeGrantBriefingEvidenceFingerprint(manifest),
     warnings: input.warnings ?? []
   };
+}
+
+/**
+ * Saved reports persist evidence in separate rows and omit it from the job result payload.
+ * Temporary answers return cited evidence inline, so they retain the smaller response cap.
+ */
+export function grantAnalysisResponseCitationLimit({
+  evidenceCount,
+  savedReport
+}: {
+  evidenceCount: number;
+  savedReport: boolean;
+}) {
+  const availableEvidence = Number.isFinite(evidenceCount)
+    ? Math.max(0, Math.floor(evidenceCount))
+    : 0;
+  return savedReport
+    ? availableEvidence
+    : Math.min(availableEvidence, TEMPORARY_GRANT_ANALYSIS_CITATION_LIMIT);
 }
 
 function briefingSimilarityQuery(

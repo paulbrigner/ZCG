@@ -13,6 +13,7 @@ import {
   CUSTOM_GRANT_ANALYSIS_TEMPLATE_VERSION,
   buildGrantAnalysisPrompt,
   buildGrantBriefingEvidence,
+  grantAnalysisResponseCitationLimit,
   missingCommitteeBriefingSections,
   validateEvidenceCitations
 } from "../lib/knowledge/briefing";
@@ -173,8 +174,15 @@ async function runApplicationAnalysis(job: NonNullable<Awaited<ReturnType<typeof
     throw new Error(`Grounded analysis failed citation validation.${detail}`);
   }
 
-  if (citationValidation.citedNumbers.length > 24) {
-    throw new Error("Grounded analysis cited more than the 24-source response safety limit.");
+  const citationLimit = grantAnalysisResponseCitationLimit({
+    evidenceCount: evidencePack.evidence.length,
+    savedReport: Boolean(job.request.reportId)
+  });
+
+  if (citationValidation.citedNumbers.length > citationLimit) {
+    throw new Error(
+      `Grounded analysis cited more than the ${citationLimit}-source response safety limit.`
+    );
   }
 
   if (purpose === "committee_briefing") {

@@ -3,12 +3,14 @@ import test from "node:test";
 import {
   COMMITTEE_BRIEFING_TEMPLATE_KEY,
   COMMITTEE_BRIEFING_TEMPLATE_VERSION,
+  TEMPORARY_GRANT_ANALYSIS_CITATION_LIMIT,
   assembleGrantBriefingEvidence,
   briefingTestHooks,
   buildGrantBriefingEvidence,
   buildGrantAnalysisPrompt,
   computeGrantBriefingEvidenceFingerprint,
   extractEvidenceCitationNumbers,
+  grantAnalysisResponseCitationLimit,
   missingCommitteeBriefingSections,
   normalizeCustomGrantAnalysisPrompt,
   normalizeGrantParticipantName,
@@ -157,6 +159,31 @@ test("orders current, related, team, and comparison evidence and de-duplicates d
   );
   assert.equal(pack.results.length, 5);
   assert.equal(pack.manifest.documents[0].documentKey, current.documentKey);
+});
+
+test("uses the full evidence count for saved reports and the bounded count for temporary answers", () => {
+  assert.equal(TEMPORARY_GRANT_ANALYSIS_CITATION_LIMIT, 24);
+  assert.equal(grantAnalysisResponseCitationLimit({ evidenceCount: 45, savedReport: true }), 45);
+  assert.equal(grantAnalysisResponseCitationLimit({ evidenceCount: 45, savedReport: false }), 24);
+  assert.equal(grantAnalysisResponseCitationLimit({ evidenceCount: 12, savedReport: false }), 12);
+
+  const answer = Array.from({ length: 45 }, (_, index) => `Supported fact [${index + 1}].`).join("\n");
+  const validation = validateEvidenceCitations(answer, 45);
+
+  assert.equal(validation.valid, true);
+  assert.equal(validation.citedNumbers.length, 45);
+  assert.ok(
+    validation.citedNumbers.length <= grantAnalysisResponseCitationLimit({
+      evidenceCount: 45,
+      savedReport: true
+    })
+  );
+  assert.ok(
+    validation.citedNumbers.length > grantAnalysisResponseCitationLimit({
+      evidenceCount: 45,
+      savedReport: false
+    })
+  );
 });
 
 test("evidence fingerprints are stable for relationship ordering and change with source content", () => {
