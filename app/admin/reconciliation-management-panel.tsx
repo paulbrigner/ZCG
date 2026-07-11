@@ -136,6 +136,19 @@ export function ReconciliationManagementPanel({ initialWorkspace, canWrite }: Re
     () => workspace.openIssues.find((issue) => issue.id === form.reconciliationIssueId),
     [form.reconciliationIssueId, workspace.openIssues]
   );
+  const issueGroups = useMemo(() => {
+    const groups = new Map<string, ReconciliationIssueReviewRow[]>();
+
+    for (const issue of workspace.openIssues) {
+      const issues = groups.get(issue.issueType) ?? [];
+      issues.push(issue);
+      groups.set(issue.issueType, issues);
+    }
+
+    return [...groups.entries()].sort(([left], [right]) =>
+      titleText(left).localeCompare(titleText(right))
+    );
+  }, [workspace.openIssues]);
 
   function updateForm(patch: Partial<DecisionForm>) {
     setForm((current) => ({ ...current, ...patch }));
@@ -382,48 +395,59 @@ export function ReconciliationManagementPanel({ initialWorkspace, canWrite }: Re
             <MetricHelp align="left" body={helpText.openIssues} label="Open reconciliation issues" />
           </h2>
         </div>
-        <div className="reconciliation-list">
-          {workspace.openIssues.length ? (
-            workspace.openIssues.map((issue) => (
-              <article className="reconciliation-card" key={issue.id}>
-                <div className="reconciliation-card-header">
-                  <div>
-                    <span className={`badge ${issue.severity}`}>{issue.severity}</span>
-                    <span className={`badge ${issue.status}`}>{issue.status}</span>
-                  </div>
-                  <span className="subtle">{dateText(issue.createdAt)}</span>
+        <div className="reconciliation-category-list">
+          {issueGroups.length ? (
+            issueGroups.map(([issueType, issues]) => (
+              <details className="reconciliation-category" key={issueType}>
+                <summary>
+                  <span>{titleText(issueType)}</span>
+                  <span className="reconciliation-category-count">
+                    {numberText(issues.length)} {issues.length === 1 ? "issue" : "issues"}
+                  </span>
+                </summary>
+                <div className="reconciliation-list reconciliation-category-body">
+                  {issues.map((issue) => (
+                    <article className="reconciliation-card" key={issue.id}>
+                      <div className="reconciliation-card-header">
+                        <div>
+                          <span className={`badge ${issue.severity}`}>{issue.severity}</span>
+                          <span className={`badge ${issue.status}`}>{issue.status}</span>
+                        </div>
+                        <span className="subtle">{dateText(issue.createdAt)}</span>
+                      </div>
+                      <h3>{issue.summary}</h3>
+                      <dl className="reconciliation-facts">
+                        <div>
+                          <dt>Source</dt>
+                          <dd>{issue.sourceKind && issue.sourceId ? `${issue.sourceKind}:${issue.sourceId}` : "-"}</dd>
+                        </div>
+                        <div>
+                          <dt>Canonical</dt>
+                          <dd>{issue.canonicalKey ?? "-"}</dd>
+                        </div>
+                        <div>
+                          <dt>Application</dt>
+                          <dd>{issue.canonicalTitle ?? "-"}</dd>
+                        </div>
+                      </dl>
+                      <details>
+                        <summary>Issue details</summary>
+                        <pre className="json-block">{JSON.stringify(parseDetails(issue.details), null, 2)}</pre>
+                      </details>
+                      {canWrite ? (
+                        <div className="form-actions">
+                          <button className="ghost-button" disabled={pending} onClick={() => prepareSourceLink(issue)} type="button">
+                            Use for source link
+                          </button>
+                          <button className="ghost-button" disabled={pending} onClick={() => prepareDismissal(issue)} type="button">
+                            Dismiss
+                          </button>
+                        </div>
+                      ) : null}
+                    </article>
+                  ))}
                 </div>
-                <h3>{issue.summary}</h3>
-                <p className="subtle">{titleText(issue.issueType)}</p>
-                <dl className="reconciliation-facts">
-                  <div>
-                    <dt>Source</dt>
-                    <dd>{issue.sourceKind && issue.sourceId ? `${issue.sourceKind}:${issue.sourceId}` : "-"}</dd>
-                  </div>
-                  <div>
-                    <dt>Canonical</dt>
-                    <dd>{issue.canonicalKey ?? "-"}</dd>
-                  </div>
-                  <div>
-                    <dt>Application</dt>
-                    <dd>{issue.canonicalTitle ?? "-"}</dd>
-                  </div>
-                </dl>
-                <details>
-                  <summary>Issue details</summary>
-                  <pre className="json-block">{JSON.stringify(parseDetails(issue.details), null, 2)}</pre>
-                </details>
-                {canWrite ? (
-                  <div className="form-actions">
-                    <button className="ghost-button" disabled={pending} onClick={() => prepareSourceLink(issue)} type="button">
-                      Use for source link
-                    </button>
-                    <button className="ghost-button" disabled={pending} onClick={() => prepareDismissal(issue)} type="button">
-                      Dismiss
-                    </button>
-                  </div>
-                ) : null}
-              </article>
+              </details>
             ))
           ) : (
             <p>No open reconciliation issues.</p>
@@ -432,14 +456,15 @@ export function ReconciliationManagementPanel({ initialWorkspace, canWrite }: Re
       </section>
 
       <section className="admin-grid two-column">
-        <article className="panel">
-          <div className="section-heading">
-            <h2>
-              Manual decisions
+        <details className="panel reconciliation-section-disclosure">
+          <summary>
+            <span className="reconciliation-disclosure-title">
+              <span>Manual decisions</span>
               <MetricHelp align="left" body={helpText.decisions} label="Manual decisions" />
-            </h2>
-          </div>
-          <div className="reconciliation-list compact">
+            </span>
+            <span className="reconciliation-category-count">{numberText(workspace.decisions.length)}</span>
+          </summary>
+          <div className="reconciliation-list compact reconciliation-section-body">
             {workspace.decisions.length ? (
               workspace.decisions.map((decision) => (
                 <article className="reconciliation-card compact" key={decision.id}>
@@ -481,16 +506,17 @@ export function ReconciliationManagementPanel({ initialWorkspace, canWrite }: Re
               <p>No manual decisions recorded yet.</p>
             )}
           </div>
-        </article>
+        </details>
 
-        <article className="panel">
-          <div className="section-heading">
-            <h2>
-              Application relationships
+        <details className="panel reconciliation-section-disclosure">
+          <summary>
+            <span className="reconciliation-disclosure-title">
+              <span>Application relationships</span>
               <MetricHelp align="left" body={helpText.relationships} label="Application relationships" />
-            </h2>
-          </div>
-          <div className="reconciliation-list compact">
+            </span>
+            <span className="reconciliation-category-count">{numberText(workspace.relationships.length)}</span>
+          </summary>
+          <div className="reconciliation-list compact reconciliation-section-body">
             {workspace.relationships.length ? (
               workspace.relationships.map((relationship) => (
                 <article className="reconciliation-card compact" key={relationship.relationshipKey}>
@@ -521,7 +547,7 @@ export function ReconciliationManagementPanel({ initialWorkspace, canWrite }: Re
               <p>No application relationships recorded yet.</p>
             )}
           </div>
-        </article>
+        </details>
       </section>
     </div>
   );

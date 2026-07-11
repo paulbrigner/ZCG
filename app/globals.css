@@ -1076,6 +1076,7 @@ button:disabled {
 .reconciliation-list {
   display: grid;
   gap: 16px;
+  min-width: 0;
 }
 
 .reconciliation-list.compact {
@@ -1098,6 +1099,9 @@ button:disabled {
   border-radius: 8px;
   display: grid;
   gap: 12px;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
   padding: 14px;
 }
 
@@ -1121,12 +1125,101 @@ button:disabled {
   display: flex;
   justify-content: space-between;
   gap: 10px;
+  min-width: 0;
 }
 
 .reconciliation-card-header > div {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+
+.reconciliation-card-header > .subtle {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
+.reconciliation-category-list {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.reconciliation-category,
+.reconciliation-section-disclosure {
+  min-width: 0;
+}
+
+.reconciliation-category > summary,
+.reconciliation-section-disclosure > summary {
+  align-items: center;
+  cursor: pointer;
+  display: flex;
+  gap: 12px;
+  list-style: none;
+  min-width: 0;
+}
+
+.reconciliation-category > summary::-webkit-details-marker,
+.reconciliation-section-disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+
+.reconciliation-category > summary {
+  background: #f8fafc;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: #273244;
+  font-weight: 800;
+  padding: 13px 14px;
+}
+
+.reconciliation-category > summary::before,
+.reconciliation-section-disclosure > summary::before {
+  color: var(--blue);
+  content: "+";
+  flex: 0 0 auto;
+  font-weight: 900;
+}
+
+.reconciliation-category[open] > summary::before,
+.reconciliation-section-disclosure[open] > summary::before {
+  content: "−";
+}
+
+.reconciliation-category-count {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.reconciliation-category-body {
+  margin-top: 12px;
+}
+
+.reconciliation-section-disclosure {
+  padding: 0;
+}
+
+.reconciliation-section-disclosure > summary {
+  padding: 20px;
+}
+
+.reconciliation-disclosure-title {
+  align-items: center;
+  display: inline-flex;
+  font-size: 24px;
+  font-weight: 800;
+  gap: 7px;
+  min-width: 0;
+}
+
+.reconciliation-section-body {
+  border-top: 1px solid var(--line);
+  padding: 16px 20px 20px;
 }
 
 .reconciliation-facts {
