@@ -1,6 +1,9 @@
 "use client";
 
-import { useEffect, useId, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type FormEvent } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import { linkEvidenceCitationsInMarkdown } from "../../../../lib/knowledge/presentation";
 import styles from "./grant-analysis-panel.module.css";
 
 export type GrantAnalysisReportType = "committee_briefing" | "custom";
@@ -73,8 +76,27 @@ type TemporaryAnalysis = {
 };
 
 type ActiveOperation = "briefing" | "custom" | "refresh" | null;
+type ReportActionFeedback = { kind: "success" | "error"; message: string } | null;
 
 const defaultPollMs = 1500;
+
+function fallbackCopyText(text: string) {
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.append(textarea);
+  textarea.select();
+
+  try {
+    if (!document.execCommand("copy")) {
+      throw new Error("The browser did not copy the briefing.");
+    }
+  } finally {
+    textarea.remove();
+  }
+}
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -368,63 +390,56 @@ function evidenceFromSearchResult(value: unknown, fallbackPrefix: string) {
   return normalizeEvidence(items, fallbackPrefix);
 }
 
-function citationNumbersFromToken(token: string) {
-  const citations: number[] = [];
+function BriefingMarkdown({
+  answerText,
+  evidence,
+  reportId,
+  compact = false
+}: {
+  answerText: string;
+  evidence: readonly GrantAnalysisEvidence[];
+  reportId: string;
+  compact?: boolean;
+}) {
+  const anchorPrefix = `grant-analysis-evidence-${reportId}`;
+  const linkedMarkdown = linkEvidenceCitationsInMarkdown(answerText, evidence, anchorPrefix);
 
-  for (const group of token.slice(1, -1).split(",")) {
-    const range = group.trim().match(/^(\d+)\s*[–—-]\s*(\d+)$/);
-
-    if (range) {
-      const start = Number(range[1]);
-      const end = Number(range[2]);
-      const first = Math.min(start, end);
-      const count = Math.min(Math.abs(end - start) + 1, 100);
-
-      for (let offset = 0; offset < count; offset += 1) {
-        citations.push(first + offset);
-      }
-    } else if (/^\d+$/.test(group.trim())) {
-      citations.push(Number(group.trim()));
-    }
-  }
-
-  return [...new Set(citations)];
-}
-
-function citedAnswer(answerText: string, evidence: readonly GrantAnalysisEvidence[], anchorPrefix: string) {
-  const validCitations = new Set(evidence.map((item) => item.citationNumber));
-  const parts = answerText.split(/(\[[\d\s,–—-]+\])/g);
-
-  return parts.map((part, index): ReactNode => {
-    const citations = /^\[[\d\s,–—-]+\]$/.test(part) ? citationNumbersFromToken(part) : [];
-
-    if (!citations.length) {
-      return part;
-    }
-
-    return citations.every((citationNumber) => validCitations.has(citationNumber)) ? (
-      <span key={`citation-${index}`}>
-        [
-        {citations.map((citationNumber, citationIndex) => (
-          <span key={`${citationNumber}-${citationIndex}`}>
-            {citationIndex ? ", " : ""}
+  return (
+    <div
+      className={`${styles.answer} ${compact ? styles.compactAnswer : ""}`}
+      id={`grant-analysis-answer-${reportId}`}
+    >
+      <ReactMarkdown
+        components={{
+          a: ({ children, href }) => href?.startsWith(`#${anchorPrefix}-`) ? (
             <a
-              aria-label={`Jump to evidence ${citationNumber}`}
+              aria-label={`Jump to ${children} in the evidence snapshot`}
               className={styles.inlineCitation}
-              href={`#${anchorPrefix}-${citationNumber}`}
+              href={href}
             >
-              {citationNumber}
+              {children}
             </a>
-          </span>
-        ))}
-        ]
-      </span>
-    ) : (
-      <span className={styles.unresolvedCitation} key={`unresolved-${index}`} title="Citation is not present in this report snapshot">
-        {part}
-      </span>
-    );
-  });
+          ) : <span className={styles.unlinkedGeneratedLink}>{children}</span>,
+          h1: ({ children }) => <h4>{children}</h4>,
+          h2: ({ children }) => <h4>{children}</h4>,
+          h3: ({ children }) => <h5>{children}</h5>,
+          h4: ({ children }) => <h5>{children}</h5>,
+          h5: ({ children }) => <h5>{children}</h5>,
+          h6: ({ children }) => <h5>{children}</h5>,
+          img: () => null,
+          table: ({ children }) => (
+            <div className={styles.tableScroller}>
+              <table>{children}</table>
+            </div>
+          )
+        }}
+        remarkPlugins={[remarkGfm]}
+        skipHtml
+      >
+        {linkedMarkdown}
+      </ReactMarkdown>
+    </div>
+  );
 }
 
 function EvidenceList({
@@ -519,7 +534,6 @@ function ReportMetadata({ report }: { report: GrantAnalysisReport }) {
 
 function ReportBody({ report, compact = false }: { report: GrantAnalysisReport; compact?: boolean }) {
   const evidence = report.evidence ?? [];
-  const anchorPrefix = `grant-analysis-evidence-${report.id}`;
 
   if (report.status === "failed") {
     return <p className={styles.errorBox}>{report.errorMessage ?? "This analysis did not complete."}</p>;
@@ -537,11 +551,14 @@ function ReportBody({ report, compact = false }: { report: GrantAnalysisReport; 
           <p>{report.customPrompt}</p>
         </details>
       ) : null}
-      <div className={`${styles.answer} ${compact ? styles.compactAnswer : ""}`}>
-        {report.answerText
-          ? citedAnswer(report.answerText, evidence, anchorPrefix)
-          : "The report completed without answer text."}
-      </div>
+      {report.answerText ? (
+        <BriefingMarkdown
+          answerText={report.answerText}
+          compact={compact}
+          evidence={evidence}
+          reportId={report.id}
+        />
+      ) : <p className={styles.muted}>The report completed without answer text.</p>}
       <details className={styles.evidenceDisclosure}>
         <summary>
           Evidence and citations <span>({evidence.length})</span>
@@ -590,10 +607,15 @@ export function GrantAnalysisPanel({
   const [customTitle, setCustomTitle] = useState("");
   const [visibility, setVisibility] = useState<GrantAnalysisVisibility>("private");
   const [retrievalMode, setRetrievalMode] = useState<GrantAnalysisRetrievalMode>("hybrid");
+  const [reportActionFeedback, setReportActionFeedback] = useState<ReportActionFeedback>(null);
+  const panelRef = useRef<HTMLDetailsElement>(null);
+  const printCleanupRef = useRef<(() => void) | null>(null);
   const runTokenRef = useRef(0);
 
   useEffect(() => () => {
     runTokenRef.current += 1;
+    printCleanupRef.current?.();
+    delete document.body.dataset.grantBriefingPrint;
   }, []);
 
   const orderedReports = useMemo(() => sortReports(reports), [reports]);
@@ -616,6 +638,106 @@ export function GrantAnalysisPanel({
 
   function mergeReport(report: GrantAnalysisReport) {
     setReports((current) => sortReports([report, ...current.filter((item) => item.id !== report.id)]));
+  }
+
+  async function copyBriefing(report: GrantAnalysisReport) {
+    setReportActionFeedback(null);
+    const answer = document.getElementById(`grant-analysis-answer-${report.id}`);
+
+    if (!answer) {
+      setReportActionFeedback({ kind: "error", message: "The rendered briefing is not available to copy." });
+      return;
+    }
+
+    const plainText = [report.title, answer.innerText.trim()].filter(Boolean).join("\n\n");
+
+    try {
+      if (navigator.clipboard?.write && typeof ClipboardItem !== "undefined") {
+        const presentation = document.createElement("article");
+        const title = document.createElement("h1");
+        title.textContent = report.title;
+        presentation.append(title, answer.cloneNode(true));
+
+        try {
+          await navigator.clipboard.write([
+            new ClipboardItem({
+              "text/html": new Blob([presentation.innerHTML], { type: "text/html" }),
+              "text/plain": new Blob([plainText], { type: "text/plain" })
+            })
+          ]);
+        } catch {
+          if (!navigator.clipboard.writeText) {
+            throw new Error("Formatted clipboard access was denied.");
+          }
+
+          await navigator.clipboard.writeText(plainText);
+        }
+      } else if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(plainText);
+      } else {
+        fallbackCopyText(plainText);
+      }
+
+      setReportActionFeedback({ kind: "success", message: "Committee briefing copied to the clipboard." });
+    } catch {
+      try {
+        fallbackCopyText(plainText);
+        setReportActionFeedback({ kind: "success", message: "Committee briefing copied to the clipboard." });
+      } catch {
+        setReportActionFeedback({
+          kind: "error",
+          message: "The browser blocked clipboard access. Select the briefing text and copy it manually."
+        });
+      }
+    }
+  }
+
+  function printBriefing(report: GrantAnalysisReport) {
+    printCleanupRef.current?.();
+    const panel = panelRef.current;
+
+    if (!panel) {
+      setReportActionFeedback({ kind: "error", message: "The briefing could not be prepared for printing." });
+      return;
+    }
+
+    setReportActionFeedback(null);
+    const wasOpen = panel.open;
+    const previousTitle = document.title;
+    let cleanedUp = false;
+
+    const cleanup = () => {
+      if (cleanedUp) {
+        return;
+      }
+
+      cleanedUp = true;
+      delete document.body.dataset.grantBriefingPrint;
+      document.title = previousTitle;
+      panel.open = wasOpen;
+      window.removeEventListener("afterprint", cleanup);
+      printCleanupRef.current = null;
+
+      window.clearTimeout(fallbackTimer);
+    };
+
+    panel.open = true;
+    document.body.dataset.grantBriefingPrint = "true";
+    document.title = `${report.title} — Committee briefing`;
+    window.addEventListener("afterprint", cleanup);
+    const fallbackTimer = window.setTimeout(cleanup, 60_000);
+    printCleanupRef.current = cleanup;
+
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        try {
+          window.print();
+        } catch {
+          cleanup();
+          setReportActionFeedback({ kind: "error", message: "The browser could not open the print dialog." });
+        }
+      });
+    });
   }
 
   async function refreshReports(silent = false) {
@@ -851,10 +973,20 @@ export function GrantAnalysisPanel({
 
   if (!canRead) {
     return (
-      <section aria-labelledby="grant-analysis-heading" className={styles.panel}>
-        <h2 id="grant-analysis-heading">Committee decision support</h2>
-        <p className={styles.muted}>Your account does not have access to saved grant analyses.</p>
-      </section>
+      <details aria-labelledby="grant-analysis-heading" className={styles.panel}>
+        <summary className={styles.panelSummary}>
+          <span className={styles.summaryText}>
+            <span className={styles.eyebrow}>AI-grounded decision support</span>
+            <span aria-level={2} className={styles.panelTitle} id="grant-analysis-heading" role="heading">
+              Committee briefing
+            </span>
+          </span>
+          <span className={styles.summaryStatus}>Restricted</span>
+        </summary>
+        <div className={styles.panelBody}>
+          <p className={styles.muted}>Your account does not have access to saved grant analyses.</p>
+        </div>
+      </details>
     );
   }
 
@@ -863,25 +995,43 @@ export function GrantAnalysisPanel({
   const latestFreshness = latestBriefing ? freshness(latestBriefing) : null;
 
   return (
-    <section aria-labelledby="grant-analysis-heading" className={styles.panel}>
-      <div className={styles.sectionHeader}>
-        <div>
-          <p className={styles.eyebrow}>AI-grounded decision support</p>
-          <h2 id="grant-analysis-heading">Committee briefing</h2>
-          <p className={styles.intro}>
+    <details
+      aria-labelledby="grant-analysis-heading"
+      className={styles.panel}
+      data-grant-analysis-panel
+      ref={panelRef}
+    >
+      <summary className={styles.panelSummary}>
+        <span className={styles.summaryText}>
+          <span className={styles.eyebrow}>AI-grounded decision support</span>
+          <span aria-level={2} className={styles.panelTitle} id="grant-analysis-heading" role="heading">
+            Committee briefing
+          </span>
+          <span className={styles.summaryDescription}>
             Review an evidence-grounded briefing or ask a custom question about this application. AI output supports
             committee review; it does not recommend or make a funding decision.
-          </p>
+          </span>
+        </span>
+        <span className={styles.summaryStatus}>
+          {pendingBriefing
+            ? "In progress"
+            : latestBriefing
+              ? `Version ${latestBriefing.version ?? "—"} · ${humanize(latestFreshness)} evidence`
+              : "Not generated"}
+        </span>
+      </summary>
+
+      <div className={styles.panelBody}>
+        <div className={styles.sectionActions}>
+          <button
+            className={styles.secondaryButton}
+            disabled={busy}
+            onClick={() => void refreshReports()}
+            type="button"
+          >
+            {activeOperation === "refresh" ? "Refreshing…" : "Refresh reports"}
+          </button>
         </div>
-        <button
-          className={styles.secondaryButton}
-          disabled={busy}
-          onClick={() => void refreshReports()}
-          type="button"
-        >
-          {activeOperation === "refresh" ? "Refreshing…" : "Refresh reports"}
-        </button>
-      </div>
 
       {pendingBriefing ? (
         <p className={styles.progressBox} role="status">
@@ -902,25 +1052,52 @@ export function GrantAnalysisPanel({
               </div>
               <h3>{latestBriefing.title}</h3>
             </div>
-            {canGenerate ? (
+            <div className={styles.reportActions}>
               <button
-                className={styles.primaryButton}
-                disabled={briefingBusy}
-                onClick={() => void generateAnalysis({
-                  reportType: "committee_briefing",
-                  requestedVisibility: "shared",
-                  requestedRetrievalMode: "hybrid"
-                })}
+                aria-label={`Copy ${latestBriefing.title}`}
+                className={styles.secondaryButton}
+                onClick={() => void copyBriefing(latestBriefing)}
                 type="button"
               >
-                {pendingBriefing
-                  ? "Briefing in progress…"
-                  : activeOperation === "briefing"
-                    ? "Regenerating…"
-                    : "Regenerate with current evidence"}
+                Copy briefing
               </button>
-            ) : null}
+              <button
+                aria-label={`Print ${latestBriefing.title}`}
+                className={styles.secondaryButton}
+                onClick={() => printBriefing(latestBriefing)}
+                type="button"
+              >
+                Print briefing
+              </button>
+              {canGenerate ? (
+                <button
+                  className={styles.primaryButton}
+                  disabled={briefingBusy}
+                  onClick={() => void generateAnalysis({
+                    reportType: "committee_briefing",
+                    requestedVisibility: "shared",
+                    requestedRetrievalMode: "hybrid"
+                  })}
+                  type="button"
+                >
+                  {pendingBriefing
+                    ? "Briefing in progress…"
+                    : activeOperation === "briefing"
+                      ? "Regenerating…"
+                      : "Regenerate with current evidence"}
+                </button>
+              ) : null}
+            </div>
           </div>
+          {reportActionFeedback ? (
+            <p
+              aria-live="polite"
+              className={`${styles.actionFeedback} ${reportActionFeedback.kind === "error" ? styles.actionFeedbackError : ""}`}
+              role={reportActionFeedback.kind === "error" ? "alert" : "status"}
+            >
+              {reportActionFeedback.message}
+            </p>
+          ) : null}
           {latestFreshness === "stale" ? (
             <p className={styles.staleNotice}>
               Indexed evidence or the briefing template has changed since this version was generated. Regeneration
@@ -1104,13 +1281,11 @@ export function GrantAnalysisPanel({
             <summary>Prompt used</summary>
             <p>{temporaryAnalysis.prompt}</p>
           </details>
-          <div className={styles.answer}>
-            {citedAnswer(
-              temporaryAnalysis.answerText,
-              temporaryAnalysis.evidence,
-              `grant-analysis-evidence-${temporaryAnalysis.id}`
-            )}
-          </div>
+          <BriefingMarkdown
+            answerText={temporaryAnalysis.answerText}
+            evidence={temporaryAnalysis.evidence}
+            reportId={temporaryAnalysis.id}
+          />
           <details className={styles.evidenceDisclosure}>
             <summary>
               Evidence and citations <span>({temporaryAnalysis.evidence.length})</span>
@@ -1130,6 +1305,7 @@ export function GrantAnalysisPanel({
           </div>
         </details>
       ) : null}
-    </section>
+      </div>
+    </details>
   );
 }

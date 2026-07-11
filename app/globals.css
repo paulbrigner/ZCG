@@ -1576,3 +1576,14 @@ button:disabled {
     flex-wrap: wrap;
   }
 }
+
+@media print {
+  body[data-grant-briefing-print="true"] {
+    background: #ffffff !important;
+  }
+
+  body[data-grant-briefing-print="true"] .topbar,
+  body[data-grant-briefing-print="true"] .admin-shell > :not([data-grant-analysis-panel]) {
+    display: none !important;
+  }
+}
