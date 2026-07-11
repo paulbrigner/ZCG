@@ -373,7 +373,7 @@ export default async function AdminPage({
       <section className="admin-header">
         <div>
           <p className="eyebrow">Dashboard</p>
-          <h1>Source mirror and reconciliation dashboard</h1>
+          <h1>ZCG Grants Dashboard</h1>
           <p className="lead">
             {isPublicPrototypePrincipal(principal) ? (
               <>

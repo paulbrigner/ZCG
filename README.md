@@ -9,7 +9,7 @@ reconciles them into canonical applications and grants, and exposes public and
 administrator views without asking ZCG to replace its current tools first.
 
 - [Live prototype](https://zcg.pgpz.org)
-- [Source mirror and reconciliation dashboard](https://zcg.pgpz.org/admin)
+- [ZCG Grants Dashboard](https://zcg.pgpz.org/admin)
 - [Grounded grant knowledge search](https://zcg.pgpz.org/admin/knowledge)
 - [Public grants API](https://zcg.pgpz.org/api/public/grants)
 - [Health check](https://zcg.pgpz.org/api/health)
