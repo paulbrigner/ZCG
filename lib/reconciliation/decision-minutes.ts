@@ -804,6 +804,30 @@ async function fetchSourceLinkIndex() {
   return result.rows;
 }
 
+async function fetchManualSourceLinkIndex() {
+  const result = await query<SourceLinkIndexRow>(
+    `select ga.id::text as application_id,
+            ga.canonical_key,
+            ga.title,
+            ga.normalized_status,
+            ''::text as source_record_id,
+            d.source_kind,
+            d.source_id,
+            d.source_id as source_url,
+            d.confidence::text,
+            'manual_source_decision'::text as relationship_role
+       from reconciliation_decisions d
+       join grant_applications ga on ga.canonical_key = d.canonical_key
+      where d.status = 'active'
+        and d.decision_type = 'link_source'
+        and d.canonical_type = 'grant_application'
+        and d.source_kind is not null
+        and d.source_id is not null`
+  );
+
+  return result.rows;
+}
+
 function discourseTopicId(value: string | null | undefined) {
   const normalized = normalizeUrl(value);
 
@@ -840,6 +864,10 @@ function discourseTopicId(value: string | null | undefined) {
 }
 
 function sourceLinkRolePriority(row: SourceLinkIndexRow) {
+  if (row.relationship_role === "manual_source_decision") {
+    return 200;
+  }
+
   if (row.relationship_role === "primary_forum_thread" || row.source_kind === "grant_application") {
     return 100;
   }
@@ -1283,8 +1311,14 @@ async function createIssue(input: {
 export async function reconcileGrantDecisionMinutes(): Promise<GrantDecisionMinutesResult> {
   const records = await fetchDecisionMinuteRecords();
   const applications = await fetchApplications();
-  const sourceLinks = await fetchSourceLinkIndex();
-  const directIndexes = buildDirectMatchIndexes(sourceLinks, applications);
+  const [sourceLinks, manualSourceLinks] = await Promise.all([
+    fetchSourceLinkIndex(),
+    fetchManualSourceLinkIndex()
+  ]);
+  const directIndexes = buildDirectMatchIndexes(
+    [...sourceLinks, ...manualSourceLinks],
+    applications
+  );
   const applicationsById = new Map(applications.map((application) => [application.id, application]));
   const decisionMinuteTopicIds = new Set(
     records

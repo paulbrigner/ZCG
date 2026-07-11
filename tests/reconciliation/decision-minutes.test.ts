@@ -286,3 +286,71 @@ test("does not choose arbitrarily between two primary applications", () => {
   assert.equal(matched.applicationId, null);
   assert.equal(matched.matchMethod, "ambiguous_direct_source_url");
 });
+
+test("reviewed source decisions override inferred links without a mirrored source record", () => {
+  const url = "https://forum.zcashcommunity.com/t/proposal/45599";
+  const applications = [
+    {
+      id: "app-reviewed",
+      canonical_key: "sheet:reviewed",
+      title: "Reviewed application",
+      normalized_status: "declined",
+      github_issue_number: null,
+      github_issue_url: null
+    },
+    {
+      id: "app-inferred",
+      canonical_key: "sheet:inferred",
+      title: "Inferred application",
+      normalized_status: "approved",
+      github_issue_number: null,
+      github_issue_url: null
+    }
+  ];
+  const rows = [
+    {
+      application_id: "app-inferred",
+      canonical_key: "sheet:inferred",
+      title: "Inferred application",
+      normalized_status: "approved",
+      source_record_id: "source-inferred",
+      source_kind: "forum_link",
+      source_id: url,
+      source_url: url,
+      confidence: "1",
+      relationship_role: "primary_forum_thread"
+    },
+    {
+      application_id: "app-reviewed",
+      canonical_key: "sheet:reviewed",
+      title: "Reviewed application",
+      normalized_status: "declined",
+      source_record_id: "",
+      source_kind: "forum_link",
+      source_id: url,
+      source_url: url,
+      confidence: "1",
+      relationship_role: "manual_source_decision"
+    }
+  ];
+  const indexes = hooks.buildDirectMatchIndexes(rows, applications);
+  const matched = hooks.matchMention(
+    {
+      mentionKey: "mention",
+      linkedSourceUrl: url,
+      candidateTitle: "Proposal",
+      normalizedDecision: "declined",
+      decisionText: "Declined",
+      rationaleText: null,
+      speakerNotes: [],
+      contentHash: "hash",
+      metadata: {}
+    },
+    indexes,
+    applications
+  );
+
+  assert.equal(matched.applicationId, "app-reviewed");
+  assert.equal(matched.matchMethod, "direct_source_url");
+  assert.equal(matched.linkedSourceRecordId, null);
+});
