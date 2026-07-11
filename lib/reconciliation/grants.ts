@@ -148,6 +148,36 @@ type PlannedApplication = {
   issues: Omit<ReconciliationIssueInput, "canonicalId">[];
 };
 
+const reviewedForumApplications = [
+  {
+    canonicalKey: "forum:48629",
+    title: "ZExchange: A Decentralized P2P Marketplace for Zcash",
+    applicantName: "Emmanuel",
+    requestedAmountUsd: 17497,
+    forumUrl: "https://forum.zcashcommunity.com/t/zexchange-a-decentralized-p2p-marketplace-for-zcash-non-custodial-and-no-kyc/48629",
+    decisionDate: "2024-09-02",
+    decisionSummary: "ZCG rejected the proposal after forum review."
+  },
+  {
+    canonicalKey: "forum:47914",
+    title: "Zcash Integration for Mobazha",
+    applicantName: "fengzie / Mobazha",
+    requestedAmountUsd: 35000,
+    forumUrl: "https://forum.zcashcommunity.com/t/zcash-integration-in-mobazha-a-decentralized-privacy-ecommerce/47914",
+    decisionDate: "2024-06-25",
+    decisionSummary: "ZCG rejected the submitted forum proposal after committee review."
+  },
+  {
+    canonicalKey: "forum:43722",
+    title: "The BLOKC — Zcash Developers Program and Education Curriculum",
+    applicantName: "The BLOKC / Emerson Fonseca",
+    requestedAmountUsd: 200000,
+    forumUrl: "https://forum.zcashcommunity.com/t/the-blockchain-lead-organization-and-knowledge-center-the-blokc-zcash-developers-program-and-zcash-education-curriculum/43722",
+    decisionDate: "2023-01-23",
+    decisionSummary: "ZCG rejected the submitted forum proposal after committee review."
+  }
+] as const;
+
 export type ReconciliationRunResult = {
   ok: true;
   applicationsCreatedOrUpdated: number;
@@ -1929,6 +1959,43 @@ export async function runGrantReconciliation(): Promise<ReconciliationRunResult>
       });
       counts.unmatchedSheetProjects += 1;
     }
+  }
+
+  for (const reviewed of reviewedForumApplications) {
+    plannedApplications.push({
+      application: {
+        canonicalKey: reviewed.canonicalKey,
+        title: reviewed.title,
+        applicantName: reviewed.applicantName,
+        githubIssueNumber: null,
+        githubIssueUrl: null,
+        githubState: null,
+        normalizedStatus: "declined",
+        requestedAmountUsd: reviewed.requestedAmountUsd,
+        matchConfidence: 1,
+        sourceSummary: {
+          generatedBy,
+          sourceType: "reviewed_forum_application",
+          forumUrl: reviewed.forumUrl,
+          decisionDate: reviewed.decisionDate,
+          decisionSummary: reviewed.decisionSummary
+        }
+      },
+      links: [],
+      githubLabels: [],
+      forumLinks: [
+        {
+          url: reviewed.forumUrl,
+          title: reviewed.title,
+          summary: reviewed.decisionSummary,
+          discoveredFrom: ["reviewed_forum_application"],
+          relationshipRole: "primary_forum_thread"
+        }
+      ],
+      grant: null,
+      issues: []
+    });
+    counts.applicationsCreatedOrUpdated += 1;
   }
 
   const applicationIds = await bulkUpsertApplications(plannedApplications.map((planned) => planned.application));

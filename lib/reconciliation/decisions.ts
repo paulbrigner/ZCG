@@ -689,6 +689,11 @@ export async function applyManualReconciliationDecisions(): Promise<ManualReconc
           and (
             ri.source_record_id = ad.source_record_id
             or (
+              ri.issue_type = 'unlinked_decision_minutes'
+              and ad.source_kind = 'forum_link'
+              and ri.details->>'linkedSourceUrl' = ad.source_id
+            )
+            or (
               ad.github_issue_number is not null
               and (
                 ri.details->>'githubIssueNumber' = ad.github_issue_number
