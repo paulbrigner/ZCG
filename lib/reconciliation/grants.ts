@@ -1,6 +1,7 @@
 import { query } from "../db";
 import {
   applyManualReconciliationDecisions,
+  applyManualSourceLinkDecisions,
   getActiveManualSourceLinkKeys,
   manualSourceLinkKey
 } from "./decisions";
@@ -1984,6 +1985,7 @@ export async function runGrantReconciliation(): Promise<ReconciliationRunResult>
   );
   counts.linksCreated = await bulkLinkSources(links);
   counts.issuesCreated = await bulkCreateIssues(issues);
+  await applyManualSourceLinkDecisions();
   const decisionMinutesResult = await reconcileGrantDecisionMinutes();
   counts.decisionSourcesParsed = decisionMinutesResult.sourcesParsed;
   counts.decisionMentionsLinked = decisionMinutesResult.mentionsLinked;

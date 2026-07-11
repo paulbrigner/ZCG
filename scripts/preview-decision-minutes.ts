@@ -148,7 +148,10 @@ async function main() {
       const matched = hooks.matchMention(mention, indexes, applications);
 
       if (!matched.applicationId) {
-        if (terminalDecisions.has(matched.normalizedDecision) || matched.normalizedDecision === "partial_approval") {
+        if (
+          hooks.isHighConfidenceDecisionMention(matched) &&
+          (terminalDecisions.has(matched.normalizedDecision) || matched.normalizedDecision === "partial_approval")
+        ) {
           unlinkedWarnings.push({
             meetingDate: parsed.source.meetingDate,
             candidateTitle: matched.candidateTitle,
@@ -200,13 +203,16 @@ async function main() {
     );
 
     if (decisions.has("partial_approval")) {
-      linkedWarnings.push({
-        type: "partial_decision_status_review",
-        application: first.application.title,
-        canonicalStatus: first.application.normalized_status,
-        meetingDate: first.source.meetingDate,
-        decisions: [...decisions]
-      });
+      if (hooks.partialDecisionConflict(first.application.normalized_status)) {
+        linkedWarnings.push({
+          type: "partial_decision_status_review",
+          application: first.application.title,
+          canonicalStatus: first.application.normalized_status,
+          meetingDate: first.source.meetingDate,
+          decisions: [...decisions]
+        });
+      }
+
       continue;
     }
 

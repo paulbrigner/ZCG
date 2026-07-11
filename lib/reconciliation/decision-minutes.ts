@@ -346,6 +346,15 @@ function normalizeDecisionLine(value: string) {
     return { decision: "deferred", text: value };
   }
 
+  if (
+    /\b(?:ask(?:ed|ing)?|question(?:ed|ing)?|consider(?:ed|ing)?|whether|if)\b.*\b(?:declin(?:e|ed)|reject(?:ed)?)\b/.test(
+      normalized
+    ) ||
+    /\b(?:do\s+not|don't|should\s+not|shouldn't)\s+(?:decline|reject)\b/.test(normalized)
+  ) {
+    return null;
+  }
+
   if (/\bdeclin(?:e|ed)\b/.test(normalized) || /\breject(?:ed)?\b/.test(normalized)) {
     return { decision: "declined", text: value };
   }
@@ -385,7 +394,11 @@ function incompleteDecisionFragment(value: string) {
   return /\b(?:approve(?:d)?|declin(?:e|ed)|reject(?:ed)?)\s+(?:the|a|an|this|that|to)$/.test(normalized);
 }
 
-function extractDecision(section: string | null | undefined, direction: "forward" | "reverse" = "reverse") {
+function extractDecision(
+  section: string | null | undefined,
+  direction: "forward" | "reverse" = "reverse",
+  maxLines: number | null = null
+) {
   if (!section) {
     return { decision: "unknown", text: null as string | null };
   }
@@ -395,7 +408,10 @@ function extractDecision(section: string | null | undefined, direction: "forward
     .map((line) => compactWhitespace(line))
     .filter(Boolean);
 
-  const orderedLines = direction === "forward" ? lines : [...lines].reverse();
+  const orderedLines = (direction === "forward" ? lines : [...lines].reverse()).slice(
+    0,
+    maxLines ?? undefined
+  );
 
   for (const line of orderedLines) {
     if (incompleteDecisionFragment(line)) {
@@ -680,7 +696,7 @@ function decisionMentionsFromRecord(
       }
 
       const decision = keySection
-        ? extractDecision(keySection, "forward")
+        ? extractDecision(keySection, "forward", 3)
         : extractDecision(detailSection, "reverse");
       const rationaleText = trimRationale(detailSection, link.title, decision.text);
       const speakerNotes = extractSpeakerNotes(detailSection);
@@ -1165,7 +1181,7 @@ function terminalDecisionConflict(decision: string, applicationStatus: string | 
   }
 
   if (decision === "declined") {
-    return status !== "declined";
+    return !["declined", "filtered"].includes(status);
   }
 
   if (decision === "withdrawn") {
@@ -1177,7 +1193,7 @@ function terminalDecisionConflict(decision: string, applicationStatus: string | 
   }
 
   if (decision === "filtered") {
-    return status !== "filtered";
+    return !["filtered", "declined"].includes(status);
   }
 
   return false;
@@ -1187,6 +1203,10 @@ function isTerminalDecision(decision: string) {
   return ["approved", "approved_async", "declined", "withdrawn", "cancelled", "filtered"].includes(
     decision
   );
+}
+
+function partialDecisionConflict(applicationStatus: string | null | undefined) {
+  return !["approved", "active", "completed"].includes(applicationStatus ?? "unknown");
 }
 
 function isHighConfidenceDecisionMention(mention: MatchedDecisionMention) {
@@ -1327,7 +1347,8 @@ export async function reconcileGrantDecisionMinutes(): Promise<GrantDecisionMinu
       await createIssue({
         issueType: "unlinked_decision_minutes",
         severity:
-          isTerminalDecision(matched.normalizedDecision) || matched.normalizedDecision === "partial_approval"
+          isHighConfidenceDecisionMention(matched) &&
+          (isTerminalDecision(matched.normalizedDecision) || matched.normalizedDecision === "partial_approval")
             ? "warning"
             : "info",
         sourceRecordId: record.id,
@@ -1365,25 +1386,28 @@ export async function reconcileGrantDecisionMinutes(): Promise<GrantDecisionMinu
     );
 
     if (normalizedDecisions.has("partial_approval")) {
-      await createIssue({
-        issueType: "partial_decision_status_review",
-        severity: "warning",
-        sourceRecordId: representative.sourceRecordId,
-        applicationId: representative.application.id,
-        summary: `Meeting minutes record a partial approval for ${representative.application.title}`,
-        details: {
-          mentionId: representative.mentionId,
-          meetingTitle: representative.source.title,
-          meetingDate: representative.source.meetingDate,
-          candidateTitle: representative.matched.candidateTitle,
-          linkedSourceUrl: representative.matched.linkedSourceUrl,
-          normalizedDecision: representative.matched.normalizedDecision,
-          canonicalStatus: representative.application.normalized_status,
-          matchMethod: representative.matched.matchMethod,
-          confidence: representative.matched.confidence
-        }
-      });
-      result.issuesCreated += 1;
+      if (partialDecisionConflict(representative.application.normalized_status)) {
+        await createIssue({
+          issueType: "partial_decision_status_review",
+          severity: "warning",
+          sourceRecordId: representative.sourceRecordId,
+          applicationId: representative.application.id,
+          summary: `Meeting minutes record a partial approval for ${representative.application.title}`,
+          details: {
+            mentionId: representative.mentionId,
+            meetingTitle: representative.source.title,
+            meetingDate: representative.source.meetingDate,
+            candidateTitle: representative.matched.candidateTitle,
+            linkedSourceUrl: representative.matched.linkedSourceUrl,
+            normalizedDecision: representative.matched.normalizedDecision,
+            canonicalStatus: representative.application.normalized_status,
+            matchMethod: representative.matched.matchMethod,
+            confidence: representative.matched.confidence
+          }
+        });
+        result.issuesCreated += 1;
+      }
+
       continue;
     }
 
@@ -1466,6 +1490,7 @@ export const decisionMinutesTestHooks = {
   matchMention,
   meetingGrantSections,
   normalizeDecisionLine,
+  partialDecisionConflict,
   terminalDecisionConflict,
   titleSections
 };

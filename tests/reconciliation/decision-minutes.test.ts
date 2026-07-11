@@ -52,6 +52,10 @@ test("normalizes explicit outcomes without treating context or voter lists as de
   assert.equal(hooks.normalizeDecisionLine("We should not approve without a public comment."), null);
   assert.equal(hooks.normalizeDecisionLine("They should not decline but ask questions."), null);
   assert.equal(
+    hooks.normalizeDecisionLine("Jason asked if they should reject it or set up a call."),
+    null
+  );
+  assert.equal(
     hooks.normalizeDecisionLine("Approved 3 (A, B, C), Declined 2 (D, E)")?.decision,
     "approved"
   );
@@ -63,6 +67,19 @@ test("treats an approval as compatible with later lifecycle cancellation or with
   assert.equal(hooks.terminalDecisionConflict("approved", "declined"), true);
 });
 
+test("treats filtered and declined as compatible negative dispositions", () => {
+  assert.equal(hooks.terminalDecisionConflict("declined", "filtered"), false);
+  assert.equal(hooks.terminalDecisionConflict("filtered", "declined"), false);
+  assert.equal(hooks.terminalDecisionConflict("declined", "approved"), true);
+});
+
+test("treats a partial approval as reconciled by an approved funded record", () => {
+  assert.equal(hooks.partialDecisionConflict("approved"), false);
+  assert.equal(hooks.partialDecisionConflict("active"), false);
+  assert.equal(hooks.partialDecisionConflict("completed"), false);
+  assert.equal(hooks.partialDecisionConflict("declined"), true);
+});
+
 test("uses the first explicit key-takeaway outcome and ignores minority voter lines", () => {
   const section = [
     "Cypherpunk Policy Dinner",
@@ -72,6 +89,17 @@ test("uses the first explicit key-takeaway outcome and ignores minority voter li
   ].join("\n\n");
 
   assert.equal(hooks.extractDecision(section, "forward").decision, "approved");
+});
+
+test("does not scan beyond the candidate's key-takeaway item", () => {
+  const section = [
+    "Zchurn's question on KYC and fiscal sponsorship",
+    "Jason explained why fiscal sponsorship does not apply.",
+    "Alex volunteered to write a response.",
+    "A later unrelated request was approved."
+  ].join("\n\n");
+
+  assert.equal(hooks.extractDecision(section, "forward", 3).decision, "unknown");
 });
 
 test("anchors candidate sections and keeps adjacent proposal outcomes separate", () => {

@@ -102,6 +102,11 @@ export type ManualReconciliationApplyResult = {
   inferredResolvedIssues: number;
 };
 
+export type ManualSourceDecisionApplyResult = {
+  linkedSources: number;
+  unlinkedSources: number;
+};
+
 type IssueContextRow = {
   id: string;
   issue_type: string;
@@ -513,7 +518,7 @@ async function countFromQuery(sql: string, values: readonly unknown[] = []) {
   return Number(result.rows[0]?.affected_count ?? 0);
 }
 
-export async function applyManualReconciliationDecisions(): Promise<ManualReconciliationApplyResult> {
+export async function applyManualSourceLinkDecisions(): Promise<ManualSourceDecisionApplyResult> {
   const linkedSources = await countFromQuery(
     `with active_decisions as (
        select d.id,
@@ -574,6 +579,12 @@ export async function applyManualReconciliationDecisions(): Promise<ManualReconc
      )
      select count(*)::text as affected_count from deleted`
   );
+
+  return { linkedSources, unlinkedSources };
+}
+
+export async function applyManualReconciliationDecisions(): Promise<ManualReconciliationApplyResult> {
+  const { linkedSources, unlinkedSources } = await applyManualSourceLinkDecisions();
 
   const relationships = await countFromQuery(
     `with active_decisions as (
