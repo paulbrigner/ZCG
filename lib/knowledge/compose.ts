@@ -8,10 +8,18 @@ import type { GrantKnowledgeSearchResult } from "@/lib/knowledge/search";
 
 type ChatCompletionResponse = {
   choices?: Array<{
+    finish_reason?: unknown;
     message?: {
       content?: unknown;
+      refusal?: unknown;
+      reasoning_content?: unknown;
     };
   }>;
+  usage?: {
+    completion_tokens_details?: {
+      reasoning_tokens?: unknown;
+    };
+  };
 };
 
 const maxEvidenceItems = 100;
@@ -124,7 +132,9 @@ export async function composeGroundedGrantAnalysis({
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(`${knowledgeAiBaseUrl()}/chat/completions`, {
+    const baseUrl = knowledgeAiBaseUrl();
+    const isVenice = new URL(baseUrl).hostname.toLowerCase().endsWith("venice.ai");
+    const response = await fetch(`${baseUrl}/chat/completions`, {
       method: "POST",
       headers: {
         accept: "application/json",
@@ -134,7 +144,12 @@ export async function composeGroundedGrantAnalysis({
       body: JSON.stringify({
         model: knowledgeAiModel(),
         temperature,
-        ...(maxTokens ? { max_tokens: maxTokens } : {}),
+        ...(maxTokens
+          ? isVenice
+            ? { max_completion_tokens: maxTokens }
+            : { max_tokens: maxTokens }
+          : {}),
+        ...(isVenice ? { reasoning: { enabled: false }, reasoning_effort: "none" } : {}),
         messages: [
           {
             role: "system",
@@ -159,7 +174,18 @@ export async function composeGroundedGrantAnalysis({
     const text = responseText(payload);
 
     if (!text) {
-      throw new Error("Knowledge answer response did not include text.");
+      const choice = payload.choices?.[0];
+      const finishReason = typeof choice?.finish_reason === "string" ? choice.finish_reason : "unknown";
+      const refusal = typeof choice?.message?.refusal === "string" && choice.message.refusal.trim()
+        ? " The provider returned a refusal."
+        : "";
+      const reasoningTokens = Number(payload.usage?.completion_tokens_details?.reasoning_tokens);
+      const reasoningDetail = Number.isFinite(reasoningTokens) && reasoningTokens > 0
+        ? ` ${reasoningTokens} completion token(s) were used for reasoning.`
+        : "";
+      throw new Error(
+        `Knowledge answer response did not include text (finish reason: ${finishReason}).${refusal}${reasoningDetail}`
+      );
     }
 
     return text;
