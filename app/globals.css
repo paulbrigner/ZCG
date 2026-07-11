@@ -1079,6 +1079,10 @@ button:disabled {
   min-width: 0;
 }
 
+.admin-shell > .reconciliation-workspace {
+  order: 2;
+}
+
 .reconciliation-list.compact {
   gap: 12px;
 }
