@@ -587,7 +587,7 @@ export class ZcgPrototypeStack extends Stack {
           DB_CLUSTER_ARN: database.clusterArn,
           DB_SECRET_ARN: database.secret!.secretArn,
           DB_NAME: "zcg",
-          ZCG_KNOWLEDGE_AI_TIMEOUT_MS: "60000",
+          ZCG_KNOWLEDGE_AI_TIMEOUT_MS: "120000",
           ZCG_KNOWLEDGE_QUERY_EMBEDDING_TIMEOUT_MS: "30000",
           ...(knowledgeEmbeddingApiSecretId
             ? {

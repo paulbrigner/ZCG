@@ -2,7 +2,28 @@ import type { CSSProperties } from "react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getGrantApplicationDetail, type GitHubLabelRow, type GrantApplicationRow } from "@/lib/admin/dashboard";
-import { requirePermission } from "@/lib/authorization";
+import {
+  isPublicPrototypePrincipal,
+  principalHasPermission,
+  principalHasRole,
+  requirePermission
+} from "@/lib/authorization";
+import {
+  COMMITTEE_BRIEFING_TEMPLATE_KEY,
+  COMMITTEE_BRIEFING_TEMPLATE_VERSION,
+  CUSTOM_GRANT_ANALYSIS_TEMPLATE_KEY,
+  CUSTOM_GRANT_ANALYSIS_TEMPLATE_VERSION
+} from "@/lib/knowledge/briefing";
+import { knowledgeAiModel } from "@/lib/knowledge/config";
+import {
+  getGrantAnalysisReportFreshness,
+  listGrantAnalysisReportEvidence,
+  listGrantAnalysisReports
+} from "@/lib/knowledge/reports";
+import {
+  GrantAnalysisPanel,
+  type GrantAnalysisReport as ClientGrantAnalysisReport
+} from "./grant-analysis-panel";
 import { MetricHelp, MetricLabel } from "../../metric-help";
 
 function moneyText(value: string | null) {
@@ -179,7 +200,7 @@ export default async function GrantApplicationPage({
   params: Promise<{ id: string }>;
 }) {
   const publicReadOptions = { allowPublicPrototypeRead: true };
-  await requirePermission("grant:read", publicReadOptions);
+  const principal = await requirePermission("grant:read", publicReadOptions);
   await requirePermission("source:mirror:read", publicReadOptions);
   await requirePermission("reconciliation:read", publicReadOptions);
 
@@ -194,6 +215,72 @@ export default async function GrantApplicationPage({
   const sourceEvidence = detail.sources.filter((source) => !["forum_link", "forum_meeting_minutes"].includes(source.source_kind));
   const primaryForumLinks = detail.forumLinks.filter((forumLink) => forumLink.relationship_role === "primary_forum_thread");
   const supportingForumLinks = detail.forumLinks.filter((forumLink) => forumLink.relationship_role !== "primary_forum_thread");
+  let canReadAnalysis = false;
+  let canGenerateAnalysis = false;
+  let canPublishAnalysis = false;
+  let initialAnalysisReports: ClientGrantAnalysisReport[] = [];
+
+  if (!isPublicPrototypePrincipal(principal)) {
+    const [canRead, canGenerate, canPublish, isAdmin] = await Promise.all([
+      principalHasPermission(principal.id, "grant:analysis:read"),
+      principalHasPermission(principal.id, "grant:analysis:generate"),
+      principalHasPermission(principal.id, "grant:analysis:publish"),
+      principalHasRole(principal.id, "admin")
+    ]);
+    canReadAnalysis = canRead;
+    canGenerateAnalysis = canGenerate;
+    canPublishAnalysis = canPublish;
+
+    if (canReadAnalysis) {
+      const reports = await listGrantAnalysisReports({
+        applicationId: id,
+        access: {
+          principalId: principal.id,
+          canReadAllPrivateReports: isAdmin
+        }
+      });
+
+      initialAnalysisReports = await Promise.all(reports.map(async (report) => {
+        const retrievalMode = report.generationMetadata.retrievalMode;
+        const committeeBriefing = report.reportType === "committee_briefing";
+        const [evidence, freshnessStatus] = await Promise.all([
+          listGrantAnalysisReportEvidence(report.id),
+          getGrantAnalysisReportFreshness({
+            report,
+            currentTemplateKey: committeeBriefing
+              ? COMMITTEE_BRIEFING_TEMPLATE_KEY
+              : CUSTOM_GRANT_ANALYSIS_TEMPLATE_KEY,
+            currentTemplateVersion: committeeBriefing
+              ? COMMITTEE_BRIEFING_TEMPLATE_VERSION
+              : CUSTOM_GRANT_ANALYSIS_TEMPLATE_VERSION,
+            currentModel: knowledgeAiModel()
+          })
+        ]);
+
+        return {
+          ...report,
+          retrievalMode:
+            retrievalMode === "keyword" || retrievalMode === "semantic" || retrievalMode === "hybrid"
+              ? retrievalMode
+              : null,
+          freshnessStatus,
+          evidence: evidence.map((item) => ({
+            id: `${report.id}:${item.citationNumber}`,
+            citationNumber: item.citationNumber,
+            title: item.title ?? `Evidence ${item.citationNumber}`,
+            excerpt: item.contentSnapshot,
+            sourceKind: item.sourceKind,
+            sourceId: item.sourceId,
+            sourceUrl: item.sourceUrl,
+            applicationId: item.applicationId,
+            knowledgeDocumentId: item.knowledgeDocumentId,
+            evidenceRole: item.evidenceRole,
+            contentHash: item.contentHash
+          }))
+        };
+      }));
+    }
+  }
 
   return (
     <main className="admin-shell">
@@ -247,6 +334,14 @@ export default async function GrantApplicationPage({
           <strong>{numberText(application.decision_mention_count)}</strong>
         </article>
       </section>
+
+      <GrantAnalysisPanel
+        applicationId={id}
+        canGenerate={canGenerateAnalysis}
+        canPublish={canPublishAnalysis}
+        canRead={canReadAnalysis}
+        initialReports={initialAnalysisReports}
+      />
 
       <section className="panel">
         <div className="section-heading">

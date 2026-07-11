@@ -14,6 +14,10 @@ export type GrantKnowledgeAnswerJobRequest = {
   retrievalMode: KnowledgeRetrievalMode;
   allowAiAnswer: boolean;
   allowSemanticSearch: boolean;
+  purpose?: "knowledge_search" | "committee_briefing" | "custom_analysis";
+  applicationId?: string;
+  reportId?: string;
+  customPrompt?: string | null;
 };
 
 export type GrantKnowledgeAnswerJob = {

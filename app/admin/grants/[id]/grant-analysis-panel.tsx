@@ -1,0 +1,1135 @@
+"use client";
+
+import { useEffect, useId, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
+import styles from "./grant-analysis-panel.module.css";
+
+export type GrantAnalysisReportType = "committee_briefing" | "custom";
+export type GrantAnalysisVisibility = "temporary" | "private" | "shared";
+export type GrantAnalysisStatus = "queued" | "running" | "succeeded" | "failed";
+export type GrantAnalysisRetrievalMode = "keyword" | "semantic" | "hybrid";
+
+export type GrantAnalysisEvidence = {
+  id: string;
+  citationNumber: number;
+  title: string;
+  excerpt?: string | null;
+  sourceKind?: string | null;
+  sourceId?: string | null;
+  sourceUrl?: string | null;
+  applicationId?: string | null;
+  knowledgeDocumentId?: string | null;
+  evidenceRole?: string | null;
+  contentHash?: string | null;
+};
+
+export type GrantAnalysisReport = {
+  id: string;
+  applicationId: string;
+  reportType: GrantAnalysisReportType;
+  visibility: GrantAnalysisVisibility;
+  status: GrantAnalysisStatus;
+  title: string;
+  customPrompt?: string | null;
+  answerText?: string | null;
+  answerStatus?: string | null;
+  errorMessage?: string | null;
+  evidenceFingerprint?: string | null;
+  currentEvidenceFingerprint?: string | null;
+  isStale?: boolean | null;
+  freshnessStatus?: "fresh" | "stale" | "unknown" | null;
+  templateKey?: string | null;
+  templateVersion?: string | number | null;
+  provider?: string | null;
+  model?: string | null;
+  retrievalMode?: GrantAnalysisRetrievalMode | null;
+  version?: number | null;
+  versionNumber?: number | null;
+  requestedByDisplayName?: string | null;
+  requestedByEmail?: string | null;
+  supersedesReportId?: string | null;
+  createdAt: string;
+  updatedAt?: string | null;
+  completedAt?: string | null;
+  evidence?: GrantAnalysisEvidence[];
+};
+
+export type GrantAnalysisPanelProps = {
+  applicationId: string;
+  initialReports: readonly GrantAnalysisReport[];
+  canRead: boolean;
+  canGenerate: boolean;
+  canPublish: boolean;
+};
+
+type JobStatus = "queued" | "running" | "succeeded" | "failed" | "expired";
+
+type TemporaryAnalysis = {
+  id: string;
+  title: string;
+  prompt: string;
+  answerText: string;
+  evidence: GrantAnalysisEvidence[];
+  createdAt: string;
+};
+
+type ActiveOperation = "briefing" | "custom" | "refresh" | null;
+
+const defaultPollMs = 1500;
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function field(record: Record<string, unknown>, camel: string, snake?: string) {
+  return record[camel] ?? (snake ? record[snake] : undefined);
+}
+
+function stringField(record: Record<string, unknown>, camel: string, snake?: string) {
+  const value = field(record, camel, snake);
+  return typeof value === "string" ? value : null;
+}
+
+function numberField(record: Record<string, unknown>, camel: string, snake?: string) {
+  const value = field(record, camel, snake);
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function booleanField(record: Record<string, unknown>, camel: string, snake?: string) {
+  const value = field(record, camel, snake);
+  return typeof value === "boolean" ? value : null;
+}
+
+function oneOf<T extends string>(value: unknown, allowed: readonly T[], fallback: T): T {
+  return typeof value === "string" && allowed.includes(value as T) ? (value as T) : fallback;
+}
+
+function safeExternalUrl(value: string | null) {
+  if (!value) {
+    return null;
+  }
+
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "https:" || parsed.protocol === "http:" ? parsed.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeEvidence(value: unknown, fallbackPrefix: string): GrantAnalysisEvidence[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.flatMap((item, index) => {
+    const record = asRecord(item);
+
+    if (!record) {
+      return [];
+    }
+
+    const citationNumber = numberField(record, "citationNumber", "citation_number") ?? index + 1;
+    const knowledgeDocumentId = stringField(record, "knowledgeDocumentId", "knowledge_document_id");
+    const sourceId = stringField(record, "sourceId", "source_id");
+    const id = stringField(record, "id") ?? knowledgeDocumentId ?? `${fallbackPrefix}-${citationNumber}`;
+
+    return [{
+      id,
+      citationNumber,
+      title:
+        stringField(record, "title") ??
+        stringField(record, "documentTitle", "document_title") ??
+        sourceId ??
+        `Evidence ${citationNumber}`,
+      excerpt:
+        stringField(record, "excerpt") ??
+        stringField(record, "contentSnapshot", "content_snapshot") ??
+        stringField(record, "content"),
+      sourceKind: stringField(record, "sourceKind", "source_kind"),
+      sourceId,
+      sourceUrl: safeExternalUrl(stringField(record, "sourceUrl", "source_url")),
+      applicationId: stringField(record, "applicationId", "application_id"),
+      knowledgeDocumentId,
+      evidenceRole: stringField(record, "evidenceRole", "evidence_role"),
+      contentHash: stringField(record, "contentHash", "content_hash")
+    }];
+  }).sort((left, right) => left.citationNumber - right.citationNumber);
+}
+
+function normalizeReport(value: unknown): GrantAnalysisReport | null {
+  const record = asRecord(value);
+
+  if (!record) {
+    return null;
+  }
+
+  const id = stringField(record, "id");
+  const applicationId = stringField(record, "applicationId", "application_id");
+
+  if (!id || !applicationId) {
+    return null;
+  }
+
+  const reportType = oneOf(
+    field(record, "reportType", "report_type"),
+    ["committee_briefing", "custom"] as const,
+    "custom"
+  );
+  const evidence = normalizeEvidence(field(record, "evidence") ?? field(record, "citations"), id);
+
+  return {
+    id,
+    applicationId,
+    reportType,
+    visibility: oneOf(
+      field(record, "visibility"),
+      ["temporary", "private", "shared"] as const,
+      "private"
+    ),
+    status: oneOf(
+      field(record, "status"),
+      ["queued", "running", "succeeded", "failed"] as const,
+      "succeeded"
+    ),
+    title:
+      stringField(record, "title") ??
+      (reportType === "committee_briefing" ? "Committee briefing" : "Custom analysis"),
+    customPrompt: stringField(record, "customPrompt", "custom_prompt"),
+    answerText: stringField(record, "answerText", "answer_text"),
+    answerStatus: stringField(record, "answerStatus", "answer_status"),
+    errorMessage: stringField(record, "errorMessage", "error_message"),
+    evidenceFingerprint: stringField(record, "evidenceFingerprint", "evidence_fingerprint"),
+    currentEvidenceFingerprint: stringField(
+      record,
+      "currentEvidenceFingerprint",
+      "current_evidence_fingerprint"
+    ),
+    isStale: booleanField(record, "isStale", "is_stale"),
+    freshnessStatus: oneOf(
+      field(record, "freshnessStatus", "freshness_status"),
+      ["fresh", "stale", "unknown"] as const,
+      "unknown"
+    ),
+    templateKey: stringField(record, "templateKey", "template_key"),
+    templateVersion:
+      stringField(record, "templateVersion", "template_version") ??
+      numberField(record, "templateVersion", "template_version"),
+    provider: stringField(record, "provider"),
+    model: stringField(record, "model"),
+    retrievalMode: oneOf(
+      field(record, "retrievalMode", "retrieval_mode"),
+      ["keyword", "semantic", "hybrid"] as const,
+      "hybrid"
+    ),
+    version:
+      numberField(record, "version") ??
+      numberField(record, "versionNumber", "version_number"),
+    requestedByDisplayName: stringField(
+      record,
+      "requestedByDisplayName",
+      "requested_by_display_name"
+    ),
+    requestedByEmail:
+      stringField(record, "requestedByEmail", "requested_by_email") ??
+      stringField(record, "authorEmail", "author_email"),
+    supersedesReportId: stringField(record, "supersedesReportId", "supersedes_report_id"),
+    createdAt:
+      stringField(record, "createdAt", "created_at") ??
+      stringField(record, "updatedAt", "updated_at") ??
+      new Date(0).toISOString(),
+    updatedAt: stringField(record, "updatedAt", "updated_at"),
+    completedAt: stringField(record, "completedAt", "completed_at"),
+    evidence
+  };
+}
+
+function normalizeReports(value: unknown): GrantAnalysisReport[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.flatMap((item) => {
+    const report = normalizeReport(item);
+    return report ? [report] : [];
+  });
+}
+
+async function responseJson(response: Response) {
+  const text = await response.text();
+
+  if (!text.trim()) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    throw new Error(
+      response.ok
+        ? "The server returned an invalid response."
+        : `The server returned a non-JSON error response (${response.status}).`
+    );
+  }
+}
+
+function responseError(body: unknown, fallback: string) {
+  const record = asRecord(body);
+  const error = record?.error;
+
+  if (typeof error === "string" && error.trim()) {
+    return error;
+  }
+
+  const errorRecord = asRecord(error);
+  return typeof errorRecord?.message === "string" && errorRecord.message.trim()
+    ? errorRecord.message
+    : fallback;
+}
+
+function reportTimestamp(report: GrantAnalysisReport) {
+  return Date.parse(report.completedAt ?? report.updatedAt ?? report.createdAt) || 0;
+}
+
+function sortReports(reports: readonly GrantAnalysisReport[]) {
+  return [...reports].sort((left, right) => {
+    if ((right.version ?? 0) !== (left.version ?? 0)) {
+      return (right.version ?? 0) - (left.version ?? 0);
+    }
+
+    return reportTimestamp(right) - reportTimestamp(left);
+  });
+}
+
+function formatDate(value: string | null | undefined) {
+  if (!value) {
+    return "Not completed";
+  }
+
+  const parsed = new Date(value);
+
+  if (!Number.isFinite(parsed.getTime())) {
+    return "Date unavailable";
+  }
+
+  return new Intl.DateTimeFormat("en-US", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: "UTC"
+  }).format(parsed) + " UTC";
+}
+
+function humanize(value: string | null | undefined) {
+  if (!value) {
+    return "Unknown";
+  }
+
+  return value
+    .split("_")
+    .filter(Boolean)
+    .map((part) => part.slice(0, 1).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function shortFingerprint(value: string | null | undefined) {
+  return value ? value.slice(0, 12) : "Unavailable";
+}
+
+function freshness(report: GrantAnalysisReport): "fresh" | "stale" | "unknown" {
+  if (report.isStale === true || report.freshnessStatus === "stale") {
+    return "stale";
+  }
+
+  if (report.isStale === false || report.freshnessStatus === "fresh") {
+    return "fresh";
+  }
+
+  if (report.evidenceFingerprint && report.currentEvidenceFingerprint) {
+    return report.evidenceFingerprint === report.currentEvidenceFingerprint ? "fresh" : "stale";
+  }
+
+  return "unknown";
+}
+
+function clampPollMs(value: unknown) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.min(Math.max(parsed, 750), 5000) : defaultPollMs;
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function evidenceFromSearchResult(value: unknown, fallbackPrefix: string) {
+  const result = asRecord(value);
+  const items = result?.results;
+  return normalizeEvidence(items, fallbackPrefix);
+}
+
+function citationNumbersFromToken(token: string) {
+  const citations: number[] = [];
+
+  for (const group of token.slice(1, -1).split(",")) {
+    const range = group.trim().match(/^(\d+)\s*[–—-]\s*(\d+)$/);
+
+    if (range) {
+      const start = Number(range[1]);
+      const end = Number(range[2]);
+      const first = Math.min(start, end);
+      const count = Math.min(Math.abs(end - start) + 1, 100);
+
+      for (let offset = 0; offset < count; offset += 1) {
+        citations.push(first + offset);
+      }
+    } else if (/^\d+$/.test(group.trim())) {
+      citations.push(Number(group.trim()));
+    }
+  }
+
+  return [...new Set(citations)];
+}
+
+function citedAnswer(answerText: string, evidence: readonly GrantAnalysisEvidence[], anchorPrefix: string) {
+  const validCitations = new Set(evidence.map((item) => item.citationNumber));
+  const parts = answerText.split(/(\[[\d\s,–—-]+\])/g);
+
+  return parts.map((part, index): ReactNode => {
+    const citations = /^\[[\d\s,–—-]+\]$/.test(part) ? citationNumbersFromToken(part) : [];
+
+    if (!citations.length) {
+      return part;
+    }
+
+    return citations.every((citationNumber) => validCitations.has(citationNumber)) ? (
+      <span key={`citation-${index}`}>
+        [
+        {citations.map((citationNumber, citationIndex) => (
+          <span key={`${citationNumber}-${citationIndex}`}>
+            {citationIndex ? ", " : ""}
+            <a
+              aria-label={`Jump to evidence ${citationNumber}`}
+              className={styles.inlineCitation}
+              href={`#${anchorPrefix}-${citationNumber}`}
+            >
+              {citationNumber}
+            </a>
+          </span>
+        ))}
+        ]
+      </span>
+    ) : (
+      <span className={styles.unresolvedCitation} key={`unresolved-${index}`} title="Citation is not present in this report snapshot">
+        {part}
+      </span>
+    );
+  });
+}
+
+function EvidenceList({
+  evidence,
+  reportId
+}: {
+  evidence: readonly GrantAnalysisEvidence[];
+  reportId: string;
+}) {
+  if (!evidence.length) {
+    return <p className={styles.muted}>No citation snapshot is available for this report.</p>;
+  }
+
+  const anchorPrefix = `grant-analysis-evidence-${reportId}`;
+
+  return (
+    <ol className={styles.evidenceList}>
+      {evidence.map((item) => (
+        <li className={styles.evidenceItem} id={`${anchorPrefix}-${item.citationNumber}`} key={`${item.id}-${item.citationNumber}`}>
+          <div className={styles.evidenceHeading}>
+            <span className={styles.citationNumber}>[{item.citationNumber}]</span>
+            <strong>{item.title}</strong>
+          </div>
+          <div className={styles.chipRow}>
+            {item.evidenceRole ? <span className={styles.chip}>{humanize(item.evidenceRole)}</span> : null}
+            {item.sourceKind ? <span className={styles.chip}>{humanize(item.sourceKind)}</span> : null}
+          </div>
+          {item.excerpt ? <p>{item.excerpt}</p> : null}
+          <div className={styles.evidenceLinks}>
+            {item.sourceUrl ? (
+              <a href={item.sourceUrl} rel="noreferrer" target="_blank">
+                Open original source <span aria-hidden="true">↗</span>
+              </a>
+            ) : null}
+            {item.applicationId ? (
+              <a href={`/admin/grants/${encodeURIComponent(item.applicationId)}`} target="_blank">
+                Open application <span aria-hidden="true">↗</span>
+              </a>
+            ) : null}
+          </div>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+function ReportMetadata({ report }: { report: GrantAnalysisReport }) {
+  const reportFreshness = freshness(report);
+  const author = report.requestedByDisplayName ?? report.requestedByEmail ?? "Unknown author";
+
+  return (
+    <dl className={styles.metadata}>
+      <div>
+        <dt>Evidence</dt>
+        <dd>
+          <span className={`${styles.freshnessBadge} ${styles[reportFreshness]}`}>
+            {humanize(reportFreshness)}
+          </span>
+        </dd>
+      </div>
+      <div>
+        <dt>Version</dt>
+        <dd>{report.version ?? "—"}</dd>
+      </div>
+      <div>
+        <dt>Generated</dt>
+        <dd>{formatDate(report.completedAt ?? report.createdAt)}</dd>
+      </div>
+      <div>
+        <dt>Author</dt>
+        <dd>{author}</dd>
+      </div>
+      <div>
+        <dt>Visibility</dt>
+        <dd>{humanize(report.visibility)}</dd>
+      </div>
+      <div>
+        <dt>Template</dt>
+        <dd>{report.templateVersion ? `${report.templateKey ?? "Committee briefing"} v${report.templateVersion}` : "Custom prompt"}</dd>
+      </div>
+      <div>
+        <dt>Model</dt>
+        <dd>{[report.provider, report.model].filter(Boolean).join(" / ") || "Unavailable"}</dd>
+      </div>
+      <div>
+        <dt>Evidence snapshot</dt>
+        <dd title={report.evidenceFingerprint ?? undefined}>{shortFingerprint(report.evidenceFingerprint)}</dd>
+      </div>
+    </dl>
+  );
+}
+
+function ReportBody({ report, compact = false }: { report: GrantAnalysisReport; compact?: boolean }) {
+  const evidence = report.evidence ?? [];
+  const anchorPrefix = `grant-analysis-evidence-${report.id}`;
+
+  if (report.status === "failed") {
+    return <p className={styles.errorBox}>{report.errorMessage ?? "This analysis did not complete."}</p>;
+  }
+
+  if (report.status === "queued" || report.status === "running") {
+    return <p className={styles.progressBox}>This analysis is {report.status}. You can leave this page while it completes.</p>;
+  }
+
+  return (
+    <>
+      {report.customPrompt ? (
+        <details className={styles.promptDisclosure}>
+          <summary>Prompt used</summary>
+          <p>{report.customPrompt}</p>
+        </details>
+      ) : null}
+      <div className={`${styles.answer} ${compact ? styles.compactAnswer : ""}`}>
+        {report.answerText
+          ? citedAnswer(report.answerText, evidence, anchorPrefix)
+          : "The report completed without answer text."}
+      </div>
+      <details className={styles.evidenceDisclosure}>
+        <summary>
+          Evidence and citations <span>({evidence.length})</span>
+        </summary>
+        <EvidenceList evidence={evidence} reportId={report.id} />
+      </details>
+    </>
+  );
+}
+
+function SavedReportCard({ report }: { report: GrantAnalysisReport }) {
+  return (
+    <article className={styles.savedReport}>
+      <div className={styles.savedReportHeading}>
+        <div>
+          <h4>{report.title}</h4>
+          <p>{formatDate(report.completedAt ?? report.createdAt)}</p>
+        </div>
+        <div className={styles.chipRow}>
+          <span className={styles.chip}>{humanize(report.visibility)}</span>
+          <span className={styles.chip}>{humanize(report.status)}</span>
+        </div>
+      </div>
+      <ReportBody compact report={report} />
+    </article>
+  );
+}
+
+export function GrantAnalysisPanel({
+  applicationId,
+  initialReports,
+  canRead,
+  canGenerate,
+  canPublish
+}: GrantAnalysisPanelProps) {
+  const customPromptId = useId();
+  const customTitleId = useId();
+  const retrievalId = useId();
+  const visibilityLegendId = useId();
+  const [reports, setReports] = useState<GrantAnalysisReport[]>(() => normalizeReports(initialReports));
+  const [activeOperation, setActiveOperation] = useState<ActiveOperation>(null);
+  const [operationMessage, setOperationMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [temporaryAnalysis, setTemporaryAnalysis] = useState<TemporaryAnalysis | null>(null);
+  const [customPrompt, setCustomPrompt] = useState("");
+  const [customTitle, setCustomTitle] = useState("");
+  const [visibility, setVisibility] = useState<GrantAnalysisVisibility>("private");
+  const [retrievalMode, setRetrievalMode] = useState<GrantAnalysisRetrievalMode>("hybrid");
+  const runTokenRef = useRef(0);
+
+  useEffect(() => () => {
+    runTokenRef.current += 1;
+  }, []);
+
+  const orderedReports = useMemo(() => sortReports(reports), [reports]);
+  const committeeReports = useMemo(
+    () => orderedReports.filter((report) => report.reportType === "committee_briefing"),
+    [orderedReports]
+  );
+  const successfulBriefings = committeeReports.filter(
+    (report) => report.status === "succeeded" && Boolean(report.answerText)
+  );
+  const latestBriefing =
+    successfulBriefings.find((report) => report.visibility === "shared") ?? successfulBriefings[0] ?? null;
+  const pendingBriefing = committeeReports.find(
+    (report) => report.status === "queued" || report.status === "running"
+  );
+  const briefingHistory = latestBriefing
+    ? committeeReports.filter((report) => report.id !== latestBriefing.id)
+    : committeeReports;
+  const customReports = orderedReports.filter((report) => report.reportType === "custom");
+
+  function mergeReport(report: GrantAnalysisReport) {
+    setReports((current) => sortReports([report, ...current.filter((item) => item.id !== report.id)]));
+  }
+
+  async function refreshReports(silent = false) {
+    if (!silent) {
+      setActiveOperation("refresh");
+      setError(null);
+      setOperationMessage("Refreshing saved analyses.");
+    }
+
+    try {
+      const response = await fetch(`/api/admin/grants/${encodeURIComponent(applicationId)}/analysis`, {
+        method: "GET",
+        cache: "no-store"
+      });
+      const body = await responseJson(response);
+
+      if (!response.ok) {
+        throw new Error(responseError(body, "Could not refresh saved analyses."));
+      }
+
+      const bodyRecord = asRecord(body);
+
+      if (!Array.isArray(bodyRecord?.reports)) {
+        throw new Error("The saved analysis response did not include a report list.");
+      }
+
+      setReports(normalizeReports(bodyRecord.reports));
+
+      if (!silent) {
+        setOperationMessage("Saved analyses are up to date.");
+      }
+    } catch (refreshError) {
+      if (silent) {
+        throw refreshError;
+      }
+
+      if (!silent) {
+        setError(refreshError instanceof Error ? refreshError.message : "Could not refresh saved analyses.");
+        setOperationMessage(null);
+      }
+    } finally {
+      if (!silent) {
+        setActiveOperation(null);
+      }
+    }
+  }
+
+  async function pollJob({
+    jobId,
+    runToken,
+    prompt,
+    title,
+    requestedVisibility
+  }: {
+    jobId: string;
+    runToken: number;
+    prompt: string;
+    title: string;
+    requestedVisibility: GrantAnalysisVisibility;
+  }) {
+    let pollDelay = defaultPollMs;
+
+    while (runTokenRef.current === runToken) {
+      await sleep(pollDelay);
+
+      if (runTokenRef.current !== runToken) {
+        return;
+      }
+
+      const response = await fetch(`/api/admin/knowledge/search/jobs/${encodeURIComponent(jobId)}`, {
+        method: "GET",
+        cache: "no-store"
+      });
+      const body = await responseJson(response);
+
+      if (!response.ok) {
+        throw new Error(responseError(body, "Analysis job status could not be loaded."));
+      }
+
+      const bodyRecord = asRecord(body);
+      const status = oneOf(
+        bodyRecord?.status,
+        ["queued", "running", "succeeded", "failed", "expired"] as const,
+        "failed"
+      ) as JobStatus;
+
+      if (status === "queued" || status === "running") {
+        setOperationMessage(`Grounded analysis is ${status}. You may leave this page while it completes.`);
+        pollDelay = clampPollMs(bodyRecord?.pollAfterMs);
+        continue;
+      }
+
+      if (status === "failed" || status === "expired") {
+        throw new Error(responseError(body, status === "expired" ? "Analysis job expired." : "Analysis job failed."));
+      }
+
+      const returnedReport = normalizeReport(bodyRecord?.report ?? asRecord(bodyRecord?.result)?.report);
+
+      if (returnedReport) {
+        mergeReport(returnedReport);
+      }
+
+      if (requestedVisibility === "temporary") {
+        const resultRecord = asRecord(bodyRecord?.result);
+        const answerText = typeof resultRecord?.answerText === "string" ? resultRecord.answerText : null;
+
+        if (!answerText) {
+          throw new Error("The temporary analysis completed without answer text.");
+        }
+
+        setTemporaryAnalysis({
+          id: jobId,
+          title: title || "Temporary grounded analysis",
+          prompt,
+          answerText,
+          evidence: evidenceFromSearchResult(resultRecord, jobId),
+          createdAt: new Date().toISOString()
+        });
+      } else {
+        await refreshReports(true);
+      }
+
+      setOperationMessage("Grounded analysis completed.");
+      return;
+    }
+  }
+
+  async function generateAnalysis({
+    reportType,
+    prompt,
+    title,
+    requestedVisibility,
+    requestedRetrievalMode
+  }: {
+    reportType: GrantAnalysisReportType;
+    prompt?: string;
+    title?: string;
+    requestedVisibility: GrantAnalysisVisibility;
+    requestedRetrievalMode: GrantAnalysisRetrievalMode;
+  }) {
+    const operation: Exclude<ActiveOperation, "refresh" | null> =
+      reportType === "committee_briefing" ? "briefing" : "custom";
+    const runToken = runTokenRef.current + 1;
+    runTokenRef.current = runToken;
+    setActiveOperation(operation);
+    setError(null);
+    setOperationMessage("Preparing the evidence pack and starting grounded analysis.");
+
+    try {
+      const response = await fetch(`/api/admin/grants/${encodeURIComponent(applicationId)}/analysis`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          action: "generate",
+          reportType,
+          ...(prompt ? { prompt } : {}),
+          ...(title ? { title } : {}),
+          visibility: requestedVisibility,
+          retrievalMode: requestedRetrievalMode
+        })
+      });
+      const body = await responseJson(response);
+
+      if (!response.ok) {
+        throw new Error(responseError(body, "Grounded analysis could not be started."));
+      }
+
+      const bodyRecord = asRecord(body);
+      const report = normalizeReport(bodyRecord?.report);
+
+      if (report) {
+        mergeReport(report);
+      }
+
+      const jobId = typeof bodyRecord?.jobId === "string" ? bodyRecord.jobId : null;
+
+      if (jobId) {
+        await pollJob({
+          jobId,
+          runToken,
+          prompt: prompt ?? "Standard committee briefing",
+          title: title ?? "Committee briefing",
+          requestedVisibility
+        });
+      } else if (report?.status === "succeeded") {
+        if (requestedVisibility === "temporary" && report.answerText) {
+          setTemporaryAnalysis({
+            id: report.id,
+            title: title ?? report.title,
+            prompt: prompt ?? "Custom grounded analysis",
+            answerText: report.answerText,
+            evidence: report.evidence ?? [],
+            createdAt: report.completedAt ?? report.createdAt
+          });
+        }
+
+        setOperationMessage("Grounded analysis completed.");
+      } else if (requestedVisibility === "temporary") {
+        throw new Error("The temporary analysis response did not include a job or result.");
+      } else {
+        await refreshReports(true);
+        setOperationMessage("Grounded analysis was requested. Refresh later to see the result.");
+      }
+    } catch (generationError) {
+      if (runTokenRef.current === runToken) {
+        setError(generationError instanceof Error ? generationError.message : "Grounded analysis failed.");
+        setOperationMessage(null);
+      }
+    } finally {
+      if (runTokenRef.current === runToken) {
+        setActiveOperation(null);
+      }
+    }
+  }
+
+  async function submitCustomAnalysis(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const prompt = customPrompt.trim();
+
+    if (!prompt) {
+      setError("Enter a question or analysis prompt.");
+      return;
+    }
+
+    await generateAnalysis({
+      reportType: "custom",
+      prompt,
+      title: customTitle.trim() || undefined,
+      requestedVisibility: visibility,
+      requestedRetrievalMode: retrievalMode
+    });
+  }
+
+  if (!canRead) {
+    return (
+      <section aria-labelledby="grant-analysis-heading" className={styles.panel}>
+        <h2 id="grant-analysis-heading">Committee decision support</h2>
+        <p className={styles.muted}>Your account does not have access to saved grant analyses.</p>
+      </section>
+    );
+  }
+
+  const busy = activeOperation !== null;
+  const briefingBusy = busy || Boolean(pendingBriefing);
+  const latestFreshness = latestBriefing ? freshness(latestBriefing) : null;
+
+  return (
+    <section aria-labelledby="grant-analysis-heading" className={styles.panel}>
+      <div className={styles.sectionHeader}>
+        <div>
+          <p className={styles.eyebrow}>AI-grounded decision support</p>
+          <h2 id="grant-analysis-heading">Committee briefing</h2>
+          <p className={styles.intro}>
+            Review an evidence-grounded briefing or ask a custom question about this application. AI output supports
+            committee review; it does not recommend or make a funding decision.
+          </p>
+        </div>
+        <button
+          className={styles.secondaryButton}
+          disabled={busy}
+          onClick={() => void refreshReports()}
+          type="button"
+        >
+          {activeOperation === "refresh" ? "Refreshing…" : "Refresh reports"}
+        </button>
+      </div>
+
+      {pendingBriefing ? (
+        <p className={styles.progressBox} role="status">
+          Committee briefing version {pendingBriefing.version ?? "new"} is {pendingBriefing.status}. You may leave
+          this page while generation continues.
+        </p>
+      ) : null}
+
+      {latestBriefing ? (
+        <article className={styles.latestReport}>
+          <div className={styles.reportHeading}>
+            <div>
+              <div className={styles.chipRow}>
+                <span className={`${styles.freshnessBadge} ${styles[latestFreshness ?? "unknown"]}`}>
+                  {humanize(latestFreshness)} evidence
+                </span>
+                <span className={styles.chip}>{humanize(latestBriefing.visibility)}</span>
+              </div>
+              <h3>{latestBriefing.title}</h3>
+            </div>
+            {canGenerate ? (
+              <button
+                className={styles.primaryButton}
+                disabled={briefingBusy}
+                onClick={() => void generateAnalysis({
+                  reportType: "committee_briefing",
+                  requestedVisibility: "shared",
+                  requestedRetrievalMode: "hybrid"
+                })}
+                type="button"
+              >
+                {pendingBriefing
+                  ? "Briefing in progress…"
+                  : activeOperation === "briefing"
+                    ? "Regenerating…"
+                    : "Regenerate with current evidence"}
+              </button>
+            ) : null}
+          </div>
+          {latestFreshness === "stale" ? (
+            <p className={styles.staleNotice}>
+              Indexed evidence or the briefing template has changed since this version was generated. Regeneration
+              will preserve this version in history.
+            </p>
+          ) : null}
+          <ReportMetadata report={latestBriefing} />
+          <ReportBody report={latestBriefing} />
+        </article>
+      ) : (
+        <div className={styles.emptyState}>
+          <div>
+            <h3>No committee briefing yet</h3>
+            <p>
+              Generate a standard briefing from this application, linked evidence, team history, relationships, and
+              comparable grants. The completed shared report will be available to other authorized users.
+            </p>
+          </div>
+          {canGenerate ? (
+            <button
+              className={styles.primaryButton}
+              disabled={briefingBusy}
+              onClick={() => void generateAnalysis({
+                reportType: "committee_briefing",
+                requestedVisibility: "shared",
+                requestedRetrievalMode: "hybrid"
+              })}
+              type="button"
+            >
+              {pendingBriefing
+                ? "Briefing in progress…"
+                : activeOperation === "briefing"
+                  ? "Generating…"
+                  : "Generate committee briefing"}
+            </button>
+          ) : (
+            <p className={styles.muted}>Your account can read shared briefings but cannot generate them.</p>
+          )}
+        </div>
+      )}
+
+      {briefingHistory.length ? (
+        <details className={styles.historyDisclosure}>
+          <summary>
+            Version history <span>({briefingHistory.length})</span>
+          </summary>
+          <div className={styles.savedReportList}>
+            {briefingHistory.map((report) => <SavedReportCard key={report.id} report={report} />)}
+          </div>
+        </details>
+      ) : null}
+
+      <div className={styles.divider} />
+
+      <div className={styles.customSection}>
+        <div>
+          <p className={styles.eyebrow}>Application-scoped research</p>
+          <h3>Ask about this application</h3>
+          <p className={styles.intro}>
+            Ask a focused question. Answers use the grant knowledge index and retain numbered links to the evidence
+            supplied to the model.
+          </p>
+        </div>
+
+        {canGenerate ? (
+          <form className={styles.customForm} onSubmit={submitCustomAnalysis}>
+            <label className={styles.field} htmlFor={customPromptId}>
+              <span>Question or analysis prompt</span>
+              <textarea
+                id={customPromptId}
+                maxLength={8000}
+                onChange={(event) => setCustomPrompt(event.target.value)}
+                placeholder="Which delivery risks and unanswered technical questions should the committee discuss?"
+                required
+                rows={5}
+                value={customPrompt}
+              />
+            </label>
+
+            <div className={styles.formGrid}>
+              <label className={styles.field} htmlFor={customTitleId}>
+                <span>Saved title (optional)</span>
+                <input
+                  id={customTitleId}
+                  maxLength={160}
+                  onChange={(event) => setCustomTitle(event.target.value)}
+                  placeholder="Technical risk review"
+                  type="text"
+                  value={customTitle}
+                />
+              </label>
+              <label className={styles.field} htmlFor={retrievalId}>
+                <span>Retrieval</span>
+                <select
+                  id={retrievalId}
+                  onChange={(event) => setRetrievalMode(event.target.value as GrantAnalysisRetrievalMode)}
+                  value={retrievalMode}
+                >
+                  <option value="hybrid">Hybrid</option>
+                  <option value="semantic">Semantic</option>
+                  <option value="keyword">Keyword</option>
+                </select>
+              </label>
+            </div>
+
+            <fieldset aria-describedby={visibilityLegendId} className={styles.visibilityFieldset}>
+              <legend>Keep this answer</legend>
+              <p id={visibilityLegendId}>
+                Temporary answers are not attached to the grant. Private answers are visible to you and
+                administrators. Shared answers are visible to authorized users.
+              </p>
+              <div className={styles.radioGrid}>
+                <label>
+                  <input
+                    checked={visibility === "temporary"}
+                    name="analysis-visibility"
+                    onChange={() => setVisibility("temporary")}
+                    type="radio"
+                  />
+                  <span>
+                    <strong>Temporary</strong>
+                    <small>View in this session</small>
+                  </span>
+                </label>
+                <label>
+                  <input
+                    checked={visibility === "private"}
+                    name="analysis-visibility"
+                    onChange={() => setVisibility("private")}
+                    type="radio"
+                  />
+                  <span>
+                    <strong>Private</strong>
+                    <small>Save for me</small>
+                  </span>
+                </label>
+                <label className={!canPublish ? styles.disabledChoice : undefined}>
+                  <input
+                    checked={visibility === "shared"}
+                    disabled={!canPublish}
+                    name="analysis-visibility"
+                    onChange={() => setVisibility("shared")}
+                    type="radio"
+                  />
+                  <span>
+                    <strong>Shared</strong>
+                    <small>{canPublish ? "Save for authorized users" : "Publish access required"}</small>
+                  </span>
+                </label>
+              </div>
+            </fieldset>
+
+            <div className={styles.formActions}>
+              <button className={styles.primaryButton} disabled={busy || !customPrompt.trim()} type="submit">
+                {activeOperation === "custom" ? "Generating grounded answer…" : "Generate grounded answer"}
+              </button>
+              <span>Factual claims should be checked against the cited source snapshot.</span>
+            </div>
+          </form>
+        ) : (
+          <p className={styles.muted}>Your account can read shared analyses but cannot generate a custom answer.</p>
+        )}
+      </div>
+
+      {operationMessage ? <p className={styles.progressBox} role="status">{operationMessage}</p> : null}
+      {error ? <p className={styles.errorBox} role="alert">{error}</p> : null}
+
+      {temporaryAnalysis ? (
+        <article className={styles.temporaryReport}>
+          <div className={styles.reportHeading}>
+            <div>
+              <span className={styles.chip}>Temporary</span>
+              <h3>{temporaryAnalysis.title}</h3>
+              <p className={styles.muted}>{formatDate(temporaryAnalysis.createdAt)}</p>
+            </div>
+            <button className={styles.secondaryButton} onClick={() => setTemporaryAnalysis(null)} type="button">
+              Clear temporary answer
+            </button>
+          </div>
+          <details className={styles.promptDisclosure}>
+            <summary>Prompt used</summary>
+            <p>{temporaryAnalysis.prompt}</p>
+          </details>
+          <div className={styles.answer}>
+            {citedAnswer(
+              temporaryAnalysis.answerText,
+              temporaryAnalysis.evidence,
+              `grant-analysis-evidence-${temporaryAnalysis.id}`
+            )}
+          </div>
+          <details className={styles.evidenceDisclosure}>
+            <summary>
+              Evidence and citations <span>({temporaryAnalysis.evidence.length})</span>
+            </summary>
+            <EvidenceList evidence={temporaryAnalysis.evidence} reportId={temporaryAnalysis.id} />
+          </details>
+        </article>
+      ) : null}
+
+      {customReports.length ? (
+        <details className={styles.historyDisclosure}>
+          <summary>
+            Saved custom analyses <span>({customReports.length})</span>
+          </summary>
+          <div className={styles.savedReportList}>
+            {customReports.map((report) => <SavedReportCard key={report.id} report={report} />)}
+          </div>
+        </details>
+      ) : null}
+    </section>
+  );
+}

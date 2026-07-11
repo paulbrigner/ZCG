@@ -102,12 +102,18 @@ function responseText(payload: ChatCompletionResponse) {
   return "";
 }
 
-export async function composeGrantKnowledgeAnswer({
-  searchText,
-  results
+export async function composeGroundedGrantAnalysis({
+  systemPrompt,
+  userPrompt,
+  temperature = 0.2,
+  timeoutMs = knowledgeAiTimeoutMs(),
+  maxTokens
 }: {
-  searchText: string;
-  results: GrantKnowledgeSearchResult[];
+  systemPrompt: string;
+  userPrompt: string;
+  temperature?: number;
+  timeoutMs?: number;
+  maxTokens?: number;
 }) {
   const apiKey = knowledgeAiApiKey();
 
@@ -116,9 +122,7 @@ export async function composeGrantKnowledgeAnswer({
   }
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), knowledgeAiTimeoutMs());
-  const evidence = evidenceForPrompt(results);
-
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(`${knowledgeAiBaseUrl()}/chat/completions`, {
       method: "POST",
@@ -129,22 +133,16 @@ export async function composeGrantKnowledgeAnswer({
       },
       body: JSON.stringify({
         model: knowledgeAiModel(),
-        temperature: 0.2,
+        temperature,
+        ...(maxTokens ? { max_tokens: maxTokens } : {}),
         messages: [
           {
             role: "system",
-            content:
-              "You answer questions about Zcash Community Grants using only the provided evidence. " +
-              "If the evidence is insufficient, say what is missing. Cite evidence with bracket numbers like [1]."
+            content: systemPrompt
           },
           {
             role: "user",
-            content: [
-              `Question: ${searchText}`,
-              "",
-              "Grounded evidence:",
-              evidence || "No matching evidence was retrieved."
-            ].join("\n")
+            content: userPrompt
           }
         ]
       }),
@@ -168,4 +166,26 @@ export async function composeGrantKnowledgeAnswer({
   } finally {
     clearTimeout(timeout);
   }
+}
+
+export async function composeGrantKnowledgeAnswer({
+  searchText,
+  results
+}: {
+  searchText: string;
+  results: GrantKnowledgeSearchResult[];
+}) {
+  const evidence = evidenceForPrompt(results);
+
+  return composeGroundedGrantAnalysis({
+    systemPrompt:
+      "You answer questions about Zcash Community Grants using only the provided evidence. " +
+      "If the evidence is insufficient, say what is missing. Cite evidence with bracket numbers like [1].",
+    userPrompt: [
+      `Question: ${searchText}`,
+      "",
+      "Grounded evidence:",
+      evidence || "No matching evidence was retrieved."
+    ].join("\n")
+  });
 }

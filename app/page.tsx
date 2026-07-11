@@ -25,8 +25,8 @@ const capabilities = [
     body: "Manual source links, dismissals, and application relationships are audited and replayed after generated reconciliation instead of disappearing on refresh."
   },
   {
-    title: "Search grounded evidence",
-    body: "Full-text and vector retrieval connect applications, source evidence, labels, and meeting decisions, with optional citation-grounded answer composition."
+    title: "Search and brief from grounded evidence",
+    body: "Full-text and vector retrieval connect applications, source evidence, labels, meeting decisions, and open review issues. Authorized reviewers can generate versioned committee briefings or temporary, private, and shared custom analyses with citation snapshots."
   }
 ];
 

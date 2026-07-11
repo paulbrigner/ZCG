@@ -9,7 +9,7 @@
   },
   "packageManager": "npm@11.16.0",
   "scripts": {
-    "test": "tsx --test tests/reconciliation/*.test.ts",
+    "test": "tsx --test tests/reconciliation/*.test.ts tests/knowledge/*.test.ts",
     "dev": "next dev",
     "build": "node scripts/with-build-env.mjs",
     "start": "next start",

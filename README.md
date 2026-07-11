@@ -26,8 +26,9 @@ administrator views without asking ZCG to replace its current tools first.
 | Evidence preservation | Checksum-tracked source records in PostgreSQL and optional aggregate JSON snapshots in private S3 |
 | Reconciliation | Canonical applications, funded-grant records, GitHub label normalization, source links, confidence scores, generated issues, and durable reviewer decisions |
 | Decision history | Meeting-minute topics parsed into decision sources and grant mentions with rationale, speaker notes, provenance, and review status |
-| Knowledge retrieval | PostgreSQL full-text search, pgvector embeddings, hybrid retrieval, and optional citation-grounded answer composition |
-| Product surfaces | Public read-only dashboard, application details, reconciliation workspace, knowledge search, user access management, and an allowlisted public API |
+| Knowledge retrieval | PostgreSQL full-text search, pgvector embeddings, hybrid retrieval, citation-grounded answers, and application-scoped evidence packs |
+| Committee decision support | Versioned shared briefings plus temporary, private, or shared custom analyses with durable citation snapshots, freshness checks, and audit history |
+| Product surfaces | Public read-only dashboard, application details, reconciliation workspace, knowledge search, permissioned committee briefings, user access management, and an allowlisted public API |
 | Access and audit | Better Auth email codes, application-owned roles and permissions, server-side authorization, and audit events |
 | Deployment | Next.js on AWS Amplify SSR, Aurora PostgreSQL through the RDS Data API, and CDK-managed workers, snapshots, secrets, logs, and optional alarms |
 
@@ -121,6 +122,7 @@ flowchart LR
     subgraph retrievalStore ["Retrieval storage"]
         knowledgeDocs[("grant_knowledge_documents")]
         knowledgeActivity[("queries and answer jobs")]
+        analysisReports[("analysis reports and evidence snapshots")]
     end
 
     github --> syncWorker
@@ -152,8 +154,11 @@ flowchart LR
     applicationLabels --> knowledgeIndex
     sourceLinks --> knowledgeIndex
     decisionHistory --> knowledgeIndex
+    reconciliationIssues --> knowledgeIndex
     knowledgeIndex --> knowledgeDocs
     knowledgeDocs --> knowledgeActivity
+    knowledgeDocs --> analysisReports
+    knowledgeActivity --> analysisReports
 ```
 
 The dotted line means there is **no implemented connector** for the website,
@@ -170,7 +175,7 @@ explicit rather than silently treated as complete coverage.
 | Forum topics discovered in GitHub or Sheet data | `source_records` as `forum_link`, including topic metadata, posts, plain text, and rendered post HTML | Primary-thread or supporting-reference `source_links`; knowledge documents |
 | Forum Community Grants Updates category | `forum_meeting_minutes` or `forum_update_topic` source records | Meeting minutes become `grant_decision_sources`, `grant_decision_mentions`, decision links, and review issues; generic update topics currently remain raw evidence |
 | Reviewer judgments | Reconciliation UI/API or portable JSON import into `reconciliation_decisions` | Link/unlink decisions, application relationships, and issue resolutions are replayed after generated reconciliation; field-override decisions are persisted but not yet applied |
-| Canonical, linked-source, and accepted decision evidence | Derived from the rows above | `grant_knowledge_documents` with full-text vectors and optional embeddings; `grant_knowledge_queries` and `grant_knowledge_answer_jobs` |
+| Canonical, linked-source, accepted decision, and open reconciliation evidence | Derived from the rows above | `grant_knowledge_documents` with full-text vectors and optional embeddings; `grant_knowledge_queries` and `grant_knowledge_answer_jobs`; versioned `grant_analysis_reports` with exact `grant_analysis_report_evidence` snapshots |
 | Website, Jotform, KYC/agreement files, and payment/custody systems | Not ingested | No current tables or connectors |
 
 Important boundaries:
@@ -190,7 +195,7 @@ Important boundaries:
 | Route | Purpose | Access |
 | --- | --- | --- |
 | `/dashboard` | Source telemetry, canonical applications, filters, and evidence links | Authenticated roles, or public read-only mode |
-| `/admin/grants/:id` | Application details, labels, sources, decisions, and reconciliation issues | Authenticated roles, or public read-only mode |
+| `/admin/grants/:id` | Application details, labels, sources, decisions, reconciliation issues, and permissioned committee/custom grounded analysis | Core evidence is available in public read-only mode; saved AI analysis requires report permissions |
 | `/admin/reconciliations` | Review and persist ambiguous source-to-application decisions | Public read-only mode; persistence requires reconciliation write access |
 | `/admin/knowledge` | Keyword, semantic, hybrid, and grounded evidence search | Public keyword/evidence search; richer modes require permissions |
 | `/admin` | Landing page for protected administrative functions | Administrator |

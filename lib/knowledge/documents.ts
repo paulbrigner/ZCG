@@ -31,9 +31,13 @@ type GrantKnowledgeApplicationRow = {
   updated_at: string;
   sources: GrantKnowledgeSourceRecord[];
   decisionMentions: GrantKnowledgeDecisionMention[];
+  reconciliationIssues: GrantKnowledgeReconciliationIssue[];
 };
 
-type GrantKnowledgeApplicationBaseRow = Omit<GrantKnowledgeApplicationRow, "sources" | "decisionMentions">;
+type GrantKnowledgeApplicationBaseRow = Omit<
+  GrantKnowledgeApplicationRow,
+  "sources" | "decisionMentions" | "reconciliationIssues"
+>;
 
 type GrantKnowledgeDecisionMention = {
   id: string;
@@ -48,6 +52,17 @@ type GrantKnowledgeDecisionMention = {
   speaker_notes: string | null;
   match_method: string;
   confidence: string;
+};
+
+type GrantKnowledgeReconciliationIssue = {
+  id: string;
+  issue_type: string;
+  severity: string;
+  summary: string;
+  details: string;
+  status: string;
+  source_record_id: string | null;
+  updated_at: string;
 };
 
 type KnowledgeDocumentInput = {
@@ -297,6 +312,49 @@ function buildDecisionDocument(
   };
 }
 
+function buildReconciliationIssueDocument(
+  row: GrantKnowledgeApplicationRow,
+  issue: GrantKnowledgeReconciliationIssue
+): KnowledgeDocumentInput {
+  const details = collectStringValues(parseJsonRecord(issue.details));
+  const lines = uniqueLines([
+    `Grant application: ${row.title}`,
+    row.applicant_name ? `Applicant: ${row.applicant_name}` : null,
+    `Status: ${row.normalized_status}`,
+    `Open reconciliation issue: ${issue.issue_type}`,
+    `Issue severity: ${issue.severity}`,
+    `Issue workflow status: ${issue.status}`,
+    `Issue summary: ${issue.summary}`,
+    ...details
+  ]);
+  const content = truncateContent(lines.join("\n"));
+
+  return {
+    documentKey: `application:${row.id}:reconciliation:${issue.id}`,
+    applicationId: row.id,
+    sourceRecordId: issue.source_record_id,
+    documentKind: "reconciliation_issue",
+    title: `${row.title} - reconciliation issue`,
+    applicantName: row.applicant_name,
+    sourceKind: "reconciliation_issue",
+    sourceId: issue.id,
+    sourceUrl: null,
+    normalizedStatus: row.normalized_status,
+    requestedAmountUsd: row.requested_amount_usd,
+    content,
+    contentHash: hashContent(content),
+    metadata: {
+      generatedBy,
+      reconciliationIssueId: issue.id,
+      issueType: issue.issue_type,
+      severity: issue.severity,
+      workflowStatus: issue.status,
+      updatedAt: issue.updated_at,
+      canonicalKey: row.canonical_key
+    }
+  };
+}
+
 function forumSourceValues(raw: Record<string, unknown>) {
   const topic = raw.topic && typeof raw.topic === "object" && !Array.isArray(raw.topic)
     ? (raw.topic as Record<string, unknown>)
@@ -329,7 +387,8 @@ function documentsFromApplication(row: GrantKnowledgeApplicationRow): KnowledgeD
   return [
     buildApplicationSummaryDocument(row),
     ...row.sources.map((source) => buildSourceDocument(row, source)),
-    ...row.decisionMentions.map((mention) => buildDecisionDocument(row, mention))
+    ...row.decisionMentions.map((mention) => buildDecisionDocument(row, mention)),
+    ...row.reconciliationIssues.map((issue) => buildReconciliationIssueDocument(row, issue))
   ];
 }
 
@@ -372,15 +431,17 @@ async function fetchApplicationRows() {
     );
 
     for (const row of result.rows) {
-      const [sources, decisionMentions] = await Promise.all([
+      const [sources, decisionMentions, reconciliationIssues] = await Promise.all([
         fetchSourceRowsForApplication(row.id),
-        fetchDecisionRowsForApplication(row.id)
+        fetchDecisionRowsForApplication(row.id),
+        fetchReconciliationIssuesForApplication(row.id)
       ]);
 
       rows.push({
         ...row,
         sources,
-        decisionMentions
+        decisionMentions,
+        reconciliationIssues
       });
     }
 
@@ -392,6 +453,29 @@ async function fetchApplicationRows() {
   }
 
   return rows;
+}
+
+async function fetchReconciliationIssuesForApplication(applicationId: string) {
+  const result = await query<GrantKnowledgeReconciliationIssue>(
+    `select id::text,
+            issue_type,
+            severity,
+            summary,
+            details::text,
+            status,
+            source_record_id::text,
+            updated_at::text
+       from reconciliation_issues
+      where canonical_type = 'grant_application'
+        and canonical_id = $1
+        and status in ('open', 'assigned')
+      order by case severity when 'error' then 0 when 'warning' then 1 else 2 end,
+               updated_at desc,
+               id`,
+    [applicationId]
+  );
+
+  return result.rows;
 }
 
 async function fetchDecisionRowsForApplication(applicationId: string) {
@@ -548,7 +632,11 @@ async function upsertKnowledgeDocuments(documents: KnowledgeDocumentInput[]) {
                      content = excluded.content,
                      content_hash = excluded.content_hash,
                      metadata = excluded.metadata,
-                     indexed_at = now(),
+                     indexed_at = case
+                       when grant_knowledge_documents.content_hash is distinct from excluded.content_hash
+                         then now()
+                       else grant_knowledge_documents.indexed_at
+                     end,
                      updated_at = now()`,
       [JSON.stringify(payload)]
     );

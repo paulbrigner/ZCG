@@ -1,5 +1,20 @@
 # Committee Grant Briefing and Saved Grounded Analysis Plan
 
+## Implementation status — July 11, 2026
+
+The first application-scoped release is implemented. It includes versioned shared committee
+briefings, temporary/private/shared custom analysis, permission-filtered report history, exact
+citation records with bounded display excerpts, freshness checks, asynchronous generation,
+prompt-injection boundaries, audit events, and application-anchored current/related/team/comparison
+evidence. Open reconciliation issues are included in the knowledge index.
+
+The participant identity and alias tables are present, and reviewed identities are used when
+available. Automated participant extraction/review remains a follow-on workflow; until identities
+are reviewed, the evidence builder uses exact normalized applicant-name fallback and adds a
+coverage warning. The automated suite covers selection balance, fingerprints, prompt isolation,
+prompt-size limits, and citation validity; a human-reviewed model-quality evaluation corpus remains
+part of the rollout work rather than a prerequisite for exercising the administrator prototype.
+
 ## Objective
 
 Add application-scoped AI decision support to the canonical grant detail page.
