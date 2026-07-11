@@ -13,6 +13,7 @@ import {
   CUSTOM_GRANT_ANALYSIS_TEMPLATE_VERSION,
   buildGrantAnalysisPrompt,
   buildGrantBriefingEvidence,
+  missingCommitteeBriefingSections,
   validateEvidenceCitations
 } from "../lib/knowledge/briefing";
 import { composeGroundedGrantAnalysis } from "../lib/knowledge/compose";
@@ -157,7 +158,7 @@ async function runApplicationAnalysis(job: NonNullable<Awaited<ReturnType<typeof
     userPrompt: prompt.userPrompt,
     temperature: 0.15,
     timeoutMs: Number.isFinite(configuredTimeoutMs) ? Math.max(90_000, configuredTimeoutMs) : 90_000,
-    maxTokens: purpose === "committee_briefing" ? 3_500 : 2_200
+    maxTokens: purpose === "committee_briefing" ? 5_000 : 2_200
   });
   const answerText = boundedGeneratedAnswer(
     composedAnswer,
@@ -174,6 +175,16 @@ async function runApplicationAnalysis(job: NonNullable<Awaited<ReturnType<typeof
 
   if (citationValidation.citedNumbers.length > 24) {
     throw new Error("Grounded analysis cited more than the 24-source response safety limit.");
+  }
+
+  if (purpose === "committee_briefing") {
+    const missingSections = missingCommitteeBriefingSections(answerText);
+
+    if (missingSections.length) {
+      throw new Error(
+        `Committee briefing response was incomplete (missing section${missingSections.length === 1 ? "" : "s"}: ${missingSections.join(", ")}).`
+      );
+    }
   }
 
   const providerStatus = knowledgeProviderStatus();

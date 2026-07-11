@@ -9,6 +9,7 @@ import {
   buildGrantAnalysisPrompt,
   computeGrantBriefingEvidenceFingerprint,
   extractEvidenceCitationNumbers,
+  missingCommitteeBriefingSections,
   normalizeCustomGrantAnalysisPrompt,
   normalizeGrantParticipantName,
   validateEvidenceCitations,
@@ -261,6 +262,23 @@ test("citation validation accepts supplied citations and rejects missing or inve
   });
   assert.equal(validateEvidenceCitations("No citations.", 2).valid, false);
   assert.equal(validateEvidenceCitations("No evidence was available.", 0).valid, true);
+});
+
+test("committee briefing structure validation requires all nine numbered sections", () => {
+  const complete = [
+    "## 1. Executive summary of the request",
+    "## 2. Applicant and team track record, including prior grants and documented outcomes",
+    "## 3. Proposal scope, milestones, budget, technical approach, and dependencies",
+    "## 4. Community and committee signals from Forum and meeting evidence",
+    "## 5. Comparable grants: approved examples and documented results",
+    "## 6. Delivery, security, governance, legal, adoption, and sustainability considerations",
+    "## 7. Contradictions, unresolved reconciliation issues, missing evidence, and questions",
+    "## 8. Neutral decision considerations",
+    "## 9. Numbered source list"
+  ].join("\n");
+
+  assert.deepEqual(missingCommitteeBriefingSections(complete), []);
+  assert.deepEqual(missingCommitteeBriefingSections(complete.replace(/^## 7\..*$/m, "")), [7]);
 });
 
 test("builds an application-anchored pack with reviewed team history and balanced comparisons", async () => {

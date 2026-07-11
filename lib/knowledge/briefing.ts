@@ -8,7 +8,7 @@ import {
 } from "@/lib/knowledge/search";
 
 export const COMMITTEE_BRIEFING_TEMPLATE_KEY = "zcg_committee_briefing";
-export const COMMITTEE_BRIEFING_TEMPLATE_VERSION = "1";
+export const COMMITTEE_BRIEFING_TEMPLATE_VERSION = "2";
 export const CUSTOM_GRANT_ANALYSIS_TEMPLATE_KEY = "zcg_custom_grounded_analysis";
 export const CUSTOM_GRANT_ANALYSIS_TEMPLATE_VERSION = "1";
 
@@ -1117,6 +1117,7 @@ function groundedSystemPrompt() {
 function committeeBriefingRequest(pack: GrantBriefingEvidencePack) {
   return [
     "Prepare a committee briefing for the application identified by the supplied evidence.",
+    "Complete all nine sections in 1,800 words or fewer. Use concise paragraphs and bullets, reserve space for sections 7-9, and state 'No grounded evidence found' instead of omitting a section.",
     "Use these sections:",
     "1. Executive summary of the request.",
     "2. Applicant and team track record, including prior grants and documented outcomes.",
@@ -1204,6 +1205,22 @@ export function extractEvidenceCitationNumbers(answerText: string) {
   }
 
   return citations;
+}
+
+export function missingCommitteeBriefingSections(answerText: string) {
+  const sectionPatterns = [
+    /(?:^|\n)\s*#{0,4}\s*1\.\s*Executive summary/im,
+    /(?:^|\n)\s*#{0,4}\s*2\.\s*Applicant and team track record/im,
+    /(?:^|\n)\s*#{0,4}\s*3\.\s*Proposal scope/im,
+    /(?:^|\n)\s*#{0,4}\s*4\.\s*Community and committee signals/im,
+    /(?:^|\n)\s*#{0,4}\s*5\.\s*Comparable grants/im,
+    /(?:^|\n)\s*#{0,4}\s*6\.\s*Delivery, security, governance/im,
+    /(?:^|\n)\s*#{0,4}\s*7\.\s*Contradictions, unresolved reconciliation issues/im,
+    /(?:^|\n)\s*#{0,4}\s*8\.\s*Neutral decision considerations/im,
+    /(?:^|\n)\s*#{0,4}\s*9\.\s*Numbered source list/im
+  ];
+
+  return sectionPatterns.flatMap((pattern, index) => pattern.test(answerText) ? [] : [index + 1]);
 }
 
 export function validateEvidenceCitations(
