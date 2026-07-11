@@ -15,7 +15,7 @@ This checklist turns the prototype development plan into implementation-facing w
 - [x] Pin Node 24 LTS for local development and deploy packaging.
 - [x] Add Next.js 15, React 19, TypeScript app shell.
 - [x] Add health endpoint at `/api/health`.
-- [x] Add protected admin shell at `/admin`.
+- [x] Add the protected grants dashboard at `/dashboard`; reserve `/admin` for administrative functions.
 - [x] Add public projection endpoint at `/api/public/grants`.
 - [x] Add Better Auth route handler at `/api/auth/[...all]`.
 - [x] Add minimal email-code sign-in UI at `/sign-in`.
@@ -81,10 +81,10 @@ This checklist turns the prototype development plan into implementation-facing w
 - [x] `npm run infra:synth` passes.
 - [x] Docker image builds locally.
 - [x] Container `/api/health` smoke test passes on Node 24.
-- [x] Container Better Auth OTP sign-in, bootstrap admin assignment, `/admin` access, unauthenticated redirect, and authorization audit event smoke test pass locally.
+- [x] Container Better Auth OTP sign-in, bootstrap admin assignment, dashboard access, unauthenticated redirect, and authorization audit event smoke test pass locally.
 - [ ] Deployed health check passes.
 - [ ] Deployed migration runner succeeds.
-- [ ] Bootstrap admin can authenticate and reach `/admin`.
+- [ ] Bootstrap admin can authenticate and reach `/dashboard`.
 
 ## Not in Phase 0
 

@@ -58,7 +58,7 @@ After the CDK backend exists in AWS and Amplify is configured with the compute r
 1. `GET /api/health/db` returns `ok: true` with `driver: "data-api"`.
 2. Better Auth email OTP can create/read verification rows through Data API.
 3. OTP sign-in creates a Better Auth session through Data API.
-4. `/admin` can upsert the internal principal and grant bootstrap admin through Data API.
+4. `/dashboard` can upsert the internal principal and grant bootstrap admin through Data API.
 5. `/api/admin/source-records` can read mirrored records through Data API.
 
 Until those five checks pass in AWS, the backend connection path should be treated as implemented but not deployment-proven.

@@ -194,7 +194,9 @@ function adminHref(params: {
     searchParams.set("applicationSearch", params.applicationSearch);
   }
 
-  if (params.applicationStatus) {
+  if (params.applicationStatus === "") {
+    searchParams.set("applicationStatus", "all");
+  } else if (params.applicationStatus) {
     searchParams.set("applicationStatus", params.applicationStatus);
   }
 
@@ -215,7 +217,16 @@ function adminHref(params: {
   }
 
   const queryString = searchParams.toString();
-  return queryString ? `/admin?${queryString}` : "/admin";
+  return queryString ? `/dashboard?${queryString}` : "/dashboard";
+}
+
+function defaultedApplicationStatus(value: string | string[] | undefined) {
+  if (value === undefined) {
+    return "under_review";
+  }
+
+  const normalized = normalizeApplicationStatus(value);
+  return normalized === "all" ? "" : normalized;
 }
 
 function resultRangeText(page: number, pageSize: number, totalResults: string, displayedCount: number) {
@@ -266,7 +277,7 @@ const metricHelp = {
   supportingForumReferences:
     "Forum link relationships classified as supporting context, such as prior funding, previous work, reports, dependencies, or background references.",
   applicationRange:
-    "Visible rows for the current Application reconciliation page after source filters, search, status, label, GitHub issue state, and pagination are applied.",
+    "Visible rows in the Applications table after source filters, search, status, label, GitHub issue state, and pagination are applied.",
   preTableFilter:
     "Count for the active source-profile tab before the table search/status/label filters narrow the displayed page.",
   filterCounts:
@@ -290,6 +301,7 @@ export default async function AdminPage({
     applicationLabels?: string | string[];
     excludedApplicationLabels?: string | string[];
     applicationPage?: string | string[];
+    dashboardView?: string | string[];
   }>;
 }) {
   const publicReadOptions = { allowPublicPrototypeRead: true };
@@ -298,9 +310,54 @@ export default async function AdminPage({
   await requirePermission("grant:read", publicReadOptions);
   await requirePermission("reconciliation:read", publicReadOptions);
   const resolvedSearchParams = searchParams ? await searchParams : {};
+  const dashboardView = Array.isArray(resolvedSearchParams.dashboardView)
+    ? resolvedSearchParams.dashboardView[0]
+    : resolvedSearchParams.dashboardView;
+
+  if (dashboardView !== "1") {
+    const adminPrincipal = await requirePermission("role:assignment:manage");
+
+    return (
+      <main className="admin-shell">
+        <section className="admin-header">
+          <div>
+            <p className="eyebrow">Administration</p>
+            <h1>System administration</h1>
+            <p className="lead">
+              Signed in as <span className="code">{adminPrincipal.email}</span>.
+            </p>
+          </div>
+        </section>
+
+        <section className="grid" aria-label="Administration functions">
+          <article className="card">
+            <h2>User access</h2>
+            <p>Manage exact-email and domain role grants for authenticated users.</p>
+            <Link className="table-link" href="/admin/users">Open user access</Link>
+          </article>
+          <article className="card">
+            <h2>Reconciliation</h2>
+            <p>Review generated issues and manage durable source and relationship decisions.</p>
+            <Link className="table-link" href="/admin/reconciliations">Open reconciliation</Link>
+          </article>
+          <article className="card">
+            <h2>Knowledge operations</h2>
+            <p>Search indexed grant evidence and maintain indexing and embedding coverage.</p>
+            <Link className="table-link" href="/admin/knowledge">Open grant knowledge</Link>
+          </article>
+          <article className="card">
+            <h2>Grants dashboard</h2>
+            <p>Return to application search, source telemetry, and grant evidence.</p>
+            <Link className="table-link" href="/dashboard">Open dashboard</Link>
+          </article>
+        </section>
+      </main>
+    );
+  }
+
   const activeApplicationFilter = normalizeApplicationFilter(resolvedSearchParams.applicationFilter);
   const activeApplicationSearch = normalizeApplicationSearch(resolvedSearchParams.applicationSearch);
-  const activeApplicationStatus = normalizeApplicationStatus(resolvedSearchParams.applicationStatus);
+  const activeApplicationStatus = defaultedApplicationStatus(resolvedSearchParams.applicationStatus);
   const activeGitHubIssueState = normalizeGitHubIssueState(resolvedSearchParams.githubIssueState);
   const activeApplicationLabels = normalizeApplicationLabels(resolvedSearchParams.applicationLabels);
   const activeExcludedApplicationLabels = normalizeApplicationLabels(resolvedSearchParams.excludedApplicationLabels);
@@ -586,7 +643,7 @@ export default async function AdminPage({
       <section className="panel application-workflow">
         <div className="section-heading">
           <div>
-            <h2>Application reconciliation</h2>
+            <h2>Applications</h2>
             <span className="section-count">
               {resultRangeText(
                 pagination.page,
@@ -595,7 +652,7 @@ export default async function AdminPage({
                 dashboard.applications.length
               )}
               {activeResultQualifiers.length ? ` for ${activeResultQualifiers.join(" and ")}` : ""}
-              <MetricHelp align="left" body={metricHelp.applicationRange} label="Application reconciliation range" />
+              <MetricHelp align="left" body={metricHelp.applicationRange} label="Application range" />
             </span>
             {pagination.search || pagination.status || pagination.labels.length || pagination.excludedLabels.length ? (
               <span className="section-count">
@@ -606,7 +663,7 @@ export default async function AdminPage({
           </div>
           <MetricHelp body={metricHelp.filterCounts} label="Application filter counts" />
         </div>
-        <nav className="filter-tabs" aria-label="Application reconciliation filters">
+        <nav className="filter-tabs" aria-label="Application filters">
           {applicationFilterOptions.map((option) => {
             const active = option.key === activeApplicationFilter;
             const href = adminHref({
@@ -626,7 +683,7 @@ export default async function AdminPage({
             );
           })}
         </nav>
-        <form action="/admin" className="table-controls" method="get">
+        <form action="/dashboard" className="table-controls" method="get">
           {activeApplicationFilter !== "all" ? (
             <input name="applicationFilter" type="hidden" value={activeApplicationFilter} />
           ) : null}
@@ -642,8 +699,8 @@ export default async function AdminPage({
           </label>
           <label className="search-field compact-field">
             <span>Status</span>
-            <select defaultValue={pagination.status} name="applicationStatus">
-              <option value="">Any status</option>
+            <select defaultValue={pagination.status || "all"} name="applicationStatus">
+              <option value="all">Any status</option>
               {dashboard.applicationStatusOptions.map((option) => (
                 <option key={option.normalized_status} value={option.normalized_status}>
                   {statusLabel(option.normalized_status)} ({numberText(option.application_count)})
@@ -778,7 +835,7 @@ export default async function AdminPage({
             </tbody>
           </table>
         </div>
-        <nav className="pagination" aria-label="Application reconciliation pages">
+        <nav className="pagination" aria-label="Application pages">
           {pagination.page > 1 ? (
             <Link className="page-link" href={previousPageHref}>
               Previous

@@ -33,7 +33,7 @@ export default async function AdminUsersPage() {
           <h1>User access</h1>
           <p className="lead">
             Signed in as <span className="code">{principal.email}</span>.{" "}
-            <Link className="table-link" href="/admin">
+            <Link className="table-link" href="/dashboard">
               Dashboard
             </Link>
           </p>

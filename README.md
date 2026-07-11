@@ -9,7 +9,7 @@ reconciles them into canonical applications and grants, and exposes public and
 administrator views without asking ZCG to replace its current tools first.
 
 - [Live prototype](https://zcg.pgpz.org)
-- [ZCG Grants Dashboard](https://zcg.pgpz.org/admin)
+- [ZCG Grants Dashboard](https://zcg.pgpz.org/dashboard)
 - [Grounded grant knowledge search](https://zcg.pgpz.org/admin/knowledge)
 - [Public grants API](https://zcg.pgpz.org/api/public/grants)
 - [Health check](https://zcg.pgpz.org/api/health)
@@ -189,10 +189,11 @@ Important boundaries:
 
 | Route | Purpose | Access |
 | --- | --- | --- |
-| `/admin` | Source telemetry, canonical applications, filters, and evidence links | Authenticated roles, or public read-only mode |
+| `/dashboard` | Source telemetry, canonical applications, filters, and evidence links | Authenticated roles, or public read-only mode |
 | `/admin/grants/:id` | Application details, labels, sources, decisions, and reconciliation issues | Authenticated roles, or public read-only mode |
 | `/admin/reconciliations` | Review and persist ambiguous source-to-application decisions | Public read-only mode; persistence requires reconciliation write access |
 | `/admin/knowledge` | Keyword, semantic, hybrid, and grounded evidence search | Public keyword/evidence search; richer modes require permissions |
+| `/admin` | Landing page for protected administrative functions | Administrator |
 | `/admin/users` | Email and domain role grants | Administrator |
 | `/api/public/grants` | Allowlisted public grant projection, currently capped at 100 rows | Public |
 | `/api/health` and `/api/health/db` | Application and database health | Public deployment checks |

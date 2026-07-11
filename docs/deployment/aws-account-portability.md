@@ -161,5 +161,5 @@ Expected result includes a successful `syncRunId` and, when the snapshot bucket 
 - Configure SES identity verification and set `SES_FROM_EMAIL` if email delivery should use SES instead of development logging.
 - Invoke the migration runner.
 - Confirm bootstrap admin sign-in.
-- Confirm `/admin` is denied without auth and accessible with the bootstrap admin.
+- Confirm `/dashboard` is denied without auth and accessible with the bootstrap admin.
 - Decide whether the ALB should be fronted by CloudFront/WAF before broader access.

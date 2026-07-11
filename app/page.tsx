@@ -87,7 +87,7 @@ export default async function HomePage() {
             without asking ZCG to replace its current tools first.
           </p>
           <div className="home-actions" aria-label="Prototype links">
-            <Link className="home-link primary" href="/admin">Explore the dashboard</Link>
+            <Link className="home-link primary" href="/dashboard">Explore the dashboard</Link>
             <Link className="home-link" href="/admin/knowledge">Search grant evidence</Link>
             <a
               className="home-link"
@@ -203,7 +203,7 @@ export default async function HomePage() {
           </p>
         </div>
         <nav className="home-surface-links" aria-label="Prototype surfaces">
-          <Link href="/admin">ZCG Grants Dashboard <span aria-hidden="true">→</span></Link>
+          <Link href="/dashboard">ZCG Grants Dashboard <span aria-hidden="true">→</span></Link>
           <Link href="/admin/reconciliations">Reconciliation workspace <span aria-hidden="true">→</span></Link>
           <Link href="/admin/knowledge">Grant knowledge search <span aria-hidden="true">→</span></Link>
           <Link href="/api/public/grants">Public grants API <span aria-hidden="true">→</span></Link>

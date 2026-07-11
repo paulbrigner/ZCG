@@ -24,7 +24,7 @@ export default async function AdminReconciliationsPage() {
             ) : (
               <>
                 Signed in as <span className="code">{principal.email}</span>.{" "}
-                <Link className="table-link" href="/admin">
+                <Link className="table-link" href="/dashboard">
                   Dashboard
                 </Link>
               </>

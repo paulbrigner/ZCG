@@ -60,7 +60,7 @@ Secrets should live in Secrets Manager or service-managed secrets. Avoid copying
    - `BETTER_AUTH_URL=https://zcg.pgpz.org`
    - `BETTER_AUTH_SECRET=<Secrets Manager-backed or generated strong secret>`
    - `BOOTSTRAP_ADMIN_EMAILS=<initial admin emails>`
-10. Verify `/api/health/db`, Better Auth sign-in, `/admin`, and `/api/admin/source-records`.
+10. Verify `/api/health/db`, Better Auth sign-in, `/dashboard`, and `/api/admin/source-records`.
 11. Create and associate a CloudFront-scope WAF web ACL before wider stakeholder access if public exposure increases.
 
 ## Phase 1 implication

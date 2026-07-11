@@ -202,7 +202,7 @@ export default async function GrantApplicationPage({
           <p className="eyebrow">Canonical application</p>
           <h1>{application.title}</h1>
           <p className="lead">
-            <Link className="table-link" href="/admin">
+            <Link className="table-link" href="/dashboard">
               Dashboard
             </Link>
           </p>
