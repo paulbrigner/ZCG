@@ -577,7 +577,7 @@ export async function listGrantAnalysisReports({
       where gar.application_id = $1
         and ($3::boolean = true
              or gar.visibility = 'shared'
-             or gar.requested_by_principal_id::text = $2)
+             or gar.requested_by_principal_id = $2::uuid)
         and ($4::text is null or gar.report_type = $4)
         and ($5::boolean = true or gar.status <> 'failed')
       order by gar.created_at desc,
@@ -613,7 +613,7 @@ export async function getGrantAnalysisReport({
         and ($2::uuid is null or gar.application_id = $2::uuid)
         and ($4::boolean = true
              or gar.visibility = 'shared'
-             or gar.requested_by_principal_id::text = $3)`,
+             or gar.requested_by_principal_id = $3::uuid)`,
     [reportId, applicationId, access.principalId, access.canReadAllPrivateReports === true]
   );
 
