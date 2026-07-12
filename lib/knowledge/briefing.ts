@@ -540,11 +540,64 @@ function selectEvenlyAcrossForumDiscussion(
   if (sorted.length <= limit) return sorted;
   if (limit <= 1) return sorted.slice(0, limit);
 
-  const selectedIndexes = new Set<number>();
-  for (let index = 0; index < limit; index += 1) {
-    selectedIndexes.add(Math.round(index * (sorted.length - 1) / (limit - 1)));
+  const windows = new Map<string, PreparedPackingCandidate[]>();
+  for (const candidate of sorted) {
+    const key = forumChunkSortKey(candidate);
+    const windowKey = `${key.topicId}:${key.windowStart}`;
+    windows.set(windowKey, [...(windows.get(windowKey) ?? []), candidate]);
   }
-  return [...selectedIndexes].map((index) => sorted[index]);
+  const allWindows = [...windows.values()];
+  const selectedWindowIndexes = new Set<number>();
+  const windowTarget = Math.min(limit, allWindows.length);
+
+  for (let index = 0; index < windowTarget; index += 1) {
+    selectedWindowIndexes.add(
+      windowTarget <= 1
+        ? 0
+        : Math.round(index * (allWindows.length - 1) / (windowTarget - 1))
+    );
+  }
+
+  const selected: PreparedPackingCandidate[] = [];
+  const selectedIds = new Set<string>();
+  const coveredPostKeys = new Set<string>();
+  const addCandidate = (candidate: PreparedPackingCandidate) => {
+    selected.push(candidate);
+    selectedIds.add(candidate.document.result.id);
+    forumPostKeys(candidate).forEach((key) => coveredPostKeys.add(key));
+  };
+
+  for (const windowIndex of selectedWindowIndexes) {
+    const windowCandidates = allWindows[windowIndex] ?? [];
+    const representative = [...windowCandidates].sort((left, right) =>
+      forumPostKeys(right).length - forumPostKeys(left).length
+      || right.promptContent.length - left.promptContent.length
+      || left.index - right.index
+    )[0];
+
+    if (representative) addCandidate(representative);
+  }
+
+  while (selected.length < limit) {
+    const remaining = sorted.filter((candidate) => !selectedIds.has(candidate.document.result.id));
+    if (!remaining.length) break;
+
+    const next = remaining.sort((left, right) => {
+      const leftKeys = forumPostKeys(left);
+      const rightKeys = forumPostKeys(right);
+      const leftNew = leftKeys.filter((key) => !coveredPostKeys.has(key)).length;
+      const rightNew = rightKeys.filter((key) => !coveredPostKeys.has(key)).length;
+      return rightNew - leftNew
+        || rightKeys.length - leftKeys.length
+        || right.promptContent.length - left.promptContent.length
+        || left.index - right.index;
+    })[0];
+
+    if (!next) break;
+    addCandidate(next);
+  }
+
+  return selected.sort((left, right) => sorted.indexOf(left) - sorted.indexOf(right));
 }
 
 function forumPostKeys(candidate: PreparedPackingCandidate) {

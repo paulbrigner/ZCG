@@ -427,6 +427,54 @@ test("samples primary Forum chunks across the full thread and classifies support
   assert.ok(pack.evidence.filter((item) => item.id.startsWith("supporting-chunk-")).length <= 3);
 });
 
+test("covers distinct Forum windows before allocating extra slots to oversized post parts", () => {
+  const openingParts = Array.from({ length: 10 }, (_, index) => documentFixture({
+    id: `opening-part-${index + 1}`,
+    documentKind: "forum_discussion_chunk",
+    sourceKind: "forum_link",
+    content: `Post #1 by applicant: ${"Opening proposal detail. ".repeat(80)}`,
+    metadata: {
+      relationshipRoles: ["primary_forum_thread"],
+      topicId: "789",
+      windowStartPostNumber: 1,
+      partNumber: index + 1,
+      postIds: ["post-1"]
+    }
+  }));
+  const laterWindows = Array.from({ length: 7 }, (_, index) => {
+    const firstPost = (index + 1) * 5 + 1;
+    return documentFixture({
+      id: `later-window-${firstPost}`,
+      documentKind: "forum_discussion_chunk",
+      sourceKind: "forum_link",
+      content: Array.from(
+        { length: 5 },
+        (_, postOffset) => `Post #${firstPost + postOffset} by participant: Substantive argument or response.`
+      ).join("\n"),
+      metadata: {
+        relationshipRoles: ["primary_forum_thread"],
+        topicId: "789",
+        windowStartPostNumber: firstPost,
+        partNumber: 1,
+        postIds: Array.from({ length: 5 }, (_, postOffset) => `post-${firstPost + postOffset}`)
+      }
+    });
+  });
+  const pack = evidencePack({
+    currentDocuments: [
+      documentFixture({ id: "summary", content: "Application scope and budget." }),
+      ...openingParts,
+      ...laterWindows
+    ]
+  });
+  const selectedForum = pack.evidence.filter((item) => item.documentKind === "forum_discussion_chunk");
+
+  assert.equal(selectedForum.length, 10);
+  assert.equal(selectedForum.filter((item) => item.id.startsWith("opening-part-")).length, 3);
+  assert.ok(laterWindows.every((window) => selectedForum.some((item) => item.id === window.result.id)));
+  assert.equal(pack.packing.primaryForum.packedPostCount, 36);
+});
+
 test("blocks a stock briefing when a linked Forum source contributes no substantive post body", () => {
   const pack = evidencePack({
     currentDocuments: [
