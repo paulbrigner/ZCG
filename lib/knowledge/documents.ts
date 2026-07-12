@@ -6,6 +6,7 @@ const contentMaxChars = 24000;
 const forumChunkMaxChars = 6000;
 const forumPostSegmentMaxChars = 3000;
 const forumPostsPerWindow = 5;
+const normalizedForumPostBatchSize = 20;
 const chunkedForumSourceKinds = new Set(["forum_link", "forum_meeting_minutes", "forum_update_topic"]);
 const sourceRecordBatchSize = 10;
 const writeBatchSize = 15;
@@ -88,6 +89,18 @@ type GrantKnowledgeNormalizedForumTopicRow = {
   coverage_complete: boolean;
   coverage_capped: boolean;
   posts: string;
+};
+
+type GrantKnowledgeNormalizedForumPostRow = {
+  post_id: string;
+  post_number: string | number | null;
+  reply_to_post_number: string | number | null;
+  username: string | null;
+  display_name: string | null;
+  created_at_source: string | null;
+  updated_at_source: string | null;
+  plain_text: string;
+  permalink: string;
 };
 
 type GrantKnowledgeDecisionMention = {
@@ -1103,28 +1116,7 @@ async function fetchNormalizedForumTopicsForApplication(applicationId: string) {
               dt.stream_post_count::text,
               dt.coverage_complete,
               dt.coverage_capped,
-              (
-                select coalesce(
-                  jsonb_agg(
-                    jsonb_build_object(
-                      'postId', dp.post_id::text,
-                      'postNumber', dp.post_number,
-                      'replyToPostNumber', dp.reply_to_post_number,
-                      'username', dp.username,
-                      'displayName', dp.display_name,
-                      'createdAt', dp.created_at_source,
-                      'updatedAt', dp.updated_at_source,
-                      'plainText', dp.plain_text,
-                      'permalink', dp.permalink
-                    )
-                    order by dp.post_number nulls last, dp.post_id
-                  ),
-                  '[]'::jsonb
-                )::text
-                  from discourse_posts dp
-                 where dp.discourse_topic_id = dt.id
-                   and dp.deleted_at is null
-              ) as posts
+              '[]'::jsonb::text as posts
          from discourse_topics dt
         where exists (
           select 1
@@ -1138,7 +1130,54 @@ async function fetchNormalizedForumTopicsForApplication(applicationId: string) {
       [applicationId]
     );
 
-    return result.rows.map(normalizedForumTopic);
+    const topics: GrantKnowledgeForumTopic[] = [];
+
+    for (const row of result.rows) {
+      const posts: Array<Record<string, unknown>> = [];
+      let offset = 0;
+
+      while (true) {
+        const postResult = await query<GrantKnowledgeNormalizedForumPostRow>(
+          `select post_id::text,
+                  post_number::text,
+                  reply_to_post_number::text,
+                  username,
+                  display_name,
+                  created_at_source::text,
+                  updated_at_source::text,
+                  plain_text,
+                  permalink
+             from discourse_posts
+            where discourse_topic_id = $1
+              and deleted_at is null
+            order by post_number nulls last, post_id
+            limit $2 offset $3`,
+          [row.discourse_topic_id, normalizedForumPostBatchSize, offset]
+        );
+
+        posts.push(...postResult.rows.map((post) => ({
+          postId: post.post_id,
+          postNumber: post.post_number,
+          replyToPostNumber: post.reply_to_post_number,
+          username: post.username,
+          displayName: post.display_name,
+          createdAt: post.created_at_source,
+          updatedAt: post.updated_at_source,
+          plainText: post.plain_text,
+          permalink: post.permalink
+        })));
+
+        if (postResult.rows.length < normalizedForumPostBatchSize) {
+          break;
+        }
+
+        offset += normalizedForumPostBatchSize;
+      }
+
+      topics.push(normalizedForumTopic({ ...row, posts: JSON.stringify(posts) }));
+    }
+
+    return topics;
   } catch (error) {
     if (normalizedForumSchemaUnavailable(error)) {
       return [];
