@@ -130,6 +130,9 @@ export class ZcgPrototypeStack extends Stack {
     const knowledgeEmbeddingScheduleMinutes = contextNumber(this, "knowledgeEmbeddingScheduleMinutes", 60);
     const knowledgeEmbeddingBatchSize = contextNumber(this, "knowledgeEmbeddingBatchSize", 2);
     const knowledgeEmbeddingTimeoutMs = contextNumber(this, "knowledgeEmbeddingTimeoutMs", 60000);
+    const knowledgeCommitteeBriefingModel =
+      (this.node.tryGetContext("knowledgeCommitteeBriefingModel") as string | undefined) ??
+      "openai-gpt-56-terra-pro";
     const forumMaxTopics = contextNumber(this, "forumMaxTopics", 2000);
     const forumMaxPostsPerTopic = contextNumber(this, "forumMaxPostsPerTopic", 20);
     const forumMaxCategoryPages = contextNumber(this, "forumMaxCategoryPages", 25);
@@ -259,6 +262,7 @@ export class ZcgPrototypeStack extends Stack {
       DB_SSL: "false",
       SNAPSHOT_BUCKET_NAME: snapshotBucket.bucketName,
       BOOTSTRAP_ADMIN_EMAILS: bootstrapAdminEmails,
+      ZCG_KNOWLEDGE_COMMITTEE_BRIEFING_MODEL: knowledgeCommitteeBriefingModel,
       ...(sesFromEmail ? { SES_FROM_EMAIL: sesFromEmail } : {})
     };
     const appSecrets = {
@@ -587,6 +591,7 @@ export class ZcgPrototypeStack extends Stack {
           DB_CLUSTER_ARN: database.clusterArn,
           DB_SECRET_ARN: database.secret!.secretArn,
           DB_NAME: "zcg",
+          ZCG_KNOWLEDGE_COMMITTEE_BRIEFING_MODEL: knowledgeCommitteeBriefingModel,
           ZCG_KNOWLEDGE_AI_TIMEOUT_MS: "120000",
           ZCG_KNOWLEDGE_QUERY_EMBEDDING_TIMEOUT_MS: "30000",
           ...(knowledgeEmbeddingApiSecretId

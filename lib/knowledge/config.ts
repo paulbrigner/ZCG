@@ -1,5 +1,6 @@
 const defaultAiBaseUrl = "https://api.venice.ai/api/v1";
 const defaultAiModel = "openai-gpt-55";
+const defaultCommitteeBriefingAiModel = "openai-gpt-56-terra-pro";
 const defaultEmbeddingModel = "text-embedding-bge-m3";
 const defaultEmbeddingDims = 1024;
 const defaultAiTimeoutMs = 18000;
@@ -45,6 +46,14 @@ export function knowledgeAiBaseUrl() {
 
 export function knowledgeAiModel() {
   return stringValue(process.env.ZCG_KNOWLEDGE_AI_MODEL) ?? defaultAiModel;
+}
+
+export function committeeBriefingAiModel() {
+  return stringValue(process.env.ZCG_KNOWLEDGE_COMMITTEE_BRIEFING_MODEL) ?? defaultCommitteeBriefingAiModel;
+}
+
+export function grantAnalysisAiModel(reportType: "committee_briefing" | "custom") {
+  return reportType === "committee_briefing" ? committeeBriefingAiModel() : knowledgeAiModel();
 }
 
 export function knowledgeAiTimeoutMs() {

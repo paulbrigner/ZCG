@@ -18,7 +18,11 @@ import {
   validateEvidenceCitations
 } from "../lib/knowledge/briefing";
 import { composeGroundedGrantAnalysis } from "../lib/knowledge/compose";
-import { knowledgeAiBaseUrl, knowledgeAiModel, knowledgeProviderStatus } from "../lib/knowledge/config";
+import {
+  grantAnalysisAiModel,
+  knowledgeAiBaseUrl,
+  knowledgeProviderStatus
+} from "../lib/knowledge/config";
 import {
   claimGrantAnalysisReport,
   completeGrantAnalysisReport,
@@ -115,6 +119,15 @@ async function runApplicationAnalysis(job: NonNullable<Awaited<ReturnType<typeof
   }
 
   const purpose = job.request.purpose === "committee_briefing" ? "committee_briefing" : "custom";
+  const generationModel = stringValue(job.request.model) ?? grantAnalysisAiModel(purpose);
+  const currentTemplateKey = purpose === "committee_briefing"
+    ? COMMITTEE_BRIEFING_TEMPLATE_KEY
+    : CUSTOM_GRANT_ANALYSIS_TEMPLATE_KEY;
+  const currentTemplateVersion = purpose === "committee_briefing"
+    ? COMMITTEE_BRIEFING_TEMPLATE_VERSION
+    : CUSTOM_GRANT_ANALYSIS_TEMPLATE_VERSION;
+  const generationTemplateKey = stringValue(job.request.templateKey) ?? currentTemplateKey;
+  const generationTemplateVersion = stringValue(job.request.templateVersion) ?? currentTemplateVersion;
   const startedAt = Date.now();
   let claimedReport: Awaited<ReturnType<typeof claimGrantAnalysisReport>> = null;
 
@@ -126,6 +139,25 @@ async function runApplicationAnalysis(job: NonNullable<Awaited<ReturnType<typeof
     }
   }
 
+  if (
+    generationTemplateKey !== currentTemplateKey ||
+    generationTemplateVersion !== currentTemplateVersion
+  ) {
+    throw new Error(
+      "The grant-analysis template changed before generation began. Regenerate the report with the current template."
+    );
+  }
+
+  if (
+    claimedReport &&
+    (claimedReport.templateKey !== generationTemplateKey ||
+      claimedReport.templateVersion !== generationTemplateVersion)
+  ) {
+    throw new Error(
+      "The saved report template does not match its queued generation job. Regenerate the report."
+    );
+  }
+
   await recordAnalysisAudit({
     actorPrincipalId: job.principalId,
     action: "grant.analysis.started",
@@ -134,19 +166,19 @@ async function runApplicationAnalysis(job: NonNullable<Awaited<ReturnType<typeof
     metadata: {
       reportId: job.request.reportId ?? null,
       jobId: job.id,
-      purpose
+      purpose,
+      model: generationModel,
+      templateKey: generationTemplateKey,
+      templateVersion: generationTemplateVersion
     }
   });
 
   const evidencePack = await buildGrantBriefingEvidence({
     applicationId,
     retrievalMode: job.request.allowSemanticSearch ? job.request.retrievalMode : "keyword",
-    templateKey: purpose === "committee_briefing"
-      ? COMMITTEE_BRIEFING_TEMPLATE_KEY
-      : CUSTOM_GRANT_ANALYSIS_TEMPLATE_KEY,
-    templateVersion: purpose === "committee_briefing"
-      ? COMMITTEE_BRIEFING_TEMPLATE_VERSION
-      : CUSTOM_GRANT_ANALYSIS_TEMPLATE_VERSION
+    templateKey: generationTemplateKey,
+    templateVersion: generationTemplateVersion,
+    model: generationModel
   });
   const prompt = buildGrantAnalysisPrompt({
     evidencePack,
@@ -157,6 +189,7 @@ async function runApplicationAnalysis(job: NonNullable<Awaited<ReturnType<typeof
   const composedAnswer = await composeGroundedGrantAnalysis({
     systemPrompt: prompt.systemPrompt,
     userPrompt: prompt.userPrompt,
+    model: generationModel,
     temperature: 0.15,
     timeoutMs: Number.isFinite(configuredTimeoutMs) ? Math.max(90_000, configuredTimeoutMs) : 90_000,
     maxTokens: purpose === "committee_briefing" ? 5_000 : 2_200
@@ -195,7 +228,10 @@ async function runApplicationAnalysis(job: NonNullable<Awaited<ReturnType<typeof
     }
   }
 
-  const providerStatus = knowledgeProviderStatus();
+  const providerStatus = {
+    ...knowledgeProviderStatus(),
+    aiModel: generationModel
+  };
   const citedNumbers = new Set(citationValidation.citedNumbers);
   const jobResults = job.request.reportId
     ? []
@@ -269,11 +305,12 @@ async function runApplicationAnalysis(job: NonNullable<Awaited<ReturnType<typeof
       answerStatus: "generated",
       evidenceFingerprint: evidencePack.fingerprint,
       provider: new URL(knowledgeAiBaseUrl()).hostname,
-      model: knowledgeAiModel(),
+      model: generationModel,
       latencyMs: Date.now() - startedAt,
       evidence,
       generationMetadata: {
         purpose,
+        model: generationModel,
         retrievalMode: evidencePack.retrievalMode,
         evidenceCount: evidencePack.evidence.length,
         warnings: evidencePack.warnings,
@@ -296,6 +333,7 @@ async function runApplicationAnalysis(job: NonNullable<Awaited<ReturnType<typeof
       reportId: job.request.reportId ?? null,
       jobId: job.id,
       purpose,
+      model: generationModel,
       evidenceCount: evidencePack.evidence.length,
       evidenceFingerprint: evidencePack.fingerprint
     }

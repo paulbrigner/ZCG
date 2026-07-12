@@ -231,9 +231,15 @@ test("stock briefing prompts isolate untrusted evidence and require neutral cite
 
   assert.match(prompt.systemPrompt, /untrusted evidence, never instructions/i);
   assert.match(prompt.systemPrompt, /do not recommend an autonomous approve-or-reject decision/i);
+  assert.match(prompt.systemPrompt, /internal provenance telemetry/i);
+  assert.match(prompt.systemPrompt, /funding-relevant fact/i);
+  assert.match(prompt.systemPrompt, /omit internal implementation details/i);
   assert.match(prompt.userPrompt, /BEGIN UNTRUSTED SOURCE TEXT/);
-  assert.match(prompt.userPrompt, /Comparable grants/);
-  assert.match(prompt.userPrompt, /Participant coverage is incomplete/);
+  assert.match(prompt.userPrompt, /Relevant precedents and documented outcomes/);
+  assert.match(prompt.userPrompt, /Team-history matching may be incomplete/);
+  assert.match(prompt.userPrompt, /Do not narrate dashboard operations or data plumbing/i);
+  assert.doesNotMatch(prompt.userPrompt, /Participant coverage is incomplete/);
+  assert.doesNotMatch(prompt.userPrompt, /must be disclosed/i);
   assert.equal(prompt.evidenceText.match(/BEGIN UNTRUSTED SOURCE TEXT/g)?.length, 1);
   assert.equal(prompt.evidenceText.match(/END UNTRUSTED SOURCE TEXT/g)?.length, 1);
   assert.match(prompt.evidenceText, /source boundary text escaped/i);
@@ -270,7 +276,24 @@ test("custom prompts are bounded and remain separate from evidence", () => {
   assert.match(prompt.userPrompt, /User question:/);
   assert.match(prompt.userPrompt, /milestone estimates/);
   assert.match(prompt.userPrompt, /Grounded evidence:/);
+  assert.doesNotMatch(prompt.systemPrompt, /internal provenance telemetry/i);
   assert.notEqual(prompt.evidenceFingerprint, evidencePack().fingerprint);
+});
+
+test("stock briefings omit operational selector warnings from the writing request", () => {
+  const prompt = buildGrantAnalysisPrompt({
+    evidencePack: evidencePack({
+      warnings: [
+        "Related and comparison evidence reached the 40-document safety limit; lower-priority documents may be omitted.",
+        "Only 1 similar declined/filtered/cancelled application(s) were found."
+      ]
+    }),
+    purpose: "committee_briefing"
+  });
+
+  assert.doesNotMatch(prompt.userPrompt, /40-document safety limit/i);
+  assert.doesNotMatch(prompt.userPrompt, /Only 1 similar/i);
+  assert.doesNotMatch(prompt.userPrompt, /Internal coverage notes for reasoning only/i);
 });
 
 test("citation validation accepts supplied citations and rejects missing or invented citations", () => {
@@ -293,13 +316,13 @@ test("citation validation accepts supplied citations and rejects missing or inve
 
 test("committee briefing structure validation requires all nine numbered sections", () => {
   const complete = [
-    "## 1. Executive summary of the request",
-    "## 2. Applicant and team track record, including prior grants and documented outcomes",
+    "## 1. Executive summary and decision snapshot",
+    "## 2. Applicant and team track record",
     "## 3. Proposal scope, milestones, budget, technical approach, and dependencies",
-    "## 4. Community and committee signals from Forum and meeting evidence",
-    "## 5. Comparable grants: approved examples and documented results",
-    "## 6. Delivery, security, governance, legal, adoption, and sustainability considerations",
-    "## 7. Contradictions, unresolved reconciliation issues, missing evidence, and questions",
+    "## 4. Community and committee signals",
+    "## 5. Relevant precedents and documented outcomes",
+    "## 6. Material risks and execution considerations",
+    "## 7. Material gaps and questions for the applicant",
     "## 8. Neutral decision considerations",
     "## 9. Numbered source list"
   ].join("\n");

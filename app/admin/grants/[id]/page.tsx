@@ -14,7 +14,7 @@ import {
   CUSTOM_GRANT_ANALYSIS_TEMPLATE_KEY,
   CUSTOM_GRANT_ANALYSIS_TEMPLATE_VERSION
 } from "@/lib/knowledge/briefing";
-import { knowledgeAiModel } from "@/lib/knowledge/config";
+import { grantAnalysisAiModel } from "@/lib/knowledge/config";
 import {
   getGrantAnalysisReportFreshness,
   listGrantAnalysisReportEvidence,
@@ -24,7 +24,7 @@ import {
   GrantAnalysisPanel,
   type GrantAnalysisReport as ClientGrantAnalysisReport
 } from "./grant-analysis-panel";
-import { MetricHelp, MetricLabel } from "../../metric-help";
+import { MetricHelp } from "../../metric-help";
 
 function moneyText(value: string | null) {
   if (!value) {
@@ -73,6 +73,18 @@ function dateOnlyText(value: string | null) {
 function numberText(value: string | number) {
   const parsed = typeof value === "number" ? value : Number(value);
   return Number.isFinite(parsed) ? parsed.toLocaleString("en-US") : "0";
+}
+
+function summaryText(value: string | null, maxLength = 240) {
+  const normalized = value?.replace(/\s+/g, " ").trim();
+
+  if (!normalized) {
+    return null;
+  }
+
+  return normalized.length > maxLength
+    ? `${normalized.slice(0, maxLength - 1).trimEnd()}…`
+    : normalized;
 }
 
 function githubLabelStyle(label: GitHubLabelRow): CSSProperties | undefined {
@@ -168,12 +180,6 @@ function parseSpeakerNotes(value: string | null | undefined): Array<{ speaker: s
 }
 
 const detailHelp = {
-  applicant:
-    "Applicant name stored on the canonical grant_applications row after reconciliation chooses the best available value from source evidence.",
-  status:
-    "Normalized status stored on the canonical application after interpreting GitHub labels, Sheet status fields, and reconciliation logic.",
-  requested:
-    "Requested amount on the canonical application, usually sourced from Sheet registry/payment fields or structured application evidence when available.",
   sourceState:
     "How the canonical application is currently supported by source evidence: matched GitHub + Sheet, GitHub only, Sheet + GitHub link, Sheet only, or unknown.",
   match:
@@ -215,6 +221,12 @@ export default async function GrantApplicationPage({
   const sourceEvidence = detail.sources.filter((source) => !["forum_link", "forum_meeting_minutes"].includes(source.source_kind));
   const primaryForumLinks = detail.forumLinks.filter((forumLink) => forumLink.relationship_role === "primary_forum_thread");
   const supportingForumLinks = detail.forumLinks.filter((forumLink) => forumLink.relationship_role !== "primary_forum_thread");
+  const primaryForum = primaryForumLinks.reduce<(typeof primaryForumLinks)[number] | null>(
+    (best, candidate) => Number(candidate.confidence) > Number(best?.confidence ?? -1) ? candidate : best,
+    null
+  );
+  const latestDecision = detail.decisionMentions[0] ?? null;
+  const reviewLabels = detail.githubLabels.slice(0, 5);
   let canReadAnalysis = false;
   let canGenerateAnalysis = false;
   let canPublishAnalysis = false;
@@ -253,7 +265,7 @@ export default async function GrantApplicationPage({
             currentTemplateVersion: committeeBriefing
               ? COMMITTEE_BRIEFING_TEMPLATE_VERSION
               : CUSTOM_GRANT_ANALYSIS_TEMPLATE_VERSION,
-            currentModel: knowledgeAiModel()
+            currentModel: grantAnalysisAiModel(report.reportType)
           })
         ]);
 
@@ -284,55 +296,67 @@ export default async function GrantApplicationPage({
 
   return (
     <main className="admin-shell">
-      <section className="admin-header">
+      <section className="admin-header grant-detail-header">
         <div>
-          <p className="eyebrow">Canonical application</p>
+          <Link className="table-link grant-detail-back-link" href="/dashboard">
+            Back to applications
+          </Link>
+          <p className="eyebrow">Grant application</p>
           <h1>{application.title}</h1>
-          <p className="lead">
-            <Link className="table-link" href="/dashboard">
-              Dashboard
-            </Link>
-          </p>
         </div>
       </section>
 
-      <section className="metric-grid" aria-label="Application summary">
-        <article className="metric-card">
-          <MetricLabel body={detailHelp.applicant} label="Applicant" text="Applicant" />
-          <strong>{application.applicant_name ?? "Unknown"}</strong>
-        </article>
-        <article className="metric-card">
-          <MetricLabel body={detailHelp.status} label="Status" text="Status" />
-          <strong>{application.normalized_status}</strong>
-        </article>
-        <article className="metric-card">
-          <MetricLabel body={detailHelp.requested} label="Requested" text="Requested" />
-          <strong>{moneyText(application.requested_amount_usd)}</strong>
-        </article>
-        <article className="metric-card">
-          <MetricLabel body={detailHelp.sourceState} label="Source state" text="Source state" />
-          <strong>{sourceProfileLabel(application.source_profile)}</strong>
-        </article>
-        <article className="metric-card">
-          <MetricLabel body={detailHelp.match} label="GitHub-Sheet match" text="GitHub-Sheet match" />
-          <strong>{matchText(application)}</strong>
-        </article>
-        <article className="metric-card">
-          <MetricLabel body={detailHelp.primaryForumThreads} label="Primary forum threads" text="Primary forum" />
-          <strong>{numberText(application.primary_forum_thread_count)}</strong>
-        </article>
-        <article className="metric-card">
-          <MetricLabel body={detailHelp.supportingForumReferences} label="Supporting forum references" text="Supporting forum" />
-          <strong>{numberText(application.supporting_forum_reference_count)}</strong>
-        </article>
-        <article className="metric-card">
-          <MetricLabel body={detailHelp.githubLabels} label="GitHub labels" text="GitHub labels" />
-          <strong>{numberText(application.github_label_count)}</strong>
-        </article>
-        <article className="metric-card">
-          <MetricLabel body={detailHelp.decisionNotes} label="Decision notes" text="Decision notes" />
-          <strong>{numberText(application.decision_mention_count)}</strong>
-        </article>
+      <section aria-labelledby="application-evaluation-heading" className="panel application-evaluation-summary">
+        <div className="application-evaluation-heading">
+          <div>
+            <p className="eyebrow">Evaluation snapshot</p>
+            <h2 id="application-evaluation-heading">Request at a glance</h2>
+          </div>
+          {application.github_issue_url || primaryForum?.source_url ? (
+            <nav aria-label="Primary application sources" className="application-evaluation-actions">
+              {application.github_issue_url ? (
+                <a className="detail-action-link primary" href={application.github_issue_url} rel="noreferrer" target="_blank">
+                  Open application source
+                </a>
+              ) : null}
+              {primaryForum?.source_url ? (
+                <a className="detail-action-link" href={primaryForum.source_url} rel="noreferrer" target="_blank">
+                  Open forum discussion
+                </a>
+              ) : null}
+            </nav>
+          ) : null}
+        </div>
+
+        <dl className="application-evaluation-facts">
+          <div>
+            <dt>Applicant</dt>
+            <dd>{application.applicant_name ?? "Unknown"}</dd>
+          </div>
+          <div>
+            <dt>Requested</dt>
+            <dd>{moneyText(application.requested_amount_usd)}</dd>
+          </div>
+          <div>
+            <dt>Status</dt>
+            <dd>
+              <span className={`badge ${application.normalized_status}`}>
+                {statusLabel(application.normalized_status)}
+              </span>
+            </dd>
+          </div>
+          <div>
+            <dt>Review context</dt>
+            <dd>
+              <span className={`badge ${primaryForum ? "neutral" : "warning"}`}>
+                {primaryForum ? "Forum discussion linked" : "No primary forum linked"}
+              </span>
+              <small>
+                {numberText(application.decision_mention_count)} committee record{application.decision_mention_count === "1" ? "" : "s"} linked
+              </small>
+            </dd>
+          </div>
+        </dl>
       </section>
 
       <GrantAnalysisPanel
@@ -342,6 +366,138 @@ export default async function GrantApplicationPage({
         canRead={canReadAnalysis}
         initialReports={initialAnalysisReports}
       />
+
+      <section aria-label="Current grant review signals" className="panel application-review-signals">
+        <div className="application-review-signal">
+          <span className="application-review-signal-label">Workflow signals</span>
+          {reviewLabels.length ? (
+            <div className="github-label-list">
+              {reviewLabels.map((label) => (
+                <span
+                  className={`github-label-chip ${label.label_category}`}
+                  key={label.label_name}
+                  style={githubLabelStyle(label)}
+                  title={label.label_description ?? label.label_status ?? label.label_category}
+                >
+                  {label.label_name}
+                </span>
+              ))}
+              {detail.githubLabels.length > reviewLabels.length ? (
+                <span className="github-label-chip overflow">
+                  +{numberText(detail.githubLabels.length - reviewLabels.length)} more
+                </span>
+              ) : null}
+            </div>
+          ) : <p>No structured workflow signals are recorded.</p>}
+        </div>
+
+        <div className="application-review-signal">
+          <span className="application-review-signal-label">Latest committee record</span>
+          {latestDecision ? (
+            <div className="application-decision-signal">
+              <div className="issue-heading">
+                <span className={`badge ${latestDecision.normalized_decision}`}>
+                  {statusLabel(latestDecision.normalized_decision)}
+                </span>
+                <span className="badge neutral">{dateOnlyText(latestDecision.meeting_date)}</span>
+              </div>
+              <p>
+                {summaryText(latestDecision.rationale_text ?? latestDecision.decision_text) ??
+                  "A linked committee record is available below."}
+              </p>
+            </div>
+          ) : <p>No linked committee decision record yet.</p>}
+        </div>
+      </section>
+
+      <details className="operations-disclosure application-operational-details">
+        <summary>
+          <span>Data quality and provenance</span>
+          <small>Source matching, linked-record coverage, and reconciliation diagnostics</small>
+        </summary>
+        <div className="operations-disclosure-body">
+          <section aria-labelledby="application-provenance-heading" className="panel">
+            <div className="section-heading">
+              <div>
+                <h2 id="application-provenance-heading">Source coverage</h2>
+                <span className="section-count">Operational context for tracing how this canonical record was assembled.</span>
+              </div>
+            </div>
+            <div className="source-counts compact-source-counts application-operational-metrics">
+              <div className="source-count">
+                <span className="count-with-help">
+                  Source state
+                  <MetricHelp align="left" body={detailHelp.sourceState} label="Source state" />
+                </span>
+                <strong>{sourceProfileLabel(application.source_profile)}</strong>
+              </div>
+              <div className="source-count">
+                <span className="count-with-help">
+                  GitHub-Sheet match
+                  <MetricHelp align="left" body={detailHelp.match} label="GitHub-Sheet match" />
+                </span>
+                <strong>{matchText(application)}</strong>
+              </div>
+              <div className="source-count">
+                <span className="count-with-help">
+                  Primary forum
+                  <MetricHelp align="left" body={detailHelp.primaryForumThreads} label="Primary forum threads" />
+                </span>
+                <strong>{numberText(application.primary_forum_thread_count)}</strong>
+              </div>
+              <div className="source-count">
+                <span className="count-with-help">
+                  Supporting forum
+                  <MetricHelp align="left" body={detailHelp.supportingForumReferences} label="Supporting forum references" />
+                </span>
+                <strong>{numberText(application.supporting_forum_reference_count)}</strong>
+              </div>
+              <div className="source-count">
+                <span className="count-with-help">
+                  GitHub labels
+                  <MetricHelp align="left" body={detailHelp.githubLabels} label="GitHub labels" />
+                </span>
+                <strong>{numberText(application.github_label_count)}</strong>
+              </div>
+              <div className="source-count">
+                <span className="count-with-help">
+                  Decision notes
+                  <MetricHelp align="left" body={detailHelp.decisionNotes} label="Decision notes" />
+                </span>
+                <strong>{numberText(application.decision_mention_count)}</strong>
+              </div>
+            </div>
+          </section>
+
+          <section aria-labelledby="application-reconciliation-heading" className="panel">
+            <div className="section-heading">
+              <div>
+                <h2 id="application-reconciliation-heading">Reconciliation issues</h2>
+                <span className="section-count">
+                  {numberText(application.open_issue_count)} open issue{application.open_issue_count === "1" ? "" : "s"}
+                </span>
+              </div>
+            </div>
+            <div className="evidence-list">
+              {detail.issues.length ? (
+                detail.issues.map((issue) => (
+                  <article className="evidence-item" key={issue.id}>
+                    <div className="issue-heading">
+                      <span className={`badge ${issue.severity}`}>{issue.severity}</span>
+                      <span className={`badge ${issue.status}`}>{issue.status}</span>
+                    </div>
+                    <h3>{issue.summary}</h3>
+                    <p>{issue.issue_type}</p>
+                    <p className="subtle">{compactJson(issue.details)}</p>
+                  </article>
+                ))
+              ) : (
+                <p>No reconciliation issues recorded.</p>
+              )}
+            </div>
+          </section>
+        </div>
+      </details>
 
       <section className="panel">
         <div className="section-heading">
@@ -534,63 +690,41 @@ export default async function GrantApplicationPage({
         </div>
       </section>
 
-      <section className="admin-grid two-column">
-        <article className="panel">
-          <div className="section-heading">
-            <h2>Other source evidence</h2>
+      <section className="panel">
+        <div className="section-heading">
+          <div>
+            <h2>Application source evidence</h2>
+            <span className="section-count">Primary GitHub, Sheet, and other non-forum source records.</span>
           </div>
-          <div className="evidence-list">
-            {sourceEvidence.map((source) => (
-              <article className="evidence-item" key={source.id}>
+        </div>
+        <div className="evidence-list">
+          {sourceEvidence.map((source) => (
+            <article className="evidence-item" key={source.id}>
+              <div>
+                <span className="badge neutral">{statusLabel(source.source_kind)}</span>
+                <h3>{source.title ?? source.source_id}</h3>
+                <p>{source.summary ?? "No source summary available."}</p>
+              </div>
+              <dl className="evidence-meta">
                 <div>
-                  <span className="badge neutral">{source.source_kind}</span>
-                  <h3>{source.title ?? source.source_id}</h3>
-                  <p>{source.summary ?? "No source summary available."}</p>
+                  <dt>Confidence</dt>
+                  <dd>{percentText(source.confidence)}</dd>
                 </div>
-                <dl className="evidence-meta">
-                  <div>
-                    <dt>Confidence</dt>
-                    <dd>{percentText(source.confidence)}</dd>
-                  </div>
-                  <div>
-                    <dt>Source ID</dt>
-                    <dd>{source.source_id}</dd>
-                  </div>
-                </dl>
-                {source.source_url ? (
-                  <a className="table-link" href={source.source_url} rel="noreferrer" target="_blank">
-                    Open source record
-                  </a>
-                ) : null}
-                <p className="subtle">{compactJson(source.metadata)}</p>
-              </article>
-            ))}
-            {sourceEvidence.length ? null : <p>No non-forum source evidence recorded.</p>}
-          </div>
-        </article>
-
-        <article className="panel">
-          <div className="section-heading">
-            <h2>Reconciliation issues</h2>
-          </div>
-          <div className="evidence-list">
-            {detail.issues.length ? (
-              detail.issues.map((issue) => (
-                <article className="evidence-item" key={issue.id}>
-                  <div className="issue-heading">
-                    <span className={`badge ${issue.severity}`}>{issue.severity}</span>
-                    <span className={`badge ${issue.status}`}>{issue.status}</span>
-                  </div>
-                  <h3>{issue.summary}</h3>
-                  <p>{issue.issue_type}</p>
-                  <p className="subtle">{compactJson(issue.details)}</p>
-                </article>
-              ))
-            ) : (
-              <p>No reconciliation issues recorded.</p>
-            )}
-          </div>
-        </article>
+                <div>
+                  <dt>Source ID</dt>
+                  <dd>{source.source_id}</dd>
+                </div>
+              </dl>
+              {source.source_url ? (
+                <a className="table-link" href={source.source_url} rel="noreferrer" target="_blank">
+                  Open source record
+                </a>
+              ) : null}
+              <p className="subtle">{compactJson(source.metadata)}</p>
+            </article>
+          ))}
+          {sourceEvidence.length ? null : <p>No non-forum source evidence recorded.</p>}
+        </div>
       </section>
     </main>
   );

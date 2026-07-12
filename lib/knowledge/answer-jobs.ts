@@ -18,6 +18,9 @@ export type GrantKnowledgeAnswerJobRequest = {
   applicationId?: string;
   reportId?: string;
   customPrompt?: string | null;
+  model?: string;
+  templateKey?: string;
+  templateVersion?: string;
 };
 
 export type GrantKnowledgeAnswerJob = {

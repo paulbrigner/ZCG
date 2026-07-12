@@ -18,7 +18,7 @@ import {
   CUSTOM_GRANT_ANALYSIS_TEMPLATE_VERSION,
   normalizeCustomGrantAnalysisPrompt
 } from "@/lib/knowledge/briefing";
-import { knowledgeAiModel } from "@/lib/knowledge/config";
+import { grantAnalysisAiModel } from "@/lib/knowledge/config";
 import {
   attachGrantAnalysisReportJob,
   createGrantAnalysisReport,
@@ -77,7 +77,7 @@ async function serializeReport(report: GrantAnalysisReport) {
       currentTemplateVersion: committeeBriefing
         ? COMMITTEE_BRIEFING_TEMPLATE_VERSION
         : CUSTOM_GRANT_ANALYSIS_TEMPLATE_VERSION,
-      currentModel: knowledgeAiModel()
+      currentModel: grantAnalysisAiModel(report.reportType)
     }),
     listGrantAnalysisReportEvidence(report.id)
   ]);
@@ -173,6 +173,14 @@ export async function POST(
     return NextResponse.json({ error: "Choose committee briefing or custom analysis." }, { status: 400 });
   }
 
+  const generationModel = grantAnalysisAiModel(reportType);
+  const generationTemplateKey = reportType === "committee_briefing"
+    ? COMMITTEE_BRIEFING_TEMPLATE_KEY
+    : CUSTOM_GRANT_ANALYSIS_TEMPLATE_KEY;
+  const generationTemplateVersion = reportType === "committee_briefing"
+    ? COMMITTEE_BRIEFING_TEMPLATE_VERSION
+    : CUSTOM_GRANT_ANALYSIS_TEMPLATE_VERSION;
+
   const application = await getApplication(applicationId);
 
   if (!application) {
@@ -247,17 +255,16 @@ export async function POST(
         title,
         requestedByPrincipalId: principal.id,
         customPrompt,
-        templateKey: reportType === "committee_briefing"
-          ? COMMITTEE_BRIEFING_TEMPLATE_KEY
-          : CUSTOM_GRANT_ANALYSIS_TEMPLATE_KEY,
-        templateVersion: reportType === "committee_briefing"
-          ? COMMITTEE_BRIEFING_TEMPLATE_VERSION
-          : CUSTOM_GRANT_ANALYSIS_TEMPLATE_VERSION,
+        templateKey: generationTemplateKey,
+        templateVersion: generationTemplateVersion,
         supersedesReportId: superseded?.id ?? null,
         regenerationReason: superseded
           ? requestedRegenerationReason ?? "Regenerated from the current evidence set."
           : null,
-        generationMetadata: { retrievalMode }
+        generationMetadata: {
+          retrievalMode,
+          requestedModel: generationModel
+        }
       });
     }
 
@@ -273,7 +280,10 @@ export async function POST(
         purpose: reportType === "committee_briefing" ? "committee_briefing" : "custom_analysis",
         applicationId,
         reportId: report?.id,
-        customPrompt
+        customPrompt,
+        model: generationModel,
+        templateKey: generationTemplateKey,
+        templateVersion: generationTemplateVersion
       }
     });
     jobId = job.id;
@@ -302,6 +312,7 @@ export async function POST(
         reportType,
         visibility,
         retrievalMode,
+        model: generationModel,
         ...invocation
       }
     }).catch((auditError) => {

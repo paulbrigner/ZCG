@@ -113,12 +113,14 @@ function responseText(payload: ChatCompletionResponse) {
 export async function composeGroundedGrantAnalysis({
   systemPrompt,
   userPrompt,
+  model = knowledgeAiModel(),
   temperature = 0.2,
   timeoutMs = knowledgeAiTimeoutMs(),
   maxTokens
 }: {
   systemPrompt: string;
   userPrompt: string;
+  model?: string;
   temperature?: number;
   timeoutMs?: number;
   maxTokens?: number;
@@ -142,7 +144,7 @@ export async function composeGroundedGrantAnalysis({
         "content-type": "application/json"
       },
       body: JSON.stringify({
-        model: knowledgeAiModel(),
+        model,
         temperature,
         ...(maxTokens
           ? isVenice

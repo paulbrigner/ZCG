@@ -512,6 +512,161 @@ button:disabled {
   line-height: 1.02;
 }
 
+.grant-detail-header {
+  padding-bottom: 0;
+}
+
+.grant-detail-header h1 {
+  font-size: clamp(34px, 3.6vw, 52px);
+  max-width: 1320px;
+}
+
+.grant-detail-back-link {
+  display: inline-flex;
+  font-size: 14px;
+  margin-bottom: 18px;
+}
+
+.application-evaluation-summary {
+  display: grid;
+  gap: 16px;
+  padding: 18px 20px;
+}
+
+.application-evaluation-heading {
+  align-items: flex-start;
+  display: flex;
+  gap: 20px;
+  justify-content: space-between;
+}
+
+.application-evaluation-heading h2 {
+  margin: 4px 0 0;
+}
+
+.application-evaluation-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.detail-action-link {
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: #273244;
+  display: inline-flex;
+  font-size: 13px;
+  font-weight: 800;
+  justify-content: center;
+  min-height: 40px;
+  padding: 8px 12px;
+  text-align: center;
+  text-decoration: none;
+}
+
+.detail-action-link.primary {
+  background: var(--blue);
+  border-color: var(--blue);
+  color: #ffffff;
+}
+
+.detail-action-link:hover {
+  border-color: #94a3b8;
+}
+
+.detail-action-link.primary:hover {
+  background: #1d4ed8;
+  border-color: #1d4ed8;
+}
+
+.detail-action-link:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, 0.22);
+  outline-offset: 2px;
+}
+
+.application-evaluation-facts {
+  background: var(--line);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 1px;
+  grid-template-columns: minmax(220px, 1.4fr) repeat(3, minmax(0, 1fr));
+  margin: 0;
+  overflow: hidden;
+}
+
+.application-evaluation-facts > div {
+  background: #ffffff;
+  min-width: 0;
+  padding: 12px 14px;
+}
+
+.application-evaluation-facts dt,
+.application-review-signal-label {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 850;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.application-evaluation-facts dd {
+  color: var(--ink);
+  font-size: 18px;
+  font-weight: 800;
+  line-height: 1.3;
+  margin: 6px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.application-evaluation-facts small {
+  color: var(--muted);
+  display: block;
+  font-size: 12px;
+  line-height: 1.4;
+  margin-top: 6px;
+}
+
+.application-review-signals {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.application-review-signal {
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding-top: 14px;
+}
+
+.application-review-signal p {
+  font-size: 13px;
+  margin: 0;
+}
+
+.application-decision-signal {
+  display: grid;
+  gap: 8px;
+}
+
+.application-decision-signal .issue-heading {
+  align-items: center;
+}
+
+.application-operational-details {
+  min-width: 0;
+}
+
+.application-operational-metrics {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .application-workflow {
   order: 2;
 }
@@ -1574,6 +1729,46 @@ button:disabled {
   .nav {
     align-items: flex-start;
     flex-wrap: wrap;
+  }
+
+  .application-evaluation-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .application-evaluation-actions {
+    justify-content: flex-start;
+  }
+
+  .application-evaluation-facts,
+  .application-review-signals,
+  .application-operational-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 560px) {
+  .grant-detail-header h1 {
+    font-size: clamp(30px, 9vw, 42px);
+  }
+
+  .application-evaluation-summary {
+    padding: 16px;
+  }
+
+  .application-evaluation-actions,
+  .application-evaluation-actions .detail-action-link {
+    width: 100%;
+  }
+
+  .application-evaluation-facts,
+  .application-review-signals,
+  .application-operational-metrics {
+    grid-template-columns: 1fr;
+  }
+
+  .application-evaluation-facts > div {
+    padding: 12px;
   }
 }
 

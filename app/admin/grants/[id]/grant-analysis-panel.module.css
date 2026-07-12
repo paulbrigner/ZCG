@@ -2,7 +2,7 @@
   background: var(--panel, #ffffff);
   border: 1px solid var(--line, #d8dee8);
   border-radius: 12px;
-  margin: 24px 0;
+  margin: 0;
   min-width: 0;
   overflow: hidden;
 }
