@@ -6,7 +6,7 @@ const contentMaxChars = 24000;
 const forumChunkMaxChars = 6000;
 const forumPostSegmentMaxChars = 3000;
 const forumPostsPerWindow = 5;
-const normalizedForumPostBatchSize = 20;
+const normalizedForumPostBatchSize = 10;
 const chunkedForumSourceKinds = new Set(["forum_link", "forum_meeting_minutes", "forum_update_topic"]);
 const sourceRecordBatchSize = 10;
 const writeBatchSize = 15;
@@ -1318,8 +1318,7 @@ async function fetchSourceRowsForApplication(applicationId: string) {
                   then jsonb_build_object(
                     'url', sr.raw_payload->'url',
                     'jsonUrl', sr.raw_payload->'jsonUrl',
-                    'topic', sr.raw_payload->'topic',
-                    'posts', coalesce(sr.raw_payload->'posts', '[]'::jsonb)
+                    'topic', sr.raw_payload->'topic'
                   )::text
                 else sr.raw_payload::text
               end as raw_payload,
