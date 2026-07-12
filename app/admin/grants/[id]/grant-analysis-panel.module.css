@@ -514,6 +514,7 @@
 }
 
 .promptDisclosure,
+.coverageDisclosure,
 .evidenceDisclosure,
 .historyDisclosure {
   border: 1px solid var(--line, #d8dee8);
@@ -522,6 +523,7 @@
 }
 
 .promptDisclosure summary,
+.coverageDisclosure summary,
 .evidenceDisclosure summary,
 .historyDisclosure > summary {
   cursor: pointer;
@@ -532,6 +534,7 @@
 }
 
 .promptDisclosure[open] summary,
+.coverageDisclosure[open] summary,
 .evidenceDisclosure[open] summary,
 .historyDisclosure[open] > summary {
   border-bottom: 1px solid var(--line, #d8dee8);
@@ -543,6 +546,126 @@
   margin: 0;
   padding: 15px;
   white-space: pre-wrap;
+}
+
+.coverageDisclosure summary {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.coverageDisclosure summary span {
+  color: var(--muted, #536070);
+  font-size: 11px;
+  font-weight: 750;
+  text-align: right;
+}
+
+.coverageBody {
+  display: grid;
+  gap: 15px;
+  padding: 15px;
+}
+
+.coverageIntro {
+  color: var(--muted, #536070);
+  font-size: 13px;
+  line-height: 1.45;
+  margin-bottom: 0;
+}
+
+.coverageGrid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 0;
+}
+
+.coverageGrid > div {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 7px;
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 11px;
+}
+
+.coverageGrid dt,
+.forumCoverage dt {
+  color: var(--muted, #536070);
+  font-size: 10px;
+  font-weight: 850;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.coverageGrid dd,
+.forumCoverage dd {
+  margin: 0;
+}
+
+.coverageGrid dd {
+  color: #273244;
+  font-size: 15px;
+  font-weight: 850;
+  overflow-wrap: anywhere;
+}
+
+.coverageGrid small {
+  color: var(--muted, #536070);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.forumCoverage {
+  border-top: 1px solid #e2e8f0;
+  display: grid;
+  gap: 10px;
+  padding-top: 15px;
+}
+
+.forumCoverage h5 {
+  font-size: 14px;
+  margin: 0;
+}
+
+.forumCoverage dl {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 0;
+}
+
+.forumCoverage dl > div {
+  border-left: 3px solid #bfdbfe;
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 3px 0 3px 10px;
+}
+
+.forumCoverage dd {
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 12px;
+  gap: 5px 12px;
+}
+
+.forumCoverage dd strong {
+  color: #1e40af;
+}
+
+.forumCoverage dd span {
+  color: var(--muted, #536070);
+}
+
+.forumCoverage p {
+  color: var(--muted, #536070);
+  font-size: 12px;
+  line-height: 1.4;
+  margin-bottom: 0;
 }
 
 .evidenceList {
@@ -770,6 +893,10 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .coverageGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .radioGrid {
     grid-template-columns: 1fr;
   }
@@ -811,8 +938,19 @@
   }
 
   .metadata,
+  .coverageGrid,
+  .forumCoverage dl,
   .formGrid {
     grid-template-columns: 1fr;
+  }
+
+  .coverageDisclosure summary {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .coverageDisclosure summary span {
+    text-align: left;
   }
 }
 
@@ -851,6 +989,7 @@
   :global(body[data-grant-briefing-print="true"]) .reportActions,
   :global(body[data-grant-briefing-print="true"]) .actionFeedback,
   :global(body[data-grant-briefing-print="true"]) .promptDisclosure,
+  :global(body[data-grant-briefing-print="true"]) .coverageDisclosure,
   :global(body[data-grant-briefing-print="true"]) .evidenceDisclosure {
     display: none !important;
   }

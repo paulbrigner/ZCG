@@ -1,6 +1,6 @@
 import type { ForumMirrorConfig, SourceMirrorRecord, SourceMirrorResult } from "./types";
 
-type DiscoursePost = {
+export type DiscoursePost = {
   id: number;
   name?: string | null;
   username?: string | null;
@@ -14,7 +14,7 @@ type DiscoursePost = {
   topic_slug?: string | null;
 };
 
-type DiscourseTopic = {
+export type DiscourseTopic = {
   id: number;
   title?: string | null;
   fancy_title?: string | null;
@@ -57,11 +57,40 @@ type DiscourseCategoryResponse = {
   };
 };
 
-type MirroredForumTopic = {
-  url: string;
+export type ForumTopicReference = {
+  topicId: number;
+  slug: string | null;
+  canonicalUrl: string;
+  referencedUrl: string;
+  referencedPostNumber: number | null;
+};
+
+export type MirroredForumTopic = {
+  reference: ForumTopicReference;
+  references: ForumTopicReference[];
   jsonUrl: string;
   topic: DiscourseTopic;
   posts: Array<DiscoursePost & { plainText: string }>;
+  streamPostIds: number[];
+  coverageComplete: boolean;
+  coverageCapped: boolean;
+  missingPostIds: number[];
+  fetchFailures: Array<{ postIds: number[]; error: string }>;
+  rateLimited: boolean;
+};
+
+export type ForumFetchDependencies = {
+  fetchImpl?: typeof fetch;
+  sleepImpl?: (ms: number) => Promise<void>;
+  randomImpl?: () => number;
+};
+
+type ForumFetchOptions = ForumFetchDependencies & {
+  maxPosts: number;
+  batchSize?: number;
+  batchDelayMs?: number;
+  maxAttempts?: number;
+  baseRetryDelayMs?: number;
 };
 
 type TopicRecordOptions = {
@@ -71,17 +100,27 @@ type TopicRecordOptions = {
 };
 
 const forumUrlPattern = /https?:\/\/forum\.zcashcommunity\.com\/t\/[^\s)"'<\]}]+/gi;
+const forumOrigin = "https://forum.zcashcommunity.com";
 const genericForumTopicSlugs = new Set(["zcg-code-of-conduct", "zcg-communication-guidelines"]);
 const defaultUpdatesCategoryUrl = "https://forum.zcashcommunity.com/c/grants/zomg-updates/34";
 const defaultMaxTopics = 2000;
-const defaultMaxPostsPerTopic = 20;
+const defaultMaxPostsPerLinkedTopic = 1000;
+const defaultMaxPostsPerUpdatesTopic = 20;
+const hardMaxPostsPerTopic = 1000;
 const defaultFetchDelayMs = 500;
 const defaultMaxCategoryPages = 25;
+const discoursePostBatchSize = 20;
+const defaultPostBatchDelayMs = 250;
+const defaultMaxFetchAttempts = 5;
+const defaultBaseRetryDelayMs = 500;
 
 class ForumRateLimitError extends Error {
-  constructor(url: string) {
+  retryAfterMs: number | null;
+
+  constructor(url: string, retryAfterMs: number | null = null) {
     super(`Zcash Forum mirror was rate limited while fetching ${url}.`);
     this.name = "ForumRateLimitError";
+    this.retryAfterMs = retryAfterMs;
   }
 }
 
@@ -113,10 +152,29 @@ function maxTopics(config?: ForumMirrorConfig) {
   return numberConfig(config?.maxTopics ?? process.env.ZCG_FORUM_MAX_TOPICS, defaultMaxTopics);
 }
 
-function maxPostsPerTopic(config?: ForumMirrorConfig) {
-  return numberConfig(
-    config?.maxPostsPerTopic ?? process.env.ZCG_FORUM_MAX_POSTS_PER_TOPIC,
-    defaultMaxPostsPerTopic
+function maxPostsPerLinkedTopic(config?: ForumMirrorConfig) {
+  return Math.min(
+    hardMaxPostsPerTopic,
+    numberConfig(
+      config?.maxPostsPerLinkedTopic ??
+        config?.maxPostsPerTopic ??
+        process.env.ZCG_FORUM_MAX_POSTS_PER_LINKED_TOPIC ??
+        process.env.ZCG_FORUM_MAX_POSTS_PER_TOPIC,
+      defaultMaxPostsPerLinkedTopic
+    )
+  );
+}
+
+function maxPostsPerUpdatesTopic(config?: ForumMirrorConfig) {
+  return Math.min(
+    hardMaxPostsPerTopic,
+    numberConfig(
+      config?.maxPostsPerUpdatesTopic ??
+        config?.maxPostsPerTopic ??
+        process.env.ZCG_FORUM_MAX_POSTS_PER_UPDATES_TOPIC ??
+        process.env.ZCG_FORUM_MAX_POSTS_PER_TOPIC,
+      defaultMaxPostsPerUpdatesTopic
+    )
   );
 }
 
@@ -227,7 +285,7 @@ function htmlLinks(value: string | null | undefined) {
   return links;
 }
 
-export function normalizeForumTopicUrl(value: string) {
+export function parseForumTopicReference(value: string): ForumTopicReference | null {
   const trimmed = value.replace(/[.,;:]+$/g, "").replace(/\/+$/g, "");
 
   try {
@@ -238,25 +296,47 @@ export function normalizeForumTopicUrl(value: string) {
     }
 
     const segments = parsed.pathname.split("/").filter(Boolean);
-    const slug = segments[1];
-    const topicIdMatch = segments[2]?.match(/^\d+/) ?? (slug?.match(/^\d+/) ?? null);
-    const topicId = topicIdMatch?.[0] ?? null;
-    const postNumberMatch = segments[3]?.match(/^\d+/) ?? null;
-    const postNumber = postNumberMatch?.[0] ?? null;
+    const slugOrTopicId = segments[1] ?? null;
+    const idOnlyPath = Boolean(slugOrTopicId?.match(/^\d+$/));
+    const slug = idOnlyPath ? null : slugOrTopicId;
+    const topicIdValue = idOnlyPath ? slugOrTopicId : segments[2];
+    const postNumberValue = idOnlyPath ? segments[2] : segments[3];
+    const topicId = Number(topicIdValue);
+    const pathPostNumber = Number(postNumberValue);
+    const hashPostNumber = Number(parsed.hash.match(/^#post_(\d+)$/i)?.[1]);
+    const referencedPostNumber = Number.isInteger(pathPostNumber) && pathPostNumber > 0
+      ? pathPostNumber
+      : Number.isInteger(hashPostNumber) && hashPostNumber > 0
+        ? hashPostNumber
+        : null;
 
-    if (!slug || !topicId || genericForumTopicSlugs.has(slug)) {
+    if (
+      !slugOrTopicId ||
+      !Number.isInteger(topicId) ||
+      topicId <= 0 ||
+      (slug && genericForumTopicSlugs.has(slug))
+    ) {
       return null;
     }
 
-    parsed.hash = "";
-    parsed.search = "";
-    parsed.pathname = slug === topicId
-      ? `/t/${topicId}${postNumber ? `/${postNumber}` : ""}`
-      : `/t/${slug}/${topicId}${postNumber ? `/${postNumber}` : ""}`;
-    return parsed.toString();
+    const canonicalPath = slug ? `/t/${slug}/${topicId}` : `/t/${topicId}`;
+    const canonicalUrl = `${forumOrigin}${canonicalPath}`;
+    const referencedUrl = `${canonicalUrl}${referencedPostNumber ? `/${referencedPostNumber}` : ""}`;
+
+    return {
+      topicId,
+      slug,
+      canonicalUrl,
+      referencedUrl,
+      referencedPostNumber
+    };
   } catch {
     return null;
   }
+}
+
+export function normalizeForumTopicUrl(value: string) {
+  return parseForumTopicReference(value)?.referencedUrl ?? null;
 }
 
 export function forumTopicUrlsFromText(value: string) {
@@ -282,6 +362,16 @@ function topicJsonUrl(topicUrl: string) {
   return parsed.toString();
 }
 
+function postsBatchJsonUrl(reference: ForumTopicReference, postIds: number[]) {
+  const url = new URL(`/t/${reference.topicId}/posts.json`, reference.canonicalUrl);
+
+  for (const postId of postIds) {
+    url.searchParams.append("post_ids[]", String(postId));
+  }
+
+  return url.toString();
+}
+
 function forumHeaders() {
   return {
     accept: "application/json",
@@ -289,63 +379,162 @@ function forumHeaders() {
   };
 }
 
-async function fetchJson<T>(url: string) {
-  const response = await fetch(url, { headers: forumHeaders() });
-
-  if (response.status === 404 || response.status === 403 || response.status === 410) {
+function retryAfterMs(value: string | null) {
+  if (!value) {
     return null;
   }
 
-  if (response.status === 429) {
-    throw new ForumRateLimitError(url);
+  const seconds = Number(value);
+
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return Math.ceil(seconds * 1000);
   }
 
-  if (!response.ok) {
-    throw new Error(`Zcash Forum mirror failed for ${url}: ${response.status} ${response.statusText}`);
-  }
-
-  return (await response.json()) as T;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? Math.max(0, timestamp - Date.now()) : null;
 }
 
-async function fetchAdditionalPosts(topic: DiscourseTopic, maxPosts: number) {
-  const loadedPosts = topic.post_stream?.posts ?? [];
-  const loadedPostIds = new Set(loadedPosts.map((post) => post.id));
-  const stream = topic.post_stream?.stream ?? [];
-  const missingPostIds = stream
-    .filter((postId) => !loadedPostIds.has(postId))
-    .slice(0, Math.max(0, maxPosts - loadedPosts.length));
-  const posts: DiscoursePost[] = [...loadedPosts];
+async function fetchJson<T>(
+  url: string,
+  dependencies: ForumFetchDependencies = {},
+  options: { maxAttempts?: number; baseRetryDelayMs?: number } = {}
+) {
+  const fetchImpl = dependencies.fetchImpl ?? fetch;
+  const sleepImpl = dependencies.sleepImpl ?? sleep;
+  const randomImpl = dependencies.randomImpl ?? Math.random;
+  const attempts = Math.max(1, options.maxAttempts ?? defaultMaxFetchAttempts);
+  const baseDelayMs = Math.max(1, options.baseRetryDelayMs ?? defaultBaseRetryDelayMs);
 
-  for (const postId of missingPostIds) {
-    const post = await fetchJson<DiscoursePost>(`https://forum.zcashcommunity.com/posts/${postId}.json`);
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    let response: Response;
 
-    if (post) {
-      posts.push(post);
+    try {
+      response = await fetchImpl(url, { headers: forumHeaders() });
+    } catch (error) {
+      if (attempt === attempts) {
+        throw new Error(
+          `Zcash Forum mirror could not reach ${url}: ${error instanceof Error ? error.message : String(error)}`,
+          { cause: error }
+        );
+      }
+
+      const exponentialDelay = baseDelayMs * (2 ** (attempt - 1));
+      const jitter = Math.floor(randomImpl() * baseDelayMs);
+      await sleepImpl(exponentialDelay + jitter);
+      continue;
     }
+
+    if (response.status === 404 || response.status === 403 || response.status === 410) {
+      return null;
+    }
+
+    if (response.ok) {
+      return (await response.json()) as T;
+    }
+
+    const shouldRetry = response.status === 429 || response.status >= 500;
+    const waitFromHeader = retryAfterMs(response.headers.get("retry-after"));
+
+    if (!shouldRetry || attempt === attempts) {
+      if (response.status === 429) {
+        throw new ForumRateLimitError(url, waitFromHeader);
+      }
+
+      throw new Error(`Zcash Forum mirror failed for ${url}: ${response.status} ${response.statusText}`);
+    }
+
+    const exponentialDelay = baseDelayMs * (2 ** (attempt - 1));
+    const jitter = Math.floor(randomImpl() * baseDelayMs);
+    await sleepImpl(waitFromHeader ?? exponentialDelay + jitter);
   }
 
-  return posts
-    .slice(0, maxPosts)
-    .sort((left, right) => Number(left.post_number ?? 0) - Number(right.post_number ?? 0))
-    .map((post) => ({
-      ...post,
-      plainText: htmlToPlainText(post.cooked)
-    }));
+  throw new Error(`Zcash Forum mirror exhausted retries for ${url}.`);
 }
 
-async function fetchForumTopic(url: string, maxPosts: number): Promise<MirroredForumTopic | null> {
-  const jsonUrl = topicJsonUrl(url);
-  const topic = await fetchJson<DiscourseTopic>(jsonUrl);
+function chunkValues<T>(values: T[], size: number) {
+  const chunks: T[][] = [];
+
+  for (let index = 0; index < values.length; index += size) {
+    chunks.push(values.slice(index, index + size));
+  }
+
+  return chunks;
+}
+
+export async function fetchCompleteForumTopic(
+  reference: ForumTopicReference,
+  options: ForumFetchOptions
+): Promise<MirroredForumTopic | null> {
+  const jsonUrl = topicJsonUrl(reference.canonicalUrl);
+  const retryOptions = {
+    maxAttempts: options.maxAttempts,
+    baseRetryDelayMs: options.baseRetryDelayMs
+  };
+  const topic = await fetchJson<DiscourseTopic>(jsonUrl, options, retryOptions);
 
   if (!topic) {
     return null;
   }
 
+  const maxPostCount = Math.min(hardMaxPostsPerTopic, Math.max(1, options.maxPosts));
+  const batchSize = Math.min(discoursePostBatchSize, Math.max(1, options.batchSize ?? discoursePostBatchSize));
+  const loadedPosts = topic.post_stream?.posts ?? [];
+  const stream = (topic.post_stream?.stream ?? loadedPosts.map((post) => post.id))
+    .filter((postId) => Number.isInteger(postId) && postId > 0);
+  const selectedStreamPostIds = stream.slice(0, maxPostCount);
+  const selectedPostIdSet = new Set(selectedStreamPostIds);
+  const postsById = new Map(
+    loadedPosts
+      .filter((post) => selectedPostIdSet.has(post.id))
+      .map((post) => [post.id, post] as const)
+  );
+  const fetchFailures: Array<{ postIds: number[]; error: string }> = [];
+  let rateLimited = false;
+  const missingPostIds = selectedStreamPostIds.filter((postId) => !postsById.has(postId));
+
+  for (const [batchIndex, postIds] of chunkValues(missingPostIds, batchSize).entries()) {
+    if (batchIndex > 0) {
+      await (options.sleepImpl ?? sleep)(Math.max(0, options.batchDelayMs ?? defaultPostBatchDelayMs));
+    }
+
+    try {
+      const response = await fetchJson<{ post_stream?: { posts?: DiscoursePost[] } }>(
+        postsBatchJsonUrl(reference, postIds),
+        options,
+        retryOptions
+      );
+
+      for (const post of response?.post_stream?.posts ?? []) {
+        if (selectedPostIdSet.has(post.id)) {
+          postsById.set(post.id, post);
+        }
+      }
+    } catch (error) {
+      fetchFailures.push({ postIds, error: error instanceof Error ? error.message : String(error) });
+      rateLimited = error instanceof ForumRateLimitError;
+      break;
+    }
+  }
+
+  const stillMissingPostIds = selectedStreamPostIds.filter((postId) => !postsById.has(postId));
+  const coverageCapped = stream.length > selectedStreamPostIds.length;
+  const posts = selectedStreamPostIds
+    .map((postId) => postsById.get(postId))
+    .filter((post): post is DiscoursePost => Boolean(post))
+    .map((post) => ({ ...post, plainText: htmlToPlainText(post.cooked) }));
+
   return {
-    url,
+    reference,
+    references: [reference],
     jsonUrl,
     topic,
-    posts: await fetchAdditionalPosts(topic, maxPosts)
+    posts,
+    streamPostIds: stream,
+    coverageComplete: !coverageCapped && stillMissingPostIds.length === 0,
+    coverageCapped,
+    missingPostIds: stillMissingPostIds,
+    fetchFailures,
+    rateLimited
   };
 }
 
@@ -384,7 +573,12 @@ function topicUpdatedAt(topic: MirroredForumTopic) {
   return topic.topic.last_posted_at ?? topic.topic.updated_at ?? topic.topic.bumped_at ?? topic.topic.created_at ?? null;
 }
 
-function topicRecord(topic: MirroredForumTopic, fetchedAt: string, options: TopicRecordOptions = {}): SourceMirrorRecord {
+function topicRecord(
+  topic: MirroredForumTopic,
+  reference: ForumTopicReference,
+  fetchedAt: string,
+  options: TopicRecordOptions = {}
+): SourceMirrorRecord {
   const posts = topic.posts.map((post) => ({
     id: post.id,
     postNumber: post.post_number ?? null,
@@ -403,13 +597,15 @@ function topicRecord(topic: MirroredForumTopic, fetchedAt: string, options: Topi
 
   return {
     sourceKind,
-    sourceId: topic.url,
-    sourceUrl: topic.url,
+    sourceId: reference.referencedUrl,
+    sourceUrl: reference.referencedUrl,
     sourceUpdatedAt: topicUpdatedAt(topic),
     title: topicTitle(topic),
     summary: topicSummary(topic),
     rawPayload: {
-      url: topic.url,
+      url: reference.referencedUrl,
+      canonicalUrl: reference.canonicalUrl,
+      referencedPostNumber: reference.referencedPostNumber,
       jsonUrl: topic.jsonUrl,
       topic: {
         id: topic.topic.id,
@@ -424,9 +620,23 @@ function topicRecord(topic: MirroredForumTopic, fetchedAt: string, options: Topi
         replyCount: topic.topic.reply_count ?? null,
         views: topic.topic.views ?? null,
         tags: topic.topic.tags ?? [],
-        categoryId: topic.topic.category_id ?? null
+        categoryId: topic.topic.category_id ?? null,
+        streamPostIds: topic.streamPostIds
       },
       posts,
+      coverage: {
+        complete: topic.coverageComplete,
+        capped: topic.coverageCapped,
+        streamPostCount: topic.streamPostIds.length,
+        fetchedPostCount: posts.length,
+        missingPostIds: topic.missingPostIds,
+        fetchFailures: topic.fetchFailures,
+        rateLimited: topic.rateLimited
+      },
+      references: topic.references.map((item) => ({
+        url: item.referencedUrl,
+        postNumber: item.referencedPostNumber
+      })),
       fullText: posts
         .map((post) => [`Post #${post.postNumber ?? "?"} by ${post.username ?? "unknown"}`, post.plainText].join("\n"))
         .join("\n\n")
@@ -436,12 +646,57 @@ function topicRecord(topic: MirroredForumTopic, fetchedAt: string, options: Topi
       mirrorKind,
       fetchedAt,
       topicId: topic.topic.id,
+      canonicalTopicUrl: reference.canonicalUrl,
+      referencedPostNumber: reference.referencedPostNumber,
       categoryId: topic.topic.category_id ?? null,
       postCountFetched: posts.length,
       postCountReported: topic.topic.posts_count ?? null,
+      postStreamCount: topic.streamPostIds.length,
+      coverageComplete: topic.coverageComplete,
+      coverageCapped: topic.coverageCapped,
       ...options.metadata
     }
   };
+}
+
+function topicRecords(topic: MirroredForumTopic, fetchedAt: string, options: TopicRecordOptions = {}) {
+  return topic.references.map((reference) => topicRecord(topic, reference, fetchedAt, options));
+}
+
+export function groupForumTopicReferences(values: string[]) {
+  const grouped = new Map<number, ForumTopicReference[]>();
+
+  for (const value of values) {
+    const reference = parseForumTopicReference(value);
+
+    if (!reference) {
+      continue;
+    }
+
+    const references = grouped.get(reference.topicId) ?? [];
+
+    if (!references.some((item) => item.referencedUrl === reference.referencedUrl)) {
+      references.push(reference);
+      grouped.set(reference.topicId, references);
+    }
+  }
+
+  return [...grouped.values()]
+    .map((references) => references.sort((left, right) => left.referencedUrl.localeCompare(right.referencedUrl)))
+    .sort((left, right) => left[0]!.topicId - right[0]!.topicId);
+}
+
+async function fetchForumTopic(
+  references: ForumTopicReference[],
+  maxPosts: number
+): Promise<MirroredForumTopic | null> {
+  const topic = await fetchCompleteForumTopic(references[0]!, { maxPosts });
+
+  if (topic) {
+    topic.references = references;
+  }
+
+  return topic;
 }
 
 export function forumTopicUrlsFromSourceRecords(records: SourceMirrorRecord[]) {
@@ -464,10 +719,10 @@ export function forumTopicUrlsFromSourceRecords(records: SourceMirrorRecord[]) {
 export async function mirrorForumTopics(config: ForumMirrorConfig = {}): Promise<SourceMirrorResult> {
   const fetchedAt = new Date().toISOString();
   const maxTopicCount = maxTopics(config);
-  const maxPostCount = maxPostsPerTopic(config);
+  const maxPostCount = maxPostsPerLinkedTopic(config);
   const delayMs = fetchDelayMs(config);
   const skippedTopicUrls = skippedUrls(config);
-  const urls = [
+  const discoveredUrls = [
     ...new Set(
       configuredUrls(config)
         .map((url) => normalizeForumTopicUrl(url))
@@ -475,26 +730,38 @@ export async function mirrorForumTopics(config: ForumMirrorConfig = {}): Promise
     )
   ]
     .filter((url) => !skippedTopicUrls.has(url))
-    .sort((left, right) => left.localeCompare(right))
-    .slice(0, maxTopicCount);
+    .sort((left, right) => left.localeCompare(right));
+  const topicReferenceGroups = groupForumTopicReferences(discoveredUrls).slice(0, maxTopicCount);
+  const urls = topicReferenceGroups.flat().map((reference) => reference.referencedUrl);
   const records: SourceMirrorRecord[] = [];
   const failures: Array<{ url: string; error: string }> = [];
+  let topicsMirrored = 0;
+  let topicsWithPartialCoverage = 0;
   let rateLimitedAt: string | null = null;
 
-  for (const [index, url] of urls.entries()) {
+  for (const [index, references] of topicReferenceGroups.entries()) {
     if (index > 0 && delayMs > 0) {
       await sleep(delayMs);
     }
 
+    const url = references[0]!.canonicalUrl;
+
     try {
-      const topic = await fetchForumTopic(url, maxPostCount);
+      const topic = await fetchForumTopic(references, maxPostCount);
 
       if (!topic) {
         failures.push({ url, error: "Topic unavailable or not public." });
         continue;
       }
 
-      records.push(topicRecord(topic, fetchedAt));
+      records.push(...topicRecords(topic, fetchedAt));
+      topicsMirrored += 1;
+      topicsWithPartialCoverage += topic.coverageComplete ? 0 : 1;
+
+      if (topic.rateLimited) {
+        rateLimitedAt = url;
+        break;
+      }
     } catch (error) {
       failures.push({ url, error: error instanceof Error ? error.message : String(error) });
 
@@ -506,7 +773,9 @@ export async function mirrorForumTopics(config: ForumMirrorConfig = {}): Promise
   }
 
   const topicCountSkippedAfterRateLimit = rateLimitedAt
-    ? urls.slice(urls.indexOf(rateLimitedAt) + 1).length
+    ? topicReferenceGroups.slice(
+        topicReferenceGroups.findIndex((references) => references[0]?.canonicalUrl === rateLimitedAt) + 1
+      ).length
     : 0;
 
   return {
@@ -515,13 +784,15 @@ export async function mirrorForumTopics(config: ForumMirrorConfig = {}): Promise
     sourceUrl: "https://forum.zcashcommunity.com",
     rawPayload: {
       fetchedAt,
-      topicCountRequested: urls.length,
+      topicCountRequested: topicReferenceGroups.length,
+      referenceCountRequested: urls.length,
       topicCountSkippedConfigured: skippedTopicUrls.size,
-      topicCountMirrored: records.length,
+      topicCountMirrored: topicsMirrored,
+      topicCountPartial: topicsWithPartialCoverage,
       topicCountFailed: failures.length,
       topicCountSkippedAfterRateLimit,
       maxTopics: maxTopicCount,
-      maxPostsPerTopic: maxPostCount,
+      maxPostsPerLinkedTopic: maxPostCount,
       fetchDelayMs: delayMs,
       rateLimitedAt,
       urls,
@@ -530,13 +801,15 @@ export async function mirrorForumTopics(config: ForumMirrorConfig = {}): Promise
     records,
     metadata: {
       fetchedAt,
-      topicCountRequested: urls.length,
+      topicCountRequested: topicReferenceGroups.length,
+      referenceCountRequested: urls.length,
       topicCountSkippedConfigured: skippedTopicUrls.size,
-      topicCountMirrored: records.length,
+      topicCountMirrored: topicsMirrored,
+      topicCountPartial: topicsWithPartialCoverage,
       topicCountFailed: failures.length,
       topicCountSkippedAfterRateLimit,
       maxTopics: maxTopicCount,
-      maxPostsPerTopic: maxPostCount,
+      maxPostsPerLinkedTopic: maxPostCount,
       fetchDelayMs: delayMs,
       rateLimitedAt,
       recordCount: records.length
@@ -548,7 +821,7 @@ export async function mirrorForumUpdatesCategory(config: ForumMirrorConfig = {})
   const fetchedAt = new Date().toISOString();
   const categoryUrl = updatesCategoryUrl(config);
   const maxTopicCount = maxTopics(config);
-  const maxPostCount = maxPostsPerTopic(config);
+  const maxPostCount = maxPostsPerUpdatesTopic(config);
   const maxPages = maxCategoryPages(config);
   const delayMs = fetchDelayMs(config);
   const skippedTopicUrls = skippedUrls(config);
@@ -605,16 +878,22 @@ export async function mirrorForumUpdatesCategory(config: ForumMirrorConfig = {})
   }
 
   const discoveredUrls = [...new Set(topicUrls)];
-  const urls = discoveredUrls.filter((url) => !skippedTopicUrls.has(url)).slice(0, maxTopicCount);
+  const selectedUrls = discoveredUrls.filter((url) => !skippedTopicUrls.has(url));
+  const topicReferenceGroups = groupForumTopicReferences(selectedUrls).slice(0, maxTopicCount);
+  const urls = topicReferenceGroups.flat().map((reference) => reference.referencedUrl);
   const records: SourceMirrorRecord[] = [];
+  let topicsMirrored = 0;
+  let topicsWithPartialCoverage = 0;
 
-  for (const [index, url] of urls.entries()) {
+  for (const [index, references] of topicReferenceGroups.entries()) {
     if (index > 0 && delayMs > 0) {
       await sleep(delayMs);
     }
 
+    const url = references[0]!.canonicalUrl;
+
     try {
-      const topic = await fetchForumTopic(url, maxPostCount);
+      const topic = await fetchForumTopic(references, maxPostCount);
 
       if (!topic) {
         topicFailures.push({ url, error: "Topic unavailable or not public." });
@@ -622,7 +901,7 @@ export async function mirrorForumUpdatesCategory(config: ForumMirrorConfig = {})
       }
 
       records.push(
-        topicRecord(topic, fetchedAt, {
+        ...topicRecords(topic, fetchedAt, {
           sourceKind: isMeetingMinutesTopic(topic.topic) ? "forum_meeting_minutes" : "forum_update_topic",
           mirrorKind: isMeetingMinutesTopic(topic.topic) ? "forum_meeting_minutes" : "forum_update_topic",
           metadata: {
@@ -631,6 +910,13 @@ export async function mirrorForumUpdatesCategory(config: ForumMirrorConfig = {})
           }
         })
       );
+      topicsMirrored += 1;
+      topicsWithPartialCoverage += topic.coverageComplete ? 0 : 1;
+
+      if (topic.rateLimited) {
+        rateLimitedAt = url;
+        break;
+      }
     } catch (error) {
       topicFailures.push({ url, error: error instanceof Error ? error.message : String(error) });
 
@@ -650,13 +936,15 @@ export async function mirrorForumUpdatesCategory(config: ForumMirrorConfig = {})
       categoryUrl,
       directUrlMode: Boolean(directTopicUrls),
       topicCountDiscovered: discoveredUrls.length,
-      topicCountSelected: urls.length,
-      topicCountSkippedConfigured: discoveredUrls.length - urls.length,
-      topicCountMirrored: records.length,
+      topicCountSelected: topicReferenceGroups.length,
+      referenceCountSelected: urls.length,
+      topicCountSkippedConfigured: discoveredUrls.length - selectedUrls.length,
+      topicCountMirrored: topicsMirrored,
+      topicCountPartial: topicsWithPartialCoverage,
       topicCountFailed: topicFailures.length,
       maxTopics: maxTopicCount,
       maxCategoryPages: maxPages,
-      maxPostsPerTopic: maxPostCount,
+      maxPostsPerUpdatesTopic: maxPostCount,
       fetchDelayMs: delayMs,
       moreTopicsUrl,
       rateLimitedAt,
@@ -670,14 +958,16 @@ export async function mirrorForumUpdatesCategory(config: ForumMirrorConfig = {})
       categoryUrl,
       directUrlMode: Boolean(directTopicUrls),
       topicCountDiscovered: discoveredUrls.length,
-      topicCountSelected: urls.length,
-      topicCountSkippedConfigured: discoveredUrls.length - urls.length,
-      topicCountMirrored: records.length,
+      topicCountSelected: topicReferenceGroups.length,
+      referenceCountSelected: urls.length,
+      topicCountSkippedConfigured: discoveredUrls.length - selectedUrls.length,
+      topicCountMirrored: topicsMirrored,
+      topicCountPartial: topicsWithPartialCoverage,
       topicCountFailed: topicFailures.length,
       categoryFailureCount: categoryFailures.length,
       maxTopics: maxTopicCount,
       maxCategoryPages: maxPages,
-      maxPostsPerTopic: maxPostCount,
+      maxPostsPerUpdatesTopic: maxPostCount,
       fetchDelayMs: delayMs,
       rateLimitedAt,
       recordCount: records.length

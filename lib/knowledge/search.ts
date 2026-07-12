@@ -788,11 +788,14 @@ async function expandResultsWithApplicationSources({
                 order by
                   case
                     when d.document_kind = 'application_summary' then 0
-                    when d.document_kind = 'github_issue' then 1
-                    when d.document_kind = 'google_sheet_row' then 2
-                    when d.document_kind = 'decision_minutes' then 3
-                    when d.document_kind = 'github_issue_comment' then 4
-                    when d.document_kind = 'forum_link' then 5
+                    when d.document_kind = 'application_comparison_summary' then 1
+                    when d.document_kind = 'github_issue' then 2
+                    when d.document_kind = 'google_sheet_row' then 3
+                    when d.document_kind = 'decision_minutes' then 4
+                    when d.document_kind = 'github_issue_comment' then 5
+                    when d.document_kind = 'forum_discussion_chunk' then 6
+                    when d.document_kind = 'forum_topic_overview' then 7
+                    when d.document_kind = 'forum_link' then 8
                     else 9
                   end,
                   d.indexed_at desc,

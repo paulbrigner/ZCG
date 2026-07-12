@@ -11,6 +11,11 @@ import {
   type SnapshotReference,
   type StoreCounts
 } from "../lib/source-mirroring/store";
+import {
+  backfillNormalizedForumRecords,
+  storeNormalizedForumRecords,
+  type NormalizedForumStoreCounts
+} from "../lib/source-mirroring/forum-store";
 
 const { Client } = pg;
 const s3 = new S3Client({});
@@ -18,6 +23,7 @@ const s3 = new S3Client({});
 type WorkerEvent = SourceMirrorEvent & {
   dryRun?: boolean;
   reconcile?: boolean;
+  backfillLimit?: number;
 };
 
 function safeSnapshotSegment(value: string) {
@@ -179,7 +185,7 @@ async function storeMirrorResult(
   client: pg.Client,
   syncRunId: string,
   result: SourceMirrorResult
-): Promise<StoreCounts & { snapshotKey: string | null }> {
+): Promise<StoreCounts & { snapshotKey: string | null; normalizedForum: NormalizedForumStoreCounts }> {
   const snapshot = await putSnapshot({
     syncRunId,
     source: result.sourceKind,
@@ -188,8 +194,210 @@ async function storeMirrorResult(
   });
   const rawSnapshotId = await recordSourceSnapshot(client, { syncRunId, result, snapshot });
   const counts = await upsertSourceRecords(client, result.records, rawSnapshotId);
+  const normalizedForum = await storeNormalizedForumRecords(client, {
+    syncRunId,
+    records: result.records
+  });
 
-  return { ...counts, snapshotKey: snapshot?.key ?? null };
+  return { ...counts, snapshotKey: snapshot?.key ?? null, normalizedForum };
+}
+
+async function runForumNormalizationBackfill(
+  client: pg.Client,
+  syncRunId: string,
+  event: WorkerEvent
+) {
+  const normalized = await backfillNormalizedForumRecords(client, {
+    syncRunId,
+    limit: event.backfillLimit
+  });
+  const counts: StoreCounts = {
+    recordsSeen: normalized.recordsSeen,
+    recordsCreated: 0,
+    recordsUpdated: normalized.recordsEligible,
+    recordsSkipped: normalized.recordsSeen - normalized.recordsEligible
+  };
+
+  await completeSyncRun(client, {
+    syncRunId,
+    counts,
+    metadata: {
+      phase: "forum_normalization_backfill",
+      normalized
+    }
+  });
+
+  await client.query(
+    `insert into audit_events (action, target_type, target_id, metadata)
+     values ('sync_worker.forum_normalization.completed', 'sync_run', $1, $2::jsonb)`,
+    [syncRunId, JSON.stringify(normalized)]
+  );
+
+  return { ok: true, syncRunId, ...counts, normalized };
+}
+
+async function runForumCompletionBackfill(
+  client: pg.Client,
+  syncRunId: string,
+  event: WorkerEvent
+) {
+  const limit = Math.min(50, Math.max(1, event.backfillLimit ?? 25));
+  const configuredMaxCompletablePosts = Number(
+    process.env.ZCG_FORUM_MAX_POSTS_PER_LINKED_TOPIC ?? 1000
+  );
+  const maxCompletablePosts = Number.isFinite(configuredMaxCompletablePosts)
+    ? Math.max(1, Math.floor(configuredMaxCompletablePosts))
+    : 1000;
+  const pending = await client.query<{ id: string; canonical_url: string }>(
+    `select id, canonical_url
+       from discourse_topics
+      where coverage_complete = false
+        and (coverage_capped = false or stream_post_count <= $2)
+        and exists (
+          select 1
+            from discourse_topic_references dtr
+            join source_records sr on sr.id = dtr.source_record_id
+            join source_links sl on sl.source_record_id = sr.id
+           where dtr.discourse_topic_id = discourse_topics.id
+             and sr.source_kind = 'forum_link'
+             and sl.canonical_type = 'grant_application'
+        )
+      order by coalesce((metadata->>'completionLastAttemptAt')::timestamptz, 'epoch'::timestamptz),
+               last_posted_at desc nulls last,
+               topic_id
+      limit $1`,
+    [limit, maxCompletablePosts]
+  );
+
+  if (!pending.rows.length) {
+    const capped = await client.query<{ count: string }>(
+      `select count(*)::text as count
+         from discourse_topics
+        where coverage_complete = false
+          and coverage_capped = true
+          and stream_post_count > $1
+          and exists (
+            select 1
+              from discourse_topic_references dtr
+              join source_records sr on sr.id = dtr.source_record_id
+              join source_links sl on sl.source_record_id = sr.id
+             where dtr.discourse_topic_id = discourse_topics.id
+               and sr.source_kind = 'forum_link'
+               and sl.canonical_type = 'grant_application'
+          )`,
+      [maxCompletablePosts]
+    );
+    const topicsCapped = Number(capped.rows[0]?.count ?? 0);
+
+    await completeSyncRun(client, {
+      syncRunId,
+      counts: { ...emptyCounts },
+      metadata: {
+        phase: "forum_completion_backfill",
+        complete: true,
+        topicsAttempted: 0,
+        topicsRemaining: 0,
+        topicsCapped
+      }
+    });
+    return {
+      ok: true,
+      syncRunId,
+      ...emptyCounts,
+      complete: true,
+      topicsAttempted: 0,
+      topicsRemaining: 0,
+      topicsCapped
+    };
+  }
+
+  const [result] = await collectSourceMirrors({
+    source: "forum-topics",
+    forum: {
+      ...event.forum,
+      urls: pending.rows.map((row) => row.canonical_url)
+    }
+  });
+  let counts = { ...emptyCounts };
+  let sourceSummary: Record<string, unknown> | null = null;
+
+  if (result) {
+    const stored = await storeMirrorResult(client, syncRunId, result);
+    counts = addCounts(counts, stored);
+    sourceSummary = {
+      sourceKind: result.sourceKind,
+      sourceId: result.sourceId,
+      recordCount: result.records.length,
+      snapshotKey: stored.snapshotKey,
+      normalizedForum: stored.normalizedForum,
+      metadata: result.metadata ?? {}
+    };
+  }
+
+  await client.query(
+    `update discourse_topics
+        set metadata = metadata || jsonb_build_object(
+              'completionLastAttemptAt', now(),
+              'completionLastSyncRunId', $2::text
+            ),
+            updated_at = now()
+      where id = any($1::uuid[])`,
+    [pending.rows.map((row) => row.id), syncRunId]
+  );
+
+  const remaining = await client.query<{ count: string }>(
+    `select count(*)::text as count
+       from discourse_topics
+      where coverage_complete = false
+        and (coverage_capped = false or stream_post_count <= $1)
+        and exists (
+          select 1
+            from discourse_topic_references dtr
+            join source_records sr on sr.id = dtr.source_record_id
+            join source_links sl on sl.source_record_id = sr.id
+           where dtr.discourse_topic_id = discourse_topics.id
+             and sr.source_kind = 'forum_link'
+             and sl.canonical_type = 'grant_application'
+        )`,
+    [maxCompletablePosts]
+  );
+  const capped = await client.query<{ count: string }>(
+    `select count(*)::text as count
+       from discourse_topics
+      where coverage_complete = false
+        and coverage_capped = true
+        and stream_post_count > $1
+        and exists (
+          select 1
+            from discourse_topic_references dtr
+            join source_records sr on sr.id = dtr.source_record_id
+            join source_links sl on sl.source_record_id = sr.id
+           where dtr.discourse_topic_id = discourse_topics.id
+             and sr.source_kind = 'forum_link'
+             and sl.canonical_type = 'grant_application'
+        )`,
+    [maxCompletablePosts]
+  );
+  const topicsRemaining = Number(remaining.rows[0]?.count ?? 0);
+  const topicsCapped = Number(capped.rows[0]?.count ?? 0);
+  const metadata = {
+    phase: "forum_completion_backfill",
+    complete: topicsRemaining === 0,
+    batchLimit: limit,
+    topicsAttempted: pending.rows.length,
+    topicsRemaining,
+    topicsCapped,
+    source: sourceSummary
+  };
+
+  await completeSyncRun(client, { syncRunId, counts, metadata });
+  await client.query(
+    `insert into audit_events (action, target_type, target_id, metadata)
+     values ('sync_worker.forum_completion.completed', 'sync_run', $1, $2::jsonb)`,
+    [syncRunId, JSON.stringify(metadata)]
+  );
+
+  return { ok: true, syncRunId, ...counts, ...metadata };
 }
 
 async function existingForumUpdateSourceIds(client: pg.Client) {
@@ -270,6 +478,14 @@ export async function handler(event: WorkerEvent = {}) {
       return { ok: true, syncRunId, reconciliation };
     }
 
+    if (source === "forum-normalize-backfill") {
+      return await runForumNormalizationBackfill(client, syncRunId, event);
+    }
+
+    if (source === "forum-complete-backfill") {
+      return await runForumCompletionBackfill(client, syncRunId, event);
+    }
+
     const mirrorEvent = await sourceEventWithResumeSkips(client, event);
     const results = await collectSourceMirrors(mirrorEvent);
     let counts = { ...emptyCounts };
@@ -283,6 +499,7 @@ export async function handler(event: WorkerEvent = {}) {
         sourceId: result.sourceId,
         recordCount: result.records.length,
         snapshotKey: stored.snapshotKey,
+        normalizedForum: stored.normalizedForum,
         metadata: result.metadata ?? {}
       });
     }

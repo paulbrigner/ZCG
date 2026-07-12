@@ -25,6 +25,25 @@ export type GrantAnalysisEvidence = {
   contentHash?: string | null;
 };
 
+export type GrantAnalysisPromptPacking = {
+  configVersion: string | null;
+  candidateCount: number;
+  selectedCount: number;
+  renderedChars: number;
+  promptBudgetChars: number;
+  truncatedCount: number;
+  currentApplicationRenderedRatio: number;
+  currentApplicationTargetMet: boolean | null;
+  primaryForum: {
+    linked: boolean;
+    candidateRecords: number;
+    selectedRecords: number;
+    availablePostCount: number;
+    packedPostCount: number;
+    omittedPostCount: number;
+  };
+};
+
 export type GrantAnalysisReport = {
   id: string;
   applicationId: string;
@@ -54,6 +73,8 @@ export type GrantAnalysisReport = {
   updatedAt?: string | null;
   completedAt?: string | null;
   evidence?: GrantAnalysisEvidence[];
+  generationMetadata?: Record<string, unknown>;
+  promptPacking?: GrantAnalysisPromptPacking | null;
 };
 
 export type GrantAnalysisPanelProps = {
@@ -79,6 +100,7 @@ type ActiveOperation = "briefing" | "custom" | "refresh" | null;
 type ReportActionFeedback = { kind: "success" | "error"; message: string } | null;
 
 const defaultPollMs = 1500;
+const defaultCommitteeBriefingPromptBudgetChars = 90_000;
 
 function fallbackCopyText(text: string) {
   const textarea = document.createElement("textarea");
@@ -122,6 +144,66 @@ function numberField(record: Record<string, unknown>, camel: string, snake?: str
 function booleanField(record: Record<string, unknown>, camel: string, snake?: string) {
   const value = field(record, camel, snake);
   return typeof value === "boolean" ? value : null;
+}
+
+function recordField(record: Record<string, unknown>, camel: string, snake?: string) {
+  return asRecord(field(record, camel, snake));
+}
+
+function nonNegativeNumberField(record: Record<string, unknown>, camel: string, snake?: string) {
+  const value = numberField(record, camel, snake);
+  return value !== null && value >= 0 ? value : 0;
+}
+
+function normalizePromptPacking(value: unknown): GrantAnalysisPromptPacking | null {
+  const record = asRecord(value);
+
+  if (!record) {
+    return null;
+  }
+
+  const primaryForum = recordField(record, "primaryForum", "primary_forum") ?? {};
+  const candidateCount = nonNegativeNumberField(record, "candidateCount", "candidate_count");
+  const selectedCount = nonNegativeNumberField(record, "selectedCount", "selected_count");
+  const renderedChars = nonNegativeNumberField(record, "renderedChars", "rendered_chars");
+  const configVersion = stringField(record, "configVersion", "config_version");
+
+  if (!candidateCount && !selectedCount && !renderedChars && !configVersion) {
+    return null;
+  }
+
+  const explicitBudget =
+    numberField(record, "promptBudgetChars", "prompt_budget_chars") ??
+    numberField(record, "maxPromptChars", "max_prompt_chars") ??
+    numberField(record, "budgetChars", "budget_chars");
+
+  return {
+    configVersion,
+    candidateCount,
+    selectedCount,
+    renderedChars,
+    promptBudgetChars: explicitBudget && explicitBudget > 0
+      ? explicitBudget
+      : defaultCommitteeBriefingPromptBudgetChars,
+    truncatedCount: nonNegativeNumberField(record, "truncatedCount", "truncated_count"),
+    currentApplicationRenderedRatio: Math.max(
+      0,
+      numberField(record, "currentApplicationRenderedRatio", "current_application_rendered_ratio") ?? 0
+    ),
+    currentApplicationTargetMet: booleanField(
+      record,
+      "currentApplicationTargetMet",
+      "current_application_target_met"
+    ),
+    primaryForum: {
+      linked: booleanField(primaryForum, "linked") ?? false,
+      candidateRecords: nonNegativeNumberField(primaryForum, "candidateRecords", "candidate_records"),
+      selectedRecords: nonNegativeNumberField(primaryForum, "selectedRecords", "selected_records"),
+      availablePostCount: nonNegativeNumberField(primaryForum, "availablePostCount", "available_post_count"),
+      packedPostCount: nonNegativeNumberField(primaryForum, "packedPostCount", "packed_post_count"),
+      omittedPostCount: nonNegativeNumberField(primaryForum, "omittedPostCount", "omitted_post_count")
+    }
+  };
 }
 
 function oneOf<T extends string>(value: unknown, allowed: readonly T[], fallback: T): T {
@@ -201,6 +283,10 @@ function normalizeReport(value: unknown): GrantAnalysisReport | null {
     "custom"
   );
   const evidence = normalizeEvidence(field(record, "evidence") ?? field(record, "citations"), id);
+  const generationMetadata = recordField(record, "generationMetadata", "generation_metadata") ?? {};
+  const promptPacking = normalizePromptPacking(
+    field(generationMetadata, "promptPacking", "prompt_packing")
+  );
 
   return {
     id,
@@ -264,7 +350,9 @@ function normalizeReport(value: unknown): GrantAnalysisReport | null {
       new Date(0).toISOString(),
     updatedAt: stringField(record, "updatedAt", "updated_at"),
     completedAt: stringField(record, "completedAt", "completed_at"),
-    evidence
+    evidence,
+    generationMetadata,
+    promptPacking
   };
 }
 
@@ -357,6 +445,14 @@ function humanize(value: string | null | undefined) {
 
 function shortFingerprint(value: string | null | undefined) {
   return value ? value.slice(0, 12) : "Unavailable";
+}
+
+function formatCount(value: number) {
+  return Math.max(0, Math.round(value)).toLocaleString("en-US");
+}
+
+function formatPercent(value: number) {
+  return `${Math.round(Math.max(0, value) * 100)}%`;
 }
 
 function freshness(report: GrantAnalysisReport): "fresh" | "stale" | "unknown" {
@@ -532,6 +628,94 @@ function ReportMetadata({ report }: { report: GrantAnalysisReport }) {
   );
 }
 
+function EvidenceCoverage({ report }: { report: GrantAnalysisReport }) {
+  const packing = report.promptPacking;
+
+  if (report.reportType !== "committee_briefing" || !packing) {
+    return null;
+  }
+
+  const promptUsageRatio = packing.promptBudgetChars
+    ? packing.renderedChars / packing.promptBudgetChars
+    : 0;
+  const omittedRecords = Math.max(0, packing.candidateCount - packing.selectedCount);
+  const omittedForumChunks = Math.max(
+    0,
+    packing.primaryForum.candidateRecords - packing.primaryForum.selectedRecords
+  );
+
+  return (
+    <details className={styles.coverageDisclosure}>
+      <summary>
+        Evidence coverage
+        <span>{formatCount(packing.selectedCount)} of {formatCount(packing.candidateCount)} records selected</span>
+      </summary>
+      <div className={styles.coverageBody}>
+        <p className={styles.coverageIntro}>
+          Generation diagnostics show what was available to the briefing process and what was supplied to the model.
+        </p>
+        <dl className={styles.coverageGrid}>
+          <div>
+            <dt>Evidence records</dt>
+            <dd>{formatCount(packing.selectedCount)} selected</dd>
+            <small>{formatCount(omittedRecords)} omitted from {formatCount(packing.candidateCount)} candidates</small>
+          </div>
+          <div>
+            <dt>Current application share</dt>
+            <dd>{formatPercent(packing.currentApplicationRenderedRatio)}</dd>
+            <small>
+              {packing.currentApplicationTargetMet === false
+                ? "Below the briefing coverage target"
+                : "Of the evidence prompt"}
+            </small>
+          </div>
+          <div>
+            <dt>Prompt use</dt>
+            <dd>{formatCount(packing.renderedChars)} characters</dd>
+            <small>
+              {formatPercent(promptUsageRatio)} of {formatCount(packing.promptBudgetChars)}
+            </small>
+          </div>
+          <div>
+            <dt>Truncated records</dt>
+            <dd>{formatCount(packing.truncatedCount)}</dd>
+            <small>Selected records shortened to fit the prompt</small>
+          </div>
+        </dl>
+
+        {packing.primaryForum.linked ? (
+          <section aria-label="Primary Forum coverage" className={styles.forumCoverage}>
+            <h5>Primary Forum discussion</h5>
+            <dl>
+              <div>
+                <dt>Posts</dt>
+                <dd>
+                  <strong>{formatCount(packing.primaryForum.packedPostCount)} packed</strong>
+                  <span>{formatCount(packing.primaryForum.omittedPostCount)} omitted</span>
+                  <span>{formatCount(packing.primaryForum.availablePostCount)} available</span>
+                </dd>
+              </div>
+              <div>
+                <dt>Discussion chunks</dt>
+                <dd>
+                  <strong>{formatCount(packing.primaryForum.selectedRecords)} packed</strong>
+                  <span>{formatCount(omittedForumChunks)} omitted</span>
+                  <span>{formatCount(packing.primaryForum.candidateRecords)} available</span>
+                </dd>
+              </div>
+            </dl>
+            {packing.primaryForum.omittedPostCount > 0 || omittedForumChunks > 0 ? (
+              <p>
+                Omitted discussion remains indexed but was not included in this version&apos;s model prompt.
+              </p>
+            ) : null}
+          </section>
+        ) : null}
+      </div>
+    </details>
+  );
+}
+
 function ReportBody({ report, compact = false }: { report: GrantAnalysisReport; compact?: boolean }) {
   const evidence = report.evidence ?? [];
 
@@ -559,6 +743,7 @@ function ReportBody({ report, compact = false }: { report: GrantAnalysisReport; 
           reportId={report.id}
         />
       ) : <p className={styles.muted}>The report completed without answer text.</p>}
+      <EvidenceCoverage report={report} />
       <details className={styles.evidenceDisclosure}>
         <summary>
           Evidence and citations <span>({evidence.length})</span>

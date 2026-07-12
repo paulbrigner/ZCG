@@ -1,4 +1,5 @@
 import { GetSecretValueCommand, SecretsManagerClient } from "@aws-sdk/client-secrets-manager";
+import { StringDecoder } from "node:string_decoder";
 import { closePool } from "../lib/db";
 import { recordAuditEvent } from "../lib/audit";
 import {
@@ -15,6 +16,8 @@ import {
   buildGrantBriefingEvidence,
   grantAnalysisResponseCitationLimit,
   missingCommitteeBriefingSections,
+  type GrantBriefingEvidencePack,
+  validateCommitteeBriefingSourceListCitations,
   validateEvidenceCitations
 } from "../lib/knowledge/briefing";
 import { composeGroundedGrantAnalysis } from "../lib/knowledge/compose";
@@ -74,7 +77,121 @@ function boundedGeneratedAnswer(value: string, maxBytes: number) {
   }
 
   const suffixBytes = Buffer.byteLength(suffix, "utf8");
-  return `${encoded.subarray(0, Math.max(0, maxBytes - suffixBytes)).toString("utf8")}${suffix}`;
+  const prefixBytes = Math.max(0, maxBytes - suffixBytes);
+  const decoder = new StringDecoder("utf8");
+  const prefix = decoder.write(encoded.subarray(0, prefixBytes));
+
+  if (suffixBytes >= maxBytes) {
+    const suffixDecoder = new StringDecoder("utf8");
+    return suffixDecoder.write(Buffer.from(suffix, "utf8").subarray(0, Math.max(0, maxBytes)));
+  }
+
+  return `${prefix}${suffix}`;
+}
+
+function sourceListEntry(item: GrantAnalysisReportEvidenceInput & { citationNumber: number }) {
+  const title = (item.title ?? `Evidence ${item.citationNumber}`)
+    .replace(/[\r\n]+/g, " ")
+    .replaceAll("[", "")
+    .replaceAll("]", "")
+    .trim()
+    .slice(0, 180);
+  const sourceUrlCandidate = item.sourceUrl?.replace(/[\r\n\t ]+/g, "");
+  const normalizedUrl = sourceUrlCandidate && sourceUrlCandidate.length <= 600
+    ? sourceUrlCandidate
+    : null;
+  const sourceUrl = normalizedUrl && /^https?:\/\//i.test(normalizedUrl)
+    ? ` — ${normalizedUrl}`
+    : "";
+  return `- [${item.citationNumber}] ${title}${sourceUrl}`;
+}
+
+const committeeSourceListHeading = /(?:^|\n)\s*#{0,4}\s*9\.\s*Numbered source list[^\n]*/im;
+
+function committeeBriefingBody(answerText: string) {
+  const headingMatch = committeeSourceListHeading.exec(answerText);
+  return (headingMatch && headingMatch.index !== undefined
+    ? answerText.slice(0, headingMatch.index)
+    : answerText
+  ).trimEnd();
+}
+
+function ensureCommitteeBriefingSourceList(
+  answerText: string,
+  evidence: Array<GrantAnalysisReportEvidenceInput & { citationNumber: number }>
+) {
+  const body = committeeBriefingBody(answerText);
+  const validation = validateCommitteeBriefingSourceListCitations(
+    `${body}\n\n## 9. Numbered source list`
+  );
+  const byCitation = new Map(evidence.map((item) => [item.citationNumber, item]));
+  const sourceEntries = validation.citedNumbers
+    .map((citation) => byCitation.get(citation))
+    .filter((item): item is GrantAnalysisReportEvidenceInput & { citationNumber: number } => Boolean(item))
+    .map(sourceListEntry);
+  const entries = sourceEntries.length
+    ? sourceEntries.join("\n")
+    : "No grounded sources were cited.";
+  return `${body}\n\n## 9. Numbered source list\n${entries}`;
+}
+
+function boundedCommitteeBriefingAnswer(
+  answerText: string,
+  evidence: Array<GrantAnalysisReportEvidenceInput & { citationNumber: number }>,
+  maxBytes: number
+) {
+  const originalBody = committeeBriefingBody(answerText);
+  let boundedBody = originalBody;
+
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const repaired = ensureCommitteeBriefingSourceList(boundedBody, evidence);
+    if (Buffer.byteLength(repaired, "utf8") <= maxBytes) return repaired;
+
+    const sourceListStart = repaired.lastIndexOf("\n\n## 9. Numbered source list");
+    const sourceList = sourceListStart >= 0 ? repaired.slice(sourceListStart) : "";
+    const availableBodyBytes = Math.max(0, maxBytes - Buffer.byteLength(sourceList, "utf8"));
+    const nextBody = boundedGeneratedAnswer(originalBody, availableBodyBytes);
+    if (nextBody === boundedBody) break;
+    boundedBody = nextBody;
+  }
+
+  const repaired = ensureCommitteeBriefingSourceList(boundedBody, evidence);
+  if (Buffer.byteLength(repaired, "utf8") > maxBytes) {
+    throw new Error("Committee briefing could not fit its cited source list within the stored-answer safety limit.");
+  }
+  return repaired;
+}
+
+function grantAnalysisReportEvidence(
+  evidencePack: GrantBriefingEvidencePack
+): GrantAnalysisReportEvidenceInput[] {
+  const manifestByCitation = new Map(
+    evidencePack.manifest.documents.map((item) => [item.citationNumber, item])
+  );
+
+  return evidencePack.evidence.map((item) => {
+    const manifest = manifestByCitation.get(item.citationNumber);
+    return {
+      citationNumber: item.citationNumber,
+      knowledgeDocumentId: item.id,
+      documentKey: item.documentKey,
+      contentHash: item.contentHash,
+      evidenceRole: item.evidenceRole,
+      retrievalRank: item.retrievalRank,
+      applicationId: item.applicationId,
+      sourceRecordId: manifest?.sourceRecordId ?? null,
+      title: item.title,
+      sourceKind: item.sourceKind,
+      sourceId: item.sourceId,
+      sourceUrl: item.sourceUrl,
+      contentSnapshot: item.content,
+      metadata: {
+        documentKind: item.documentKind,
+        excerpt: item.excerpt,
+        providerVisibleContentChars: item.content.length
+      }
+    };
+  });
 }
 
 async function configureKnowledgeApiKeys() {
@@ -194,11 +311,14 @@ async function runApplicationAnalysis(job: NonNullable<Awaited<ReturnType<typeof
     timeoutMs: Number.isFinite(configuredTimeoutMs) ? Math.max(90_000, configuredTimeoutMs) : 90_000,
     maxTokens: purpose === "committee_briefing" ? 5_000 : 2_200
   });
-  const answerText = boundedGeneratedAnswer(
-    composedAnswer,
-    purpose === "committee_briefing" ? 24_000 : 14_000
-  );
-  const citationValidation = validateEvidenceCitations(answerText, evidencePack.evidence);
+  const sourceListEvidence = grantAnalysisReportEvidence(evidencePack);
+  const answerText = purpose === "committee_briefing"
+    ? boundedCommitteeBriefingAnswer(composedAnswer, sourceListEvidence, 24_000)
+    : boundedGeneratedAnswer(composedAnswer, 14_000);
+  const committeeBody = purpose === "committee_briefing"
+    ? committeeBriefingBody(answerText)
+    : answerText;
+  const citationValidation = validateEvidenceCitations(committeeBody, evidencePack.evidence);
 
   if (!citationValidation.valid) {
     const detail = citationValidation.invalidNumbers.length
@@ -218,6 +338,8 @@ async function runApplicationAnalysis(job: NonNullable<Awaited<ReturnType<typeof
     );
   }
 
+  let committeeSourceListValidation: ReturnType<typeof validateCommitteeBriefingSourceListCitations> | null = null;
+
   if (purpose === "committee_briefing") {
     const missingSections = missingCommitteeBriefingSections(answerText);
 
@@ -225,6 +347,17 @@ async function runApplicationAnalysis(job: NonNullable<Awaited<ReturnType<typeof
       throw new Error(
         `Committee briefing response was incomplete (missing section${missingSections.length === 1 ? "" : "s"}: ${missingSections.join(", ")}).`
       );
+    }
+
+    committeeSourceListValidation = validateCommitteeBriefingSourceListCitations(answerText);
+
+    if (!committeeSourceListValidation.valid) {
+      const missing = committeeSourceListValidation.missingNumbers.length
+        ? ` Missing source-list citation(s): ${committeeSourceListValidation.missingNumbers.join(", ")}.`
+        : committeeSourceListValidation.extraNumbers.length
+          ? ` Unused source-list citation(s): ${committeeSourceListValidation.extraNumbers.join(", ")}.`
+          : " The numbered source list was not found.";
+      throw new Error(`Committee briefing source list was incomplete.${missing}`);
     }
   }
 
@@ -263,7 +396,7 @@ async function runApplicationAnalysis(job: NonNullable<Awaited<ReturnType<typeof
       resultCount: evidencePack.evidence.length,
       initialResultCount: evidencePack.evidence.filter((item) => item.evidenceRole === "current").length,
       expandedEvidenceCount: evidencePack.evidence.length,
-      candidateResultCount: evidencePack.evidence.length,
+      candidateResultCount: evidencePack.candidates.length,
       limit: job.request.limit,
       mode: evidencePack.retrievalMode,
       semanticSearchEnabled: providerStatus.semanticSearchEnabled
@@ -272,32 +405,7 @@ async function runApplicationAnalysis(job: NonNullable<Awaited<ReturnType<typeof
   };
 
   if (job.request.reportId) {
-    const manifestByCitation = new Map(
-      evidencePack.manifest.documents.map((item) => [item.citationNumber, item])
-    );
-    const evidence: GrantAnalysisReportEvidenceInput[] = evidencePack.evidence.map((item) => {
-      const manifest = manifestByCitation.get(item.citationNumber);
-
-      return {
-        citationNumber: item.citationNumber,
-        knowledgeDocumentId: item.id,
-        documentKey: item.documentKey,
-        contentHash: item.contentHash,
-        evidenceRole: item.evidenceRole,
-        retrievalRank: item.retrievalRank,
-        applicationId: item.applicationId,
-        sourceRecordId: manifest?.sourceRecordId ?? null,
-        title: item.title,
-        sourceKind: item.sourceKind,
-        sourceId: item.sourceId,
-        sourceUrl: item.sourceUrl,
-        contentSnapshot: item.content,
-        metadata: {
-          documentKind: item.documentKind,
-          excerpt: item.excerpt
-        }
-      };
-    });
+    const evidence = sourceListEvidence;
 
     await completeGrantAnalysisReport({
       reportId: job.request.reportId,
@@ -313,8 +421,11 @@ async function runApplicationAnalysis(job: NonNullable<Awaited<ReturnType<typeof
         model: generationModel,
         retrievalMode: evidencePack.retrievalMode,
         evidenceCount: evidencePack.evidence.length,
+        candidateEvidenceCount: evidencePack.candidates.length,
+        promptPacking: evidencePack.packing,
         warnings: evidencePack.warnings,
         citationValidation,
+        committeeSourceListValidation,
         evidenceSelection: {
           relationshipCount: evidencePack.manifest.relationships.length,
           participantMatchCount: evidencePack.manifest.participantMatches.length,
@@ -335,6 +446,14 @@ async function runApplicationAnalysis(job: NonNullable<Awaited<ReturnType<typeof
       purpose,
       model: generationModel,
       evidenceCount: evidencePack.evidence.length,
+      candidateEvidenceCount: evidencePack.candidates.length,
+      promptPacking: {
+        configVersion: evidencePack.packing.configVersion,
+        selectedCount: evidencePack.packing.selectedCount,
+        renderedChars: evidencePack.packing.renderedChars,
+        currentApplicationRenderedRatio: evidencePack.packing.currentApplicationRenderedRatio,
+        primaryForum: evidencePack.packing.primaryForum
+      },
       evidenceFingerprint: evidencePack.fingerprint
     }
   });
@@ -356,6 +475,15 @@ async function runApplicationAnalysis(job: NonNullable<Awaited<ReturnType<typeof
 
   return response;
 }
+
+export const knowledgeAnswerWorkerTestHooks = {
+  boundedGeneratedAnswer,
+  boundedCommitteeBriefingAnswer,
+  committeeBriefingBody,
+  ensureCommitteeBriefingSourceList,
+  grantAnalysisReportEvidence,
+  sourceListEntry
+};
 
 export async function handler(event: WorkerEvent = {}) {
   const jobId = stringValue(event.jobId);

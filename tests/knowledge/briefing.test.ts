@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
 import test from "node:test";
 import {
   COMMITTEE_BRIEFING_TEMPLATE_KEY,
   COMMITTEE_BRIEFING_TEMPLATE_VERSION,
+  GRANT_BRIEFING_PACKING_CONFIG,
   TEMPORARY_GRANT_ANALYSIS_CITATION_LIMIT,
   assembleGrantBriefingEvidence,
   briefingTestHooks,
@@ -10,10 +12,12 @@ import {
   buildGrantAnalysisPrompt,
   computeGrantBriefingEvidenceFingerprint,
   extractEvidenceCitationNumbers,
+  formatGrantBriefingEvidenceForPrompt,
   grantAnalysisResponseCitationLimit,
   missingCommitteeBriefingSections,
   normalizeCustomGrantAnalysisPrompt,
   normalizeGrantParticipantName,
+  validateCommitteeBriefingSourceListCitations,
   validateEvidenceCitations,
   type GrantBriefingApplication,
   type GrantBriefingEvidenceDependencies,
@@ -37,7 +41,9 @@ function documentFixture({
   status = "under_review",
   content = "Grounded application evidence.",
   contentHash = `hash-${id}`,
-  documentKind = "application_summary"
+  documentKind = "application_summary",
+  sourceKind = "canonical_application",
+  metadata
 }: {
   id: string;
   applicationId?: string;
@@ -46,6 +52,8 @@ function documentFixture({
   content?: string;
   contentHash?: string;
   documentKind?: string;
+  sourceKind?: string;
+  metadata?: Record<string, unknown>;
 }): GrantBriefingPreparedDocument {
   return {
     documentKey: `application:${applicationId}:${id}`,
@@ -53,13 +61,14 @@ function documentFixture({
     sourceRecordId: null,
     evidenceRole,
     retrievalRank: 1,
+    metadata,
     result: {
       id,
       applicationId,
       documentKind,
       title: `Evidence ${id}`,
       applicantName: application.applicantName,
-      sourceKind: "canonical_application",
+      sourceKind,
       sourceId: `source-${id}`,
       sourceUrl: `https://example.test/${id}`,
       normalizedStatus: status,
@@ -91,6 +100,7 @@ function evidencePack(overrides: Partial<Parameters<typeof assembleGrantBriefing
 }
 
 test("normalizes participant names conservatively for exact matching", () => {
+  assert.equal(COMMITTEE_BRIEFING_TEMPLATE_VERSION, "4");
   assert.equal(
     normalizeGrantParticipantName("  Álice & Example-Labs, LLC "),
     "alice and example labs llc"
@@ -212,6 +222,14 @@ test("evidence fingerprints are stable for relationship ordering and change with
   assert.equal(first.fingerprint, reordered.fingerprint);
   assert.notEqual(first.fingerprint, changed.fingerprint);
   assert.equal(first.fingerprint, computeGrantBriefingEvidenceFingerprint(first.manifest));
+  assert.deepEqual(first.manifest.packing, GRANT_BRIEFING_PACKING_CONFIG);
+  assert.notEqual(
+    first.fingerprint,
+    computeGrantBriefingEvidenceFingerprint({
+      ...first.manifest,
+      packing: { ...first.manifest.packing, version: "different-packer" }
+    })
+  );
 });
 
 test("stock briefing prompts isolate untrusted evidence and require neutral cited sections", () => {
@@ -236,6 +254,8 @@ test("stock briefing prompts isolate untrusted evidence and require neutral cite
   assert.match(prompt.systemPrompt, /omit internal implementation details/i);
   assert.match(prompt.userPrompt, /BEGIN UNTRUSTED SOURCE TEXT/);
   assert.match(prompt.userPrompt, /Relevant precedents and documented outcomes/);
+  assert.match(prompt.userPrompt, /strongest substantive arguments for and against/i);
+  assert.match(prompt.userPrompt, /applicant's responses or clarifications/i);
   assert.match(prompt.userPrompt, /Team-history matching may be incomplete/);
   assert.match(prompt.userPrompt, /Do not narrate dashboard operations or data plumbing/i);
   assert.doesNotMatch(prompt.userPrompt, /Participant coverage is incomplete/);
@@ -260,6 +280,248 @@ test("prompt evidence stays within the provider safety budget", () => {
 
   assert.ok(prompt.evidenceText.length <= 90_000);
   assert.match(prompt.evidenceText, /\[1\] EVIDENCE RECORD/);
+});
+
+test("packs provider-visible evidence deterministically within exact record and character limits", () => {
+  const longContent = (label: string) => `${label}\n${"Decision-relevant evidence. ".repeat(500)}`;
+  const currentCore = [
+    documentFixture({ id: "core-summary", content: longContent("Summary") }),
+    documentFixture({ id: "core-github", documentKind: "github_issue", content: longContent("Proposal") }),
+    documentFixture({ id: "core-sheet", documentKind: "google_sheet_row", content: longContent("Budget") })
+  ];
+  const forum = Array.from({ length: 12 }, (_, index) => documentFixture({
+    id: `forum-${index}`,
+    documentKind: "forum_discussion_chunk",
+    sourceKind: "forum_link",
+    content: `Post #${index * 5 + 1} by participant: ${"Substantive community argument and applicant response. ".repeat(220)}`
+  }));
+  const currentSupporting = Array.from({ length: 5 }, (_, index) => documentFixture({
+    id: `decision-${index}`,
+    documentKind: "decision_minutes",
+    content: longContent(`Committee decision ${index}`)
+  }));
+  const teamAndRelated = Array.from({ length: 12 }, (_, index) => documentFixture({
+    id: `history-${index}`,
+    applicationId: `history-app-${index}`,
+    evidenceRole: index < 6 ? "related" : "team_history",
+    content: longContent(`Historical application ${index}`)
+  }));
+  const approved = Array.from({ length: 6 }, (_, index) => documentFixture({
+    id: `approved-${index}`,
+    applicationId: `approved-app-${index}`,
+    evidenceRole: "similar_approved",
+    status: "completed",
+    documentKind: "application_comparison_summary",
+    content: longContent(`Approved outcome ${index}`)
+  }));
+  const declined = Array.from({ length: 6 }, (_, index) => documentFixture({
+    id: `declined-${index}`,
+    applicationId: `declined-app-${index}`,
+    evidenceRole: "similar_declined",
+    status: "declined",
+    documentKind: "application_comparison_summary",
+    content: longContent(`Declined rationale ${index}`)
+  }));
+  const pack = evidencePack({
+    currentDocuments: [...currentCore, ...forum, ...currentSupporting],
+    selectedDocuments: [...teamAndRelated, ...approved, ...declined]
+  });
+  const evidenceText = formatGrantBriefingEvidenceForPrompt(pack.evidence);
+
+  assert.ok(pack.candidates.length > pack.evidence.length);
+  assert.equal(pack.packing.promptBudgetChars, GRANT_BRIEFING_PACKING_CONFIG.maxPromptChars);
+  assert.ok(pack.evidence.length <= GRANT_BRIEFING_PACKING_CONFIG.maxRecords);
+  assert.ok(evidenceText.length <= GRANT_BRIEFING_PACKING_CONFIG.maxPromptChars);
+  assert.equal(evidenceText.length, pack.packing.renderedChars);
+  assert.equal(
+    crypto.createHash("sha256").update(evidenceText).digest("hex"),
+    pack.packing.promptHash
+  );
+  assert.ok(pack.packing.currentApplicationRenderedRatio >= 0.6);
+  assert.equal(pack.packing.currentApplicationTargetMet, true);
+  assert.equal(pack.packing.primaryForum.selectedRecords, 10);
+  assert.equal(pack.packing.bySourceKind.forum_link.records, 10);
+  assert.ok(pack.packing.byRole.related.records + pack.packing.byRole.team_history.records <= 4);
+  assert.ok(pack.packing.byRole.similar_approved.records <= 2);
+  assert.ok(pack.packing.byRole.similar_declined.records <= 2);
+  for (const item of pack.evidence) {
+    assert.match(evidenceText, new RegExp(`Evidence text:\\n${item.content.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\nEND UNTRUSTED SOURCE TEXT`));
+  }
+});
+
+test("preserves substantive Forum discussion instead of equal-slicing before the first post", () => {
+  const lateObjection = "Late substantive objection: ticket revenue and sponsorship economics need a clearer accounting.";
+  const forumContent = [
+    "Grant application: Example request",
+    "Applicant: Example applicant",
+    "Status: under_review",
+    "Requested amount USD: 10000",
+    "Source: forum_link:123",
+    "Source URL: https://forum.example.test/t/topic/123",
+    "Source title: Example topic",
+    "Source summary: Participants maintained a civil tone.",
+    `Post #1 by alice: ${"Opening position and supporting detail. ".repeat(90)}`,
+    `Post #18 by bob: ${lateObjection}`
+  ].join("\n");
+  const pack = evidencePack({
+    currentDocuments: [
+      documentFixture({ id: "summary", content: "Application scope and budget." }),
+      documentFixture({
+        id: "primary-forum",
+        documentKind: "forum_link",
+        sourceKind: "forum_link",
+        content: forumContent
+      })
+    ]
+  });
+  const forumEvidence = pack.evidence.find((item) => item.id === "primary-forum");
+
+  assert.ok(forumEvidence);
+  assert.ok(forumEvidence.content.length > 978);
+  assert.match(forumEvidence.content, /Post #1 by alice/);
+  assert.match(forumEvidence.content, new RegExp(lateObjection.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.doesNotMatch(forumEvidence.content, /Requested amount USD/);
+  assert.equal(pack.packing.primaryForum.substantiveSelectedRecords, 1);
+});
+
+test("samples primary Forum chunks across the full thread and classifies supporting threads separately", () => {
+  const primary = Array.from({ length: 25 }, (_, index) => documentFixture({
+    id: `primary-chunk-${index}`,
+    documentKind: "forum_discussion_chunk",
+    sourceKind: "forum_link",
+    content: `Post #${index * 5 + 1} by participant: ${"Argument, counterargument, and applicant response. ".repeat(30)}`,
+    metadata: {
+      relationshipRoles: ["primary_forum_thread"],
+      topicId: "123",
+      windowStartPostNumber: index * 5 + 1,
+      partNumber: 1
+    }
+  }));
+  const supporting = Array.from({ length: 5 }, (_, index) => documentFixture({
+    id: `supporting-chunk-${index}`,
+    documentKind: "forum_discussion_chunk",
+    sourceKind: "forum_link",
+    content: `Post #${index + 1} by observer: ${"Related supporting discussion. ".repeat(30)}`,
+    metadata: {
+      relationshipRoles: ["supporting_forum_reference"],
+      topicId: "456",
+      windowStartPostNumber: index * 5 + 1,
+      partNumber: 1
+    }
+  }));
+  const pack = evidencePack({
+    currentDocuments: [
+      documentFixture({ id: "summary", content: "Application scope and budget." }),
+      ...primary,
+      ...supporting
+    ]
+  });
+
+  assert.equal(pack.packing.primaryForum.candidateRecords, 25);
+  assert.equal(pack.packing.primaryForum.selectedRecords, 10);
+  assert.equal(pack.packing.primaryForum.availablePostCount, 25);
+  assert.equal(pack.packing.primaryForum.packedPostCount, 10);
+  assert.equal(pack.packing.primaryForum.omittedPostCount, 15);
+  assert.ok(pack.evidence.some((item) => item.id === "primary-chunk-0"));
+  assert.ok(pack.evidence.some((item) => item.id === "primary-chunk-24"));
+  assert.ok(pack.evidence.filter((item) => item.id.startsWith("supporting-chunk-")).length <= 3);
+});
+
+test("blocks a stock briefing when a linked Forum source contributes no substantive post body", () => {
+  const pack = evidencePack({
+    currentDocuments: [
+      documentFixture({ id: "summary", content: "Application scope and budget." }),
+      documentFixture({
+        id: "empty-forum",
+        documentKind: "forum_link",
+        sourceKind: "forum_link",
+        content: [
+          "Grant application: Example request",
+          "Status: under_review",
+          "Source URL: https://forum.example.test/t/topic/123",
+          "Source title: Example topic",
+          "posts_count: 38",
+          "views: 500"
+        ].join("\n")
+      })
+    ]
+  });
+
+  assert.equal(pack.packing.primaryForum.linked, true);
+  assert.equal(pack.packing.primaryForum.substantiveSelectedRecords, 0);
+  assert.throws(
+    () => buildGrantAnalysisPrompt({ evidencePack: pack, purpose: "committee_briefing" }),
+    /no substantive Forum post text reached/i
+  );
+});
+
+test("excludes reconciliation telemetry unless it describes a material evaluation conflict", () => {
+  const pack = evidencePack({
+    currentDocuments: [
+      documentFixture({ id: "summary", content: "Application scope and budget." }),
+      documentFixture({
+        id: "operational-reconciliation",
+        documentKind: "reconciliation_issue",
+        sourceKind: "reconciliation_issue",
+        content: "Warning: source mirror timestamp is missing from an indexed record."
+      }),
+      documentFixture({
+        id: "material-reconciliation",
+        documentKind: "reconciliation_issue",
+        sourceKind: "reconciliation_issue",
+        content: "The requested amount conflicts across sources: the application says $10,000 and the budget says $12,000."
+      })
+    ]
+  });
+
+  assert.equal(pack.evidence.some((item) => item.id === "operational-reconciliation"), false);
+  assert.equal(pack.evidence.some((item) => item.id === "material-reconciliation"), true);
+  assert.ok(pack.packing.dropped.some((item) =>
+    item.knowledgeDocumentId === "operational-reconciliation"
+    && item.reason === "non_material_reconciliation"
+  ));
+});
+
+test("uses compact comparison summaries for comparables but not as team-history substitutes", () => {
+  const pack = evidencePack({
+    selectedDocuments: [
+      documentFixture({
+        id: "team-comparison-summary",
+        applicationId: "team-app",
+        evidenceRole: "team_history",
+        documentKind: "application_comparison_summary",
+        content: "Compact outcome-only summary."
+      }),
+      documentFixture({
+        id: "team-application-summary",
+        applicationId: "team-app",
+        evidenceRole: "team_history",
+        documentKind: "application_summary",
+        content: "Broader applicant history and scope."
+      }),
+      documentFixture({
+        id: "similar-application-summary",
+        applicationId: "similar-app",
+        evidenceRole: "similar_approved",
+        status: "completed",
+        documentKind: "application_summary",
+        content: "General application record."
+      }),
+      documentFixture({
+        id: "similar-comparison-summary",
+        applicationId: "similar-app",
+        evidenceRole: "similar_approved",
+        status: "completed",
+        documentKind: "application_comparison_summary",
+        content: "Documented outcome and committee rationale."
+      })
+    ]
+  });
+
+  assert.ok(pack.evidence.some((item) => item.id === "team-application-summary"));
+  assert.equal(pack.evidence.some((item) => item.id === "team-comparison-summary"), false);
+  assert.ok(pack.evidence.some((item) => item.id === "similar-comparison-summary"));
+  assert.equal(pack.evidence.some((item) => item.id === "similar-application-summary"), false);
 });
 
 test("custom prompts are bounded and remain separate from evidence", () => {
@@ -314,12 +576,49 @@ test("citation validation accepts supplied citations and rejects missing or inve
   assert.equal(validateEvidenceCitations("No evidence was available.", 0).valid, true);
 });
 
+test("committee briefing source-list validation requires every body citation", () => {
+  const incomplete = [
+    "## 1. Executive summary and decision snapshot",
+    "The request and discussion are documented [1][2].",
+    "## 9. Numbered source list",
+    "[1] Application — https://example.test/application"
+  ].join("\n");
+  assert.deepEqual(validateCommitteeBriefingSourceListCitations(incomplete), {
+    valid: false,
+    citedNumbers: [1, 2],
+    listedNumbers: [1],
+    missingNumbers: [2],
+    extraNumbers: [],
+    hasSourceList: true
+  });
+
+  const complete = `${incomplete}\n2. Forum discussion — https://example.test/forum`;
+  assert.deepEqual(validateCommitteeBriefingSourceListCitations(complete), {
+    valid: true,
+    citedNumbers: [1, 2],
+    listedNumbers: [1, 2],
+    missingNumbers: [],
+    extraNumbers: [],
+    hasSourceList: true
+  });
+
+  const withUnusedSource = `${complete}\n[3] Unused source — https://example.test/unused`;
+  assert.deepEqual(validateCommitteeBriefingSourceListCitations(withUnusedSource), {
+    valid: false,
+    citedNumbers: [1, 2],
+    listedNumbers: [1, 2, 3],
+    missingNumbers: [],
+    extraNumbers: [3],
+    hasSourceList: true
+  });
+});
+
 test("committee briefing structure validation requires all nine numbered sections", () => {
   const complete = [
     "## 1. Executive summary and decision snapshot",
     "## 2. Applicant and team track record",
     "## 3. Proposal scope, milestones, budget, technical approach, and dependencies",
-    "## 4. Community and committee signals",
+    "## 4. Community discussion, arguments, responses, and resolution",
     "## 5. Relevant precedents and documented outcomes",
     "## 6. Material risks and execution considerations",
     "## 7. Material gaps and questions for the applicant",

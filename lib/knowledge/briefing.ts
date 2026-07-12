@@ -8,10 +8,24 @@ import {
 } from "@/lib/knowledge/search";
 
 export const COMMITTEE_BRIEFING_TEMPLATE_KEY = "zcg_committee_briefing";
-export const COMMITTEE_BRIEFING_TEMPLATE_VERSION = "3";
+export const COMMITTEE_BRIEFING_TEMPLATE_VERSION = "4";
 export const CUSTOM_GRANT_ANALYSIS_TEMPLATE_KEY = "zcg_custom_grounded_analysis";
 export const CUSTOM_GRANT_ANALYSIS_TEMPLATE_VERSION = "1";
 export const TEMPORARY_GRANT_ANALYSIS_CITATION_LIMIT = 24;
+
+export const GRANT_BRIEFING_PACKING_CONFIG = {
+  version: "1",
+  maxRecords: TEMPORARY_GRANT_ANALYSIS_CITATION_LIMIT,
+  maxPromptChars: 90_000,
+  currentApplicationTargetRatio: 0.7,
+  currentApplicationMinimumRatio: 0.6,
+  currentCoreMaxRecords: 3,
+  primaryForumMaxRecords: 10,
+  currentSupportingMaxRecords: 3,
+  teamAndRelatedMaxRecords: 4,
+  comparableMaxRecords: 4,
+  comparablePerOutcomeMaxRecords: 2
+} as const;
 
 const positiveComparisonStatuses = new Set(["approved", "active", "completed"]);
 const negativeComparisonStatuses = new Set(["declined", "filtered", "cancelled"]);
@@ -19,11 +33,12 @@ const defaultSimilarApplicationsPerOutcome = 3;
 const maxSimilarApplicationsPerOutcome = 6;
 const maxTeamHistoryApplications = 10;
 const comparisonDocumentsPerApplication = 6;
-const maxCurrentApplicationDocuments = 40;
+const maxCurrentApplicationDocuments = 240;
 const maxSelectedEvidenceDocuments = 40;
 const databaseEvidenceTextMaxChars = 6_000;
-const promptEvidenceMaxChars = 90_000;
-const promptEvidenceTextMaxChars = 4_000;
+const promptEvidenceMaxChars = GRANT_BRIEFING_PACKING_CONFIG.maxPromptChars;
+const maxPackedEvidenceTextChars = 8_000;
+const minimumPackedEvidenceTextChars = 160;
 const clientResultContentMaxChars = 1_200;
 const customPromptMaxChars = 8_000;
 
@@ -96,6 +111,7 @@ export type GrantBriefingEvidenceManifest = {
     similarApplicationsPerOutcome: number;
     comparisonDocumentsPerApplication: number;
   };
+  packing: GrantBriefingPackingConfig;
   documents: GrantBriefingEvidenceManifestItem[];
   relationships: GrantBriefingRelationship[];
   participantMatches: GrantBriefingParticipantMatch[];
@@ -105,15 +121,79 @@ export type GrantBriefingEvidenceManifest = {
   };
 };
 
+export type GrantBriefingPackingConfig = {
+  version: string;
+  maxRecords: number;
+  maxPromptChars: number;
+  currentApplicationTargetRatio: number;
+  currentApplicationMinimumRatio: number;
+  currentCoreMaxRecords: number;
+  primaryForumMaxRecords: number;
+  currentSupportingMaxRecords: number;
+  teamAndRelatedMaxRecords: number;
+  comparableMaxRecords: number;
+  comparablePerOutcomeMaxRecords: number;
+};
+
+export type GrantBriefingPackingDropReason =
+  | "duplicate"
+  | "non_material_reconciliation"
+  | "current_slot_limit"
+  | "team_related_slot_limit"
+  | "comparable_slot_limit"
+  | "record_limit"
+  | "character_budget";
+
+export type GrantBriefingPackingDiagnostics = {
+  configVersion: string;
+  promptBudgetChars: number;
+  candidateCount: number;
+  selectedCount: number;
+  renderedChars: number;
+  contentChars: number;
+  promptHash: string;
+  truncatedCount: number;
+  currentApplicationRenderedChars: number;
+  currentApplicationRenderedRatio: number;
+  currentApplicationTargetMet: boolean;
+  byRole: Record<GrantBriefingEvidenceRole, {
+    records: number;
+    renderedChars: number;
+    contentChars: number;
+  }>;
+  bySourceKind: Record<string, {
+    records: number;
+    renderedChars: number;
+    contentChars: number;
+  }>;
+  primaryForum: {
+    linked: boolean;
+    candidateRecords: number;
+    selectedRecords: number;
+    substantiveSelectedRecords: number;
+    renderedChars: number;
+    availablePostCount: number;
+    packedPostCount: number;
+    omittedPostCount: number;
+  };
+  dropped: Array<{
+    knowledgeDocumentId: string;
+    documentKey: string;
+    reason: GrantBriefingPackingDropReason;
+  }>;
+};
+
 export type GrantBriefingEvidencePack = {
   applicationId: string;
   application: GrantBriefingApplication;
   query: string;
   retrievalMode: KnowledgeRetrievalMode;
+  candidates: GrantKnowledgeSearchResult[];
   results: GrantKnowledgeSearchResult[];
   evidence: GrantBriefingEvidenceItem[];
   manifest: GrantBriefingEvidenceManifest;
   fingerprint: string;
+  packing: GrantBriefingPackingDiagnostics;
   warnings: string[];
 };
 
@@ -135,6 +215,15 @@ export type CitationValidationResult = {
   hasCitations: boolean;
 };
 
+export type CommitteeBriefingSourceListValidationResult = {
+  valid: boolean;
+  citedNumbers: number[];
+  listedNumbers: number[];
+  missingNumbers: number[];
+  extraNumbers: number[];
+  hasSourceList: boolean;
+};
+
 type KnowledgeDocumentRow = {
   id: string;
   document_key: string;
@@ -150,6 +239,7 @@ type KnowledgeDocumentRow = {
   requested_amount_usd: string | null;
   content: string;
   content_hash: string;
+  metadata?: string | null;
   rank: string | number;
   evidence_role?: GrantBriefingEvidenceRole;
 };
@@ -194,6 +284,7 @@ export type GrantBriefingPreparedDocument = {
   sourceRecordId: string | null;
   evidenceRole: GrantBriefingEvidenceRole;
   retrievalRank: number;
+  metadata?: Record<string, unknown>;
 };
 
 export type GrantBriefingEvidenceDependencies = {
@@ -252,6 +343,19 @@ function boundedPositiveInteger(value: number | undefined, fallback: number, max
   return Math.min(Number(value), max);
 }
 
+function parseJsonRecord(value: string | null | undefined): Record<string, unknown> {
+  if (!value) return {};
+
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : {};
+  } catch {
+    return {};
+  }
+}
+
 export function normalizeGrantParticipantName(value: string | null | undefined) {
   if (!value) {
     return "";
@@ -293,6 +397,7 @@ function mapKnowledgeDocument(
     sourceRecordId: row.source_record_id,
     evidenceRole: row.evidence_role ?? fallbackRole,
     retrievalRank,
+    metadata: parseJsonRecord(row.metadata),
     result: {
       id: row.id,
       applicationId: row.application_id,
@@ -327,6 +432,7 @@ function normalizedFingerprintInput(manifest: GrantBriefingEvidenceManifest) {
     templateVersion: manifest.templateVersion,
     model: manifest.model,
     retrieval: manifest.retrieval,
+    packing: manifest.packing,
     documents: manifest.documents.map((document) => ({
       citationNumber: document.citationNumber,
       knowledgeDocumentId: document.knowledgeDocumentId,
@@ -364,27 +470,662 @@ export function computeGrantBriefingEvidenceFingerprint(manifest: GrantBriefingE
     .digest("hex");
 }
 
-export function assembleGrantBriefingEvidence(
-  input: AssembleGrantBriefingEvidenceInput
-): GrantBriefingEvidencePack {
-  const orderedDocuments = new Map<string, GrantBriefingPreparedDocument>();
+type PreparedPackingCandidate = {
+  document: GrantBriefingPreparedDocument;
+  index: number;
+  promptContent: string;
+};
 
-  for (const document of [...input.currentDocuments, ...input.selectedDocuments]) {
-    if (!orderedDocuments.has(document.result.id)) {
-      orderedDocuments.set(document.result.id, document);
+type PackedCandidateGroup = {
+  evidence: GrantBriefingEvidenceItem[];
+  renderedContributionChars: number;
+  truncatedDocumentIds: Set<string>;
+  droppedDocumentIds: string[];
+};
+
+const currentCoreDocumentKinds = new Set([
+  "application_summary",
+  "github_issue",
+  "google_sheet_row"
+]);
+
+function isForumDocument(document: GrantBriefingPreparedDocument) {
+  return document.result.documentKind.startsWith("forum_")
+    || document.result.sourceKind === "forum_link";
+}
+
+function forumRelationshipRoles(document: GrantBriefingPreparedDocument) {
+  const value = document.metadata?.relationshipRoles;
+  return Array.isArray(value)
+    ? value.filter((role): role is string => typeof role === "string")
+    : [];
+}
+
+function isPrimaryForumDocument(document: GrantBriefingPreparedDocument) {
+  if (!isForumDocument(document)) return false;
+  const roles = forumRelationshipRoles(document);
+  return !roles.length || roles.includes("primary_forum_thread");
+}
+
+function forumChunkSortKey(candidate: PreparedPackingCandidate) {
+  const metadata = candidate.document.metadata ?? {};
+  const topicId = typeof metadata.topicId === "string"
+    ? metadata.topicId
+    : candidate.document.result.sourceId?.match(/^forum:([^:]+)/)?.[1] ?? "";
+  const windowFromMetadata = Number(metadata.windowStartPostNumber);
+  const partFromMetadata = Number(metadata.partNumber);
+  const keyMatch = candidate.document.documentKey.match(/:posts:(\d+)-(\d+)(?::part:(\d+))?/);
+  const windowStart = Number.isFinite(windowFromMetadata)
+    ? windowFromMetadata
+    : Number(keyMatch?.[1] ?? Number.MAX_SAFE_INTEGER);
+  const partNumber = Number.isFinite(partFromMetadata)
+    ? partFromMetadata
+    : Number(keyMatch?.[3] ?? 1);
+  return { topicId, windowStart, partNumber };
+}
+
+function selectEvenlyAcrossForumDiscussion(
+  candidates: PreparedPackingCandidate[],
+  limit: number
+) {
+  const sorted = [...candidates].sort((left, right) => {
+    const leftKey = forumChunkSortKey(left);
+    const rightKey = forumChunkSortKey(right);
+    return leftKey.topicId.localeCompare(rightKey.topicId)
+      || leftKey.windowStart - rightKey.windowStart
+      || leftKey.partNumber - rightKey.partNumber
+      || left.index - right.index;
+  });
+
+  if (sorted.length <= limit) return sorted;
+  if (limit <= 1) return sorted.slice(0, limit);
+
+  const selectedIndexes = new Set<number>();
+  for (let index = 0; index < limit; index += 1) {
+    selectedIndexes.add(Math.round(index * (sorted.length - 1) / (limit - 1)));
+  }
+  return [...selectedIndexes].map((index) => sorted[index]);
+}
+
+function forumPostKeys(candidate: PreparedPackingCandidate) {
+  const metadata = candidate.document.metadata ?? {};
+  const topicId = typeof metadata.topicId === "string"
+    ? metadata.topicId
+    : candidate.document.result.sourceId?.match(/^forum:([^:]+)/)?.[1] ?? "unknown";
+  const postIds = Array.isArray(metadata.postIds)
+    ? metadata.postIds.filter((value): value is string | number =>
+        typeof value === "string" || typeof value === "number"
+      )
+    : [];
+  if (postIds.length) {
+    return postIds.map((postId) => `${topicId}:id:${postId}`);
+  }
+
+  const postNumbers = Array.isArray(metadata.postNumbers)
+    ? metadata.postNumbers.filter((value): value is string | number =>
+        typeof value === "string" || typeof value === "number"
+      )
+    : [];
+  if (postNumbers.length) {
+    return postNumbers.map((postNumber) => `${topicId}:number:${postNumber}`);
+  }
+
+  return [...candidate.promptContent.matchAll(/\bPost #(\d+)\b/gi)]
+    .map((match) => `${topicId}:number:${match[1]}`);
+}
+
+function isReconciliationDocument(document: GrantBriefingPreparedDocument) {
+  return document.result.documentKind === "reconciliation_issue"
+    || document.result.sourceKind === "reconciliation_issue";
+}
+
+function isMaterialReconciliationDocument(document: GrantBriefingPreparedDocument) {
+  if (!isReconciliationDocument(document)) {
+    return true;
+  }
+
+  const content = document.result.content;
+  const describesConflict = /\b(?:mismatch|conflict|contradict|discrepan|incorrect|unclear|ambiguous|missing|different|disagree)\w*\b/i.test(content);
+  const affectsEvaluation = /\b(?:applicant|team identity|requested amount|funding amount|budget|scope|milestone|deliverable|status|decision|outcome|result|prior performance)\b/i.test(content);
+  return describesConflict && affectsEvaluation;
+}
+
+function normalizeEvidenceContent(value: string) {
+  return escapeUntrustedSourceBoundaries(value)
+    .replace(/\r\n?/g, "\n")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function forumDiscussionContent(value: string) {
+  const lines = normalizeEvidenceContent(value).split("\n");
+  const operationalLine = /^(?:Grant application|Applicant|Status|Requested (?:amount )?USD|Source|Source URL|Source title|Source summary|id|topic_id|topic id|title|slug|posts_count|post count|highest_post_number|highest post number|reply_count|reply count|views|like_count|like count|participant_count|participant count|created_at|created at|last_posted_at|last posted at|visible|closed|archived|pinned|category_id|category id|tags):/i;
+  const retained = lines.filter((line) => !operationalLine.test(line.trim()));
+  return retained.join("\n").trim();
+}
+
+function promptContentForCandidate(document: GrantBriefingPreparedDocument) {
+  const raw = document.result.content.trim() || document.result.excerpt;
+  return isForumDocument(document)
+    ? forumDiscussionContent(raw)
+    : normalizeEvidenceContent(raw);
+}
+
+function hasSubstantiveForumPostText(candidate: PreparedPackingCandidate) {
+  if (!isForumDocument(candidate.document)) {
+    return false;
+  }
+
+  if (candidate.document.result.documentKind === "forum_topic_overview") {
+    return false;
+  }
+
+  const text = candidate.promptContent;
+  const wordCount = text.match(/[\p{L}\p{N}][\p{L}\p{N}'’-]*/gu)?.length ?? 0;
+  return text.length >= 100 && wordCount >= 16;
+}
+
+function documentPriority(candidate: PreparedPackingCandidate) {
+  const kind = candidate.document.result.documentKind;
+  const content = candidate.promptContent;
+
+  if (kind === "application_comparison_summary") {
+    return candidate.document.evidenceRole === "similar_approved"
+      || candidate.document.evidenceRole === "similar_declined"
+      ? 0
+      : 6;
+  }
+  if (kind === "decision_minutes") return 1;
+  if (/\b(?:milestone|deliverable|outcome|impact|result|declined|rejected|cancelled)\b/i.test(content)) return 2;
+  if (kind === "application_summary") return 3;
+  if (kind === "github_issue") return 4;
+  return 5;
+}
+
+function stableCandidateSort(
+  left: PreparedPackingCandidate,
+  right: PreparedPackingCandidate
+) {
+  const priorityDifference = documentPriority(left) - documentPriority(right);
+  if (priorityDifference) return priorityDifference;
+
+  const rankDifference = right.document.retrievalRank - left.document.retrievalRank;
+  if (rankDifference) return rankDifference;
+
+  return left.index - right.index;
+}
+
+function bestCandidatePerApplication(candidates: PreparedPackingCandidate[]) {
+  const byApplication = new Map<string, PreparedPackingCandidate[]>();
+
+  for (const candidate of candidates) {
+    const applicationId = candidate.document.result.applicationId;
+    const existing = byApplication.get(applicationId) ?? [];
+    existing.push(candidate);
+    byApplication.set(applicationId, existing);
+  }
+
+  return [...byApplication.values()]
+    .map((applicationCandidates) => [...applicationCandidates].sort(stableCandidateSort)[0])
+    .sort((left, right) => left.index - right.index);
+}
+
+function boundedMetadata(value: string, maxChars: number) {
+  return escapeUntrustedSourceBoundaries(value.replace(/\s+/g, " ").trim()).slice(0, maxChars);
+}
+
+function evidenceContextLabel(role: GrantBriefingEvidenceRole) {
+  switch (role) {
+    case "current": return "Current request";
+    case "related": return "Related application";
+    case "team_history": return "Applicant or team grant history";
+    case "similar_approved": return "Approved, active, or completed comparable";
+    case "similar_declined": return "Declined, filtered, or cancelled comparable";
+  }
+}
+
+function renderGrantBriefingEvidenceBlock(item: GrantBriefingEvidenceItem) {
+  const metadata = [
+    `Title: ${boundedMetadata(item.title, 180)}`,
+    `Context: ${evidenceContextLabel(item.evidenceRole)}`,
+    item.applicantName ? `Applicant: ${boundedMetadata(item.applicantName, 100)}` : null,
+    item.normalizedStatus ? `Application status: ${boundedMetadata(item.normalizedStatus, 64)}` : null,
+    item.requestedAmountUsd ? `Requested USD: ${boundedMetadata(item.requestedAmountUsd, 48)}` : null,
+    item.sourceUrl
+      ? `Source URL: ${boundedMetadata(item.sourceUrl, 240)}`
+      : `Source: ${boundedMetadata(item.sourceKind ?? "unknown", 64)}`
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  return [
+    `[${item.citationNumber}] EVIDENCE RECORD`,
+    "BEGIN UNTRUSTED SOURCE TEXT",
+    metadata,
+    "Evidence text:",
+    item.content,
+    "END UNTRUSTED SOURCE TEXT"
+  ].join("\n");
+}
+
+function truncatePackedContent(value: string, maxChars: number) {
+  if (value.length <= maxChars) {
+    return value;
+  }
+
+  const suffix = "\n\n[Evidence truncated for prompt size.]";
+  if (maxChars <= suffix.length) {
+    return value.slice(0, Math.max(0, maxChars));
+  }
+  return `${value.slice(0, maxChars - suffix.length)}${suffix}`;
+}
+
+function distributeContentCharacters(desired: number[], available: number) {
+  const allocated = desired.map(() => 0);
+  const active = new Set(desired.map((_, index) => index));
+  let remaining = Math.max(0, available);
+
+  while (active.size && remaining > 0) {
+    const share = Math.max(1, Math.floor(remaining / active.size));
+    let distributed = 0;
+
+    for (const index of [...active]) {
+      const needed = desired[index] - allocated[index];
+      const addition = Math.min(needed, share, remaining - distributed);
+      allocated[index] += addition;
+      distributed += addition;
+      if (allocated[index] >= desired[index]) active.delete(index);
+      if (distributed >= remaining) break;
+    }
+
+    if (!distributed) break;
+    remaining -= distributed;
+  }
+
+  return allocated;
+}
+
+function packCandidateGroup({
+  candidates,
+  maxContributionChars,
+  priorEvidenceCount
+}: {
+  candidates: PreparedPackingCandidate[];
+  maxContributionChars: number;
+  priorEvidenceCount: number;
+}): PackedCandidateGroup {
+  const accepted = [...candidates];
+  const droppedDocumentIds: string[] = [];
+
+  while (accepted.length) {
+    const baseChars = accepted.reduce((total, candidate, index) => {
+      const citationNumber = priorEvidenceCount + index + 1;
+      const item: GrantBriefingEvidenceItem = {
+        ...candidate.document.result,
+        content: "",
+        citationNumber,
+        documentKey: candidate.document.documentKey,
+        contentHash: candidate.document.contentHash,
+        evidenceRole: candidate.document.evidenceRole,
+        retrievalRank: candidate.document.retrievalRank
+      };
+      const separatorChars = priorEvidenceCount + index > 0 ? 2 : 0;
+      const minimumContentChars = Math.min(
+        candidate.promptContent.length,
+        minimumPackedEvidenceTextChars
+      );
+      return total + separatorChars + renderGrantBriefingEvidenceBlock(item).length + minimumContentChars;
+    }, 0);
+
+    if (baseChars <= maxContributionChars) break;
+    const dropped = accepted.pop();
+    if (dropped) droppedDocumentIds.unshift(dropped.document.result.id);
+  }
+
+  if (!accepted.length) {
+    return {
+      evidence: [],
+      renderedContributionChars: 0,
+      truncatedDocumentIds: new Set(),
+      droppedDocumentIds
+    };
+  }
+
+  const baseBlockChars = accepted.map((candidate, index) => {
+    const item: GrantBriefingEvidenceItem = {
+      ...candidate.document.result,
+      content: "",
+      citationNumber: priorEvidenceCount + index + 1,
+      documentKey: candidate.document.documentKey,
+      contentHash: candidate.document.contentHash,
+      evidenceRole: candidate.document.evidenceRole,
+      retrievalRank: candidate.document.retrievalRank
+    };
+    return renderGrantBriefingEvidenceBlock(item).length;
+  });
+  const separatorChars = accepted.reduce(
+    (total, _, index) => total + (priorEvidenceCount + index > 0 ? 2 : 0),
+    0
+  );
+  const availableContentChars = Math.max(
+    0,
+    maxContributionChars - separatorChars - baseBlockChars.reduce((sum, value) => sum + value, 0)
+  );
+  const desiredContentChars = accepted.map((candidate) =>
+    Math.min(candidate.promptContent.length, maxPackedEvidenceTextChars)
+  );
+  const allocatedContentChars = distributeContentCharacters(
+    desiredContentChars,
+    availableContentChars
+  );
+  const truncatedDocumentIds = new Set<string>();
+  const evidence = accepted.map((candidate, index): GrantBriefingEvidenceItem => {
+    const content = truncatePackedContent(
+      candidate.promptContent,
+      allocatedContentChars[index]
+    );
+    if (content.length < candidate.promptContent.length) {
+      truncatedDocumentIds.add(candidate.document.result.id);
+    }
+    return {
+      ...candidate.document.result,
+      content,
+      excerpt: plainExcerpt(content),
+      citationNumber: priorEvidenceCount + index + 1,
+      documentKey: candidate.document.documentKey,
+      contentHash: candidate.document.contentHash,
+      evidenceRole: candidate.document.evidenceRole,
+      retrievalRank: candidate.document.retrievalRank
+    };
+  });
+  const renderedContributionChars = evidence.reduce(
+    (total, item, index) => total
+      + (priorEvidenceCount + index > 0 ? 2 : 0)
+      + renderGrantBriefingEvidenceBlock(item).length,
+    0
+  );
+
+  return {
+    evidence,
+    renderedContributionChars,
+    truncatedDocumentIds,
+    droppedDocumentIds
+  };
+}
+
+function emptyRoleDiagnostics(): GrantBriefingPackingDiagnostics["byRole"] {
+  return {
+    current: { records: 0, renderedChars: 0, contentChars: 0 },
+    related: { records: 0, renderedChars: 0, contentChars: 0 },
+    team_history: { records: 0, renderedChars: 0, contentChars: 0 },
+    similar_approved: { records: 0, renderedChars: 0, contentChars: 0 },
+    similar_declined: { records: 0, renderedChars: 0, contentChars: 0 }
+  };
+}
+
+function packGrantBriefingCandidates(
+  documents: GrantBriefingPreparedDocument[]
+) {
+  const dropped: GrantBriefingPackingDiagnostics["dropped"] = [];
+  const uniqueDocuments = new Map<string, PreparedPackingCandidate>();
+
+  documents.forEach((document, index) => {
+    if (uniqueDocuments.has(document.result.id)) {
+      dropped.push({
+        knowledgeDocumentId: document.result.id,
+        documentKey: document.documentKey,
+        reason: "duplicate"
+      });
+      return;
+    }
+    uniqueDocuments.set(document.result.id, {
+      document,
+      index,
+      promptContent: promptContentForCandidate(document)
+    });
+  });
+
+  const candidates = [...uniqueDocuments.values()];
+  const eligible = candidates.filter((candidate) => {
+    if (isMaterialReconciliationDocument(candidate.document)) return true;
+    dropped.push({
+      knowledgeDocumentId: candidate.document.result.id,
+      documentKey: candidate.document.documentKey,
+      reason: "non_material_reconciliation"
+    });
+    return false;
+  });
+  const current = eligible.filter((candidate) => candidate.document.evidenceRole === "current");
+  const forumCandidates = current.filter((candidate) => isPrimaryForumDocument(candidate.document));
+  const substantiveForumCandidates = forumCandidates
+    .filter(hasSubstantiveForumPostText);
+  const currentCore = current
+    .filter((candidate) => currentCoreDocumentKinds.has(candidate.document.result.documentKind))
+    .sort(stableCandidateSort);
+  const currentSupporting = current
+    .filter((candidate) =>
+      !isForumDocument(candidate.document)
+      || (!isPrimaryForumDocument(candidate.document) && hasSubstantiveForumPostText(candidate))
+    )
+    .filter((candidate) => !currentCoreDocumentKinds.has(candidate.document.result.documentKind))
+    .filter((candidate) => candidate.document.result.documentKind !== "application_comparison_summary")
+    .sort(stableCandidateSort);
+  const selectedCurrent = [
+    ...currentCore.slice(0, GRANT_BRIEFING_PACKING_CONFIG.currentCoreMaxRecords),
+    ...selectEvenlyAcrossForumDiscussion(
+      substantiveForumCandidates,
+      GRANT_BRIEFING_PACKING_CONFIG.primaryForumMaxRecords
+    ),
+    ...currentSupporting.slice(0, GRANT_BRIEFING_PACKING_CONFIG.currentSupportingMaxRecords)
+  ];
+  const selectedCurrentIds = new Set(selectedCurrent.map((candidate) => candidate.document.result.id));
+
+  for (const candidate of current) {
+    if (!selectedCurrentIds.has(candidate.document.result.id)) {
+      dropped.push({
+        knowledgeDocumentId: candidate.document.result.id,
+        documentKey: candidate.document.documentKey,
+        reason: "current_slot_limit"
+      });
     }
   }
 
-  const evidence = [...orderedDocuments.values()].map((document, index): GrantBriefingEvidenceItem => ({
-    ...document.result,
-    citationNumber: index + 1,
-    documentKey: document.documentKey,
-    contentHash: document.contentHash,
-    evidenceRole: document.evidenceRole,
-    retrievalRank: document.retrievalRank
-  }));
+  const teamAndRelatedCandidates = bestCandidatePerApplication(
+    eligible.filter((candidate) =>
+      candidate.document.evidenceRole === "related"
+      || candidate.document.evidenceRole === "team_history"
+    )
+  );
+  const selectedTeamAndRelated = teamAndRelatedCandidates.slice(
+    0,
+    GRANT_BRIEFING_PACKING_CONFIG.teamAndRelatedMaxRecords
+  );
+  const selectedTeamAndRelatedIds = new Set(
+    selectedTeamAndRelated.map((candidate) => candidate.document.result.id)
+  );
+  for (const candidate of eligible.filter((item) =>
+    item.document.evidenceRole === "related"
+    || item.document.evidenceRole === "team_history"
+  )) {
+    if (!selectedTeamAndRelatedIds.has(candidate.document.result.id)) {
+      dropped.push({
+        knowledgeDocumentId: candidate.document.result.id,
+        documentKey: candidate.document.documentKey,
+        reason: "team_related_slot_limit"
+      });
+    }
+  }
+
+  const approvedCandidates = bestCandidatePerApplication(
+    eligible.filter((candidate) => candidate.document.evidenceRole === "similar_approved")
+  ).slice(0, GRANT_BRIEFING_PACKING_CONFIG.comparablePerOutcomeMaxRecords);
+  const declinedCandidates = bestCandidatePerApplication(
+    eligible.filter((candidate) => candidate.document.evidenceRole === "similar_declined")
+  ).slice(0, GRANT_BRIEFING_PACKING_CONFIG.comparablePerOutcomeMaxRecords);
+  const selectedComparables = [...approvedCandidates, ...declinedCandidates]
+    .slice(0, GRANT_BRIEFING_PACKING_CONFIG.comparableMaxRecords);
+  const selectedComparableIds = new Set(
+    selectedComparables.map((candidate) => candidate.document.result.id)
+  );
+  for (const candidate of eligible.filter((item) =>
+    item.document.evidenceRole === "similar_approved"
+    || item.document.evidenceRole === "similar_declined"
+  )) {
+    if (!selectedComparableIds.has(candidate.document.result.id)) {
+      dropped.push({
+        knowledgeDocumentId: candidate.document.result.id,
+        documentKey: candidate.document.documentKey,
+        reason: "comparable_slot_limit"
+      });
+    }
+  }
+
+  const currentBudget = Math.floor(
+    promptEvidenceMaxChars * GRANT_BRIEFING_PACKING_CONFIG.currentApplicationTargetRatio
+  );
+  const packedCurrent = packCandidateGroup({
+    candidates: selectedCurrent,
+    maxContributionChars: currentBudget,
+    priorEvidenceCount: 0
+  });
+  const maxNonCurrentFromRatio = packedCurrent.renderedContributionChars
+    ? Math.floor(
+        packedCurrent.renderedContributionChars
+        * (1 - GRANT_BRIEFING_PACKING_CONFIG.currentApplicationMinimumRatio)
+        / GRANT_BRIEFING_PACKING_CONFIG.currentApplicationMinimumRatio
+      )
+    : promptEvidenceMaxChars - packedCurrent.renderedContributionChars;
+  const minimumUsefulNonCurrentBudget = (
+    selectedTeamAndRelated.length + selectedComparables.length
+  ) * 1_200;
+  const nonCurrentBudget = Math.min(
+    promptEvidenceMaxChars - packedCurrent.renderedContributionChars,
+    Math.max(maxNonCurrentFromRatio, minimumUsefulNonCurrentBudget)
+  );
+  const initialTeamBudget = selectedComparables.length
+    ? Math.floor(nonCurrentBudget / 2)
+    : nonCurrentBudget;
+  const packedTeamAndRelated = packCandidateGroup({
+    candidates: selectedTeamAndRelated,
+    maxContributionChars: initialTeamBudget,
+    priorEvidenceCount: packedCurrent.evidence.length
+  });
+  const packedComparables = packCandidateGroup({
+    candidates: selectedComparables,
+    maxContributionChars: nonCurrentBudget - packedTeamAndRelated.renderedContributionChars,
+    priorEvidenceCount: packedCurrent.evidence.length + packedTeamAndRelated.evidence.length
+  });
+  const evidence = [
+    ...packedCurrent.evidence,
+    ...packedTeamAndRelated.evidence,
+    ...packedComparables.evidence
+  ].slice(0, GRANT_BRIEFING_PACKING_CONFIG.maxRecords);
+
+  for (const group of [packedCurrent, packedTeamAndRelated, packedComparables]) {
+    for (const documentId of group.droppedDocumentIds) {
+      const candidate = candidates.find((item) => item.document.result.id === documentId);
+      if (candidate) {
+        dropped.push({
+          knowledgeDocumentId: documentId,
+          documentKey: candidate.document.documentKey,
+          reason: "character_budget"
+        });
+      }
+    }
+  }
+
+  const evidenceText = evidence.map(renderGrantBriefingEvidenceBlock).join("\n\n");
+  const byRole = emptyRoleDiagnostics();
+  const bySourceKind: GrantBriefingPackingDiagnostics["bySourceKind"] = {};
+  evidence.forEach((item, index) => {
+    const contribution = renderGrantBriefingEvidenceBlock(item).length + (index ? 2 : 0);
+    const role = byRole[item.evidenceRole];
+    role.records += 1;
+    role.renderedChars += contribution;
+    role.contentChars += item.content.length;
+    const sourceKind = item.sourceKind ?? "unknown";
+    const source = bySourceKind[sourceKind] ?? {
+      records: 0,
+      renderedChars: 0,
+      contentChars: 0
+    };
+    source.records += 1;
+    source.renderedChars += contribution;
+    source.contentChars += item.content.length;
+    bySourceKind[sourceKind] = source;
+  });
+  const currentApplicationRenderedChars = byRole.current.renderedChars;
+  const substantiveForumIds = new Set(
+    substantiveForumCandidates.map((candidate) => candidate.document.result.id)
+  );
+  const selectedForum = evidence.filter((item) => substantiveForumIds.has(item.id));
+  const selectedForumIds = new Set(selectedForum.map((item) => item.id));
+  const availableForumPostKeys = new Set(
+    substantiveForumCandidates.flatMap(forumPostKeys)
+  );
+  const packedForumPostKeys = new Set(
+    substantiveForumCandidates
+      .filter((candidate) => selectedForumIds.has(candidate.document.result.id))
+      .flatMap(forumPostKeys)
+  );
+  const truncatedDocumentIds = new Set([
+    ...packedCurrent.truncatedDocumentIds,
+    ...packedTeamAndRelated.truncatedDocumentIds,
+    ...packedComparables.truncatedDocumentIds
+  ]);
+  const diagnostics: GrantBriefingPackingDiagnostics = {
+    configVersion: GRANT_BRIEFING_PACKING_CONFIG.version,
+    promptBudgetChars: GRANT_BRIEFING_PACKING_CONFIG.maxPromptChars,
+    candidateCount: candidates.length,
+    selectedCount: evidence.length,
+    renderedChars: evidenceText.length,
+    contentChars: evidence.reduce((total, item) => total + item.content.length, 0),
+    promptHash: crypto.createHash("sha256").update(evidenceText).digest("hex"),
+    truncatedCount: truncatedDocumentIds.size,
+    currentApplicationRenderedChars,
+    currentApplicationRenderedRatio: evidenceText.length
+      ? currentApplicationRenderedChars / evidenceText.length
+      : 0,
+    currentApplicationTargetMet: evidenceText.length === 0
+      || currentApplicationRenderedChars / evidenceText.length
+        >= GRANT_BRIEFING_PACKING_CONFIG.currentApplicationMinimumRatio,
+    byRole,
+    bySourceKind,
+    primaryForum: {
+      linked: forumCandidates.length > 0,
+      candidateRecords: forumCandidates.length,
+      selectedRecords: selectedForum.length,
+      substantiveSelectedRecords: selectedForum.filter((item) => item.content.length >= 100).length,
+      renderedChars: selectedForum.reduce(
+        (total, item) => total + renderGrantBriefingEvidenceBlock(item).length,
+        0
+      ),
+      availablePostCount: availableForumPostKeys.size,
+      packedPostCount: packedForumPostKeys.size,
+      omittedPostCount: Math.max(0, availableForumPostKeys.size - packedForumPostKeys.size)
+    },
+    dropped
+  };
+
+  if (evidence.length > GRANT_BRIEFING_PACKING_CONFIG.maxRecords) {
+    throw new Error("Committee briefing evidence packing exceeded the record limit.");
+  }
+  if (evidenceText.length > promptEvidenceMaxChars) {
+    throw new Error("Committee briefing evidence packing exceeded the prompt character budget.");
+  }
+
+  return { evidence, diagnostics, candidates };
+}
+
+export function assembleGrantBriefingEvidence(
+  input: AssembleGrantBriefingEvidenceInput
+): GrantBriefingEvidencePack {
+  const allDocuments = [...input.currentDocuments, ...input.selectedDocuments];
+  const packed = packGrantBriefingCandidates(allDocuments);
+  const evidence = packed.evidence;
   const sourceRecordIds = new Map(
-    [...orderedDocuments.values()].map((document) => [document.result.id, document.sourceRecordId])
+    allDocuments.map((document) => [document.result.id, document.sourceRecordId])
   );
   const manifest: GrantBriefingEvidenceManifest = {
     applicationId: input.application.id,
@@ -396,6 +1137,7 @@ export function assembleGrantBriefingEvidence(
       similarApplicationsPerOutcome: input.similarApplicationsPerOutcome,
       comparisonDocumentsPerApplication
     },
+    packing: { ...GRANT_BRIEFING_PACKING_CONFIG },
     documents: evidence.map((item) => ({
       citationNumber: item.citationNumber,
       knowledgeDocumentId: item.id,
@@ -422,10 +1164,12 @@ export function assembleGrantBriefingEvidence(
     application: input.application,
     query: briefingSimilarityQuery(input.application, input.currentDocuments.map((document) => document.result)),
     retrievalMode: input.retrievalMode,
-    results: evidence.map(({ citationNumber: _citationNumber, documentKey: _documentKey, contentHash: _contentHash, evidenceRole: _evidenceRole, retrievalRank: _retrievalRank, ...result }) => resultForClient(result)),
+    candidates: packed.candidates.map((candidate) => resultForClient(candidate.document.result)),
+    results: packed.candidates.map((candidate) => resultForClient(candidate.document.result)),
     evidence,
     manifest,
     fingerprint: computeGrantBriefingEvidenceFingerprint(manifest),
+    packing: packed.diagnostics,
     warnings: input.warnings ?? []
   };
 }
@@ -504,17 +1248,26 @@ async function fetchCurrentDocuments(
             d.requested_amount_usd::text,
             left(d.content, $2::integer) as content,
             d.content_hash,
+            d.metadata::text as metadata,
             row_number() over (
               order by case
                 when d.document_kind = 'application_summary' then 0
                 when d.document_kind = 'github_issue' then 1
                 when d.document_kind = 'google_sheet_row' then 2
                 when d.document_kind = 'decision_minutes' then 3
-                when d.document_kind = 'reconciliation_issue' then 4
-                when d.document_kind = 'github_issue_comment' then 5
-                when d.document_kind = 'forum_link' then 6
+                when d.document_kind = 'forum_discussion_chunk' then 4
+                when d.document_kind = 'forum_link' then 5
+                when d.document_kind = 'forum_topic_overview' then 6
+                when d.document_kind = 'github_issue_comment' then 7
+                when d.document_kind = 'reconciliation_issue' then 8
                 else 9
               end,
+              case when d.document_kind = 'forum_discussion_chunk'
+                and d.metadata->>'windowStartPostNumber' ~ '^[0-9]+$'
+                then (d.metadata->>'windowStartPostNumber')::integer end,
+              case when d.document_kind = 'forum_discussion_chunk'
+                and d.metadata->>'partNumber' ~ '^[0-9]+$'
+                then (d.metadata->>'partNumber')::integer end,
               d.indexed_at desc,
               d.id
             )::text as rank
@@ -525,11 +1278,19 @@ async function fetchCurrentDocuments(
         when d.document_kind = 'github_issue' then 1
         when d.document_kind = 'google_sheet_row' then 2
         when d.document_kind = 'decision_minutes' then 3
-        when d.document_kind = 'reconciliation_issue' then 4
-        when d.document_kind = 'github_issue_comment' then 5
-        when d.document_kind = 'forum_link' then 6
+        when d.document_kind = 'forum_discussion_chunk' then 4
+        when d.document_kind = 'forum_link' then 5
+        when d.document_kind = 'forum_topic_overview' then 6
+        when d.document_kind = 'github_issue_comment' then 7
+        when d.document_kind = 'reconciliation_issue' then 8
         else 9
       end,
+      case when d.document_kind = 'forum_discussion_chunk'
+        and d.metadata->>'windowStartPostNumber' ~ '^[0-9]+$'
+        then (d.metadata->>'windowStartPostNumber')::integer end,
+      case when d.document_kind = 'forum_discussion_chunk'
+        and d.metadata->>'partNumber' ~ '^[0-9]+$'
+        then (d.metadata->>'partNumber')::integer end,
       d.indexed_at desc,
       d.id
       limit $3`,
@@ -792,17 +1553,22 @@ async function fetchSelectedDocuments(
               d.requested_amount_usd::text,
               left(d.content, $3::integer) as content,
               d.content_hash,
+              d.metadata::text as metadata,
               selected.evidence_role,
               selected.application_order,
               row_number() over (
                 partition by d.application_id
                 order by case
-                  when d.document_kind = 'application_summary' then 0
-                  when d.document_kind = 'decision_minutes' then 1
-                  when d.document_kind = 'google_sheet_row' then 2
-                  when d.document_kind = 'github_issue' then 3
-                  when d.document_kind = 'github_issue_comment' then 4
-                  when d.document_kind = 'forum_link' then 5
+                  when selected.evidence_role in ('similar_approved', 'similar_declined')
+                    and d.document_kind = 'application_comparison_summary' then 0
+                  when d.document_kind = 'application_summary' then 1
+                  when d.document_kind = 'decision_minutes' then 2
+                  when d.document_kind = 'google_sheet_row' then 3
+                  when d.document_kind = 'github_issue' then 4
+                  when d.document_kind = 'github_issue_comment' then 5
+                  when d.document_kind = 'forum_discussion_chunk' then 6
+                  when d.document_kind = 'forum_link' then 7
+                  when d.document_kind = 'forum_topic_overview' then 8
                   else 9
                 end,
                 d.indexed_at desc,
@@ -825,6 +1591,7 @@ async function fetchSelectedDocuments(
             requested_amount_usd,
             content,
             content_hash,
+            metadata,
             evidence_role,
             (1.0 - application_order::numeric * 0.01 - document_rank::numeric * 0.0001)::text as rank
        from ranked
@@ -1024,83 +1791,25 @@ function escapeUntrustedSourceBoundaries(value: string) {
   );
 }
 
-function promptEvidenceText(item: GrantBriefingEvidenceItem, maxTextChars: number) {
-  const raw = item.content.replace(/\n{3,}/g, "\n\n").trim() || item.excerpt;
-  const normalized = escapeUntrustedSourceBoundaries(raw);
-
-  if (normalized.length <= maxTextChars) {
-    return normalized;
-  }
-
-  const suffix = "\n\n[Evidence truncated for prompt size.]";
-
-  if (maxTextChars <= suffix.length) {
-    return normalized.slice(0, Math.max(0, maxTextChars));
-  }
-
-  return `${normalized.slice(0, maxTextChars - suffix.length)}${suffix}`;
-}
-
 export function formatGrantBriefingEvidenceForPrompt(evidence: GrantBriefingEvidenceItem[]) {
   if (!evidence.length) {
     return "No indexed evidence was available for this application.";
   }
 
-  const headerAllowance = evidence.length * 720;
-  const perItemTextBudget = Math.max(
-    240,
-    Math.min(
-      promptEvidenceTextMaxChars,
-      Math.floor((promptEvidenceMaxChars - headerAllowance) / evidence.length)
-    )
-  );
-
-  const blocks: string[] = [];
-  let usedChars = 0;
-
-  for (const item of evidence) {
-    const boundedMetadata = (value: string, maxChars: number) =>
-      escapeUntrustedSourceBoundaries(value.replace(/\s+/g, " ").trim()).slice(0, maxChars);
-    const metadata = [
-      `Title: ${boundedMetadata(item.title, 180)}`,
-      `Evidence role: ${item.evidenceRole}`,
-      `Application ID: ${item.applicationId}`,
-      item.applicantName ? `Applicant: ${boundedMetadata(item.applicantName, 100)}` : null,
-      item.normalizedStatus ? `Application status: ${boundedMetadata(item.normalizedStatus, 64)}` : null,
-      item.requestedAmountUsd ? `Requested USD: ${boundedMetadata(item.requestedAmountUsd, 48)}` : null,
-      item.sourceUrl
-        ? `Source URL: ${boundedMetadata(item.sourceUrl, 240)}`
-        : `Source: ${boundedMetadata(item.sourceKind ?? "unknown", 64)}`
-    ]
-      .filter(Boolean)
-      .join("\n");
-    const prefix = [
-      `[${item.citationNumber}] EVIDENCE RECORD`,
-      "BEGIN UNTRUSTED SOURCE TEXT",
-      metadata,
-      "Evidence text:"
-    ].join("\n");
-    const suffix = "\nEND UNTRUSTED SOURCE TEXT";
-    const separatorChars = blocks.length ? 2 : 0;
-    const remainingChars = promptEvidenceMaxChars - usedChars - separatorChars;
-    const availableTextChars = remainingChars - prefix.length - suffix.length - 1;
-
-    if (availableTextChars <= 0) {
-      break;
-    }
-
-    const text = promptEvidenceText(item, Math.min(perItemTextBudget, availableTextChars));
-    const block = `${prefix}\n${text}${suffix}`;
-
-    if (block.length > remainingChars) {
-      break;
-    }
-
-    blocks.push(block);
-    usedChars += block.length + separatorChars;
+  if (evidence.length > GRANT_BRIEFING_PACKING_CONFIG.maxRecords) {
+    throw new Error(
+      `Grant briefing evidence must be packed to ${GRANT_BRIEFING_PACKING_CONFIG.maxRecords} records or fewer before prompt formatting.`
+    );
   }
 
-  return blocks.join("\n\n");
+  const evidenceText = evidence.map(renderGrantBriefingEvidenceBlock).join("\n\n");
+  if (evidenceText.length > promptEvidenceMaxChars) {
+    throw new Error(
+      `Grant briefing evidence must be packed to ${promptEvidenceMaxChars.toLocaleString("en-US")} characters or fewer before prompt formatting.`
+    );
+  }
+
+  return evidenceText;
 }
 
 export function normalizeCustomGrantAnalysisPrompt(value: unknown) {
@@ -1176,13 +1885,14 @@ function committeeBriefingRequest(pack: GrantBriefingEvidencePack) {
     "- Mention a source conflict or evidence limitation only when it materially changes confidence in the applicant, amount, scope, milestones, budget, dependencies, prior outcomes, or likely delivery. Translate it into plain committee language and state it once.",
     "- Use only the two to four strongest comparable grants. Explain why each is relevant and cite documented outcomes for approved grants or documented reasons for declined grants; do not produce a catalog.",
     "- Distinguish documented fact from clearly labeled inference. Do not repeat caveats, citations, or background across sections.",
+    "- In section 4, summarize the strongest substantive arguments for and against the request, the applicant's responses or clarifications, which concerns were resolved, and what disagreement remains. Weight arguments by decision relevance, not post volume or tone.",
     "- In section 7, prioritize three to seven concrete questions whose answers could change evaluation or funding conditions. Do not list generic data-cleanup tasks.",
     "- In section 9, list only sources actually cited, with a human-readable title and direct URL when supplied. Do not include internal IDs, evidence roles, or other metadata.",
     "Use exactly these section headings:",
     "1. Executive summary and decision snapshot",
     "2. Applicant and team track record",
     "3. Proposal scope, milestones, budget, technical approach, and dependencies",
-    "4. Community and committee signals",
+    "4. Community discussion, arguments, responses, and resolution",
     "5. Relevant precedents and documented outcomes",
     "6. Material risks and execution considerations",
     "7. Material gaps and questions for the applicant",
@@ -1203,8 +1913,19 @@ export function buildGrantAnalysisPrompt({
   purpose: GrantAnalysisPurpose;
   customPrompt?: unknown;
 }): GrantAnalysisPrompt {
-  const evidenceText = formatGrantBriefingEvidenceForPrompt(evidencePack.evidence);
   const isCustom = purpose === "custom";
+
+  if (
+    !isCustom
+    && evidencePack.packing.primaryForum.linked
+    && evidencePack.packing.primaryForum.substantiveSelectedRecords === 0
+  ) {
+    throw new Error(
+      "The application has a linked primary Forum discussion, but no substantive Forum post text reached the Committee Briefing evidence pack. Refresh Forum evidence before generating the briefing."
+    );
+  }
+
+  const evidenceText = formatGrantBriefingEvidenceForPrompt(evidencePack.evidence);
   const templateKey = isCustom
     ? CUSTOM_GRANT_ANALYSIS_TEMPLATE_KEY
     : COMMITTEE_BRIEFING_TEMPLATE_KEY;
@@ -1267,12 +1988,55 @@ export function extractEvidenceCitationNumbers(answerText: string) {
   return citations;
 }
 
+export function validateCommitteeBriefingSourceListCitations(
+  answerText: string
+): CommitteeBriefingSourceListValidationResult {
+  const sourceListHeading = /(?:^|\n)\s*#{0,4}\s*9\.\s*Numbered source list[^\n]*/im;
+  const headingMatch = sourceListHeading.exec(answerText);
+
+  if (!headingMatch || headingMatch.index === undefined) {
+    return {
+      valid: false,
+      citedNumbers: extractEvidenceCitationNumbers(answerText),
+      listedNumbers: [],
+      missingNumbers: extractEvidenceCitationNumbers(answerText),
+      extraNumbers: [],
+      hasSourceList: false
+    };
+  }
+
+  const bodyText = answerText.slice(0, headingMatch.index);
+  const sourceListText = answerText.slice(headingMatch.index + headingMatch[0].length);
+  const citedNumbers = extractEvidenceCitationNumbers(bodyText);
+  const listed = new Set(extractEvidenceCitationNumbers(sourceListText));
+
+  for (const match of sourceListText.matchAll(
+    /(?:^|\n)\s*(?:[-*]\s*)?(?:\[(\d+)\]|(\d+)[.)])(?=\s)/g
+  )) {
+    listed.add(Number(match[1] ?? match[2]));
+  }
+
+  const listedNumbers = [...listed].filter(Number.isFinite).sort((left, right) => left - right);
+  const missingNumbers = citedNumbers.filter((citation) => !listed.has(citation));
+  const cited = new Set(citedNumbers);
+  const extraNumbers = listedNumbers.filter((citation) => !cited.has(citation));
+
+  return {
+    valid: missingNumbers.length === 0 && extraNumbers.length === 0,
+    citedNumbers,
+    listedNumbers,
+    missingNumbers,
+    extraNumbers,
+    hasSourceList: true
+  };
+}
+
 export function missingCommitteeBriefingSections(answerText: string) {
   const sectionPatterns = [
     /(?:^|\n)\s*#{0,4}\s*1\.\s*Executive summary and decision snapshot/im,
     /(?:^|\n)\s*#{0,4}\s*2\.\s*Applicant and team track record/im,
     /(?:^|\n)\s*#{0,4}\s*3\.\s*Proposal scope/im,
-    /(?:^|\n)\s*#{0,4}\s*4\.\s*Community and committee signals/im,
+    /(?:^|\n)\s*#{0,4}\s*4\.\s*Community discussion, arguments, responses, and resolution/im,
     /(?:^|\n)\s*#{0,4}\s*5\.\s*Relevant precedents and documented outcomes/im,
     /(?:^|\n)\s*#{0,4}\s*6\.\s*Material risks and execution considerations/im,
     /(?:^|\n)\s*#{0,4}\s*7\.\s*Material gaps and questions for the applicant/im,

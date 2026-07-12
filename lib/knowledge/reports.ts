@@ -401,6 +401,13 @@ export async function getGrantAnalysisReportFreshness({
        select 1
          from grant_knowledge_documents changed_document
         where changed_document.indexed_at > $3::timestamptz
+          and changed_document.application_id in (
+            select $2::uuid
+            union
+            select saved_application.application_id
+              from grant_analysis_report_evidence saved_application
+             where saved_application.report_id = $1
+          )
        union all
        select 1
          from grant_application_relationships relationship
@@ -411,17 +418,6 @@ export async function getGrantAnalysisReportFreshness({
          from grant_application_participants participant
         where participant.application_id = $2
           and participant.updated_at > $3::timestamptz
-       union all
-       select 1
-         from audit_events event
-        where event.created_at > $3::timestamptz
-          and (
-            event.action like 'reconciliation.%'
-            or (
-              event.action = 'knowledge.index'
-              and coalesce((event.metadata->>'staleDocumentsRemoved')::integer, 0) > 0
-            )
-          )
        union all
        select 1
         where not exists (

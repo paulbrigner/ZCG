@@ -9,7 +9,7 @@
   },
   "packageManager": "npm@11.16.0",
   "scripts": {
-    "test": "tsx --test tests/reconciliation/*.test.ts tests/knowledge/*.test.ts",
+    "test": "tsx --test tests/reconciliation/*.test.ts tests/knowledge/*.test.ts tests/source-mirroring/*.test.ts",
     "dev": "next dev",
     "build": "node scripts/with-build-env.mjs",
     "start": "next start",
@@ -20,6 +20,7 @@
     "db:seed": "tsx scripts/seed.ts",
     "knowledge:index": "tsx scripts/index-knowledge.ts",
     "knowledge:embed": "tsx scripts/embed-knowledge.ts",
+    "knowledge:briefing-preview": "tsx scripts/preview-grant-briefing.ts",
     "reconciliation:export": "tsx scripts/export-reconciliation-decisions.ts",
     "reconciliation:import": "tsx scripts/import-reconciliation-decisions.ts",
     "reconcile:grants": "tsx scripts/reconcile.ts",

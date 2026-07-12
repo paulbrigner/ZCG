@@ -134,7 +134,8 @@ export class ZcgPrototypeStack extends Stack {
       (this.node.tryGetContext("knowledgeCommitteeBriefingModel") as string | undefined) ??
       "openai-gpt-56-terra-pro";
     const forumMaxTopics = contextNumber(this, "forumMaxTopics", 2000);
-    const forumMaxPostsPerTopic = contextNumber(this, "forumMaxPostsPerTopic", 20);
+    const forumMaxPostsPerLinkedTopic = contextNumber(this, "forumMaxPostsPerLinkedTopic", 1000);
+    const forumMaxPostsPerUpdatesTopic = contextNumber(this, "forumMaxPostsPerUpdatesTopic", 20);
     const forumMaxCategoryPages = contextNumber(this, "forumMaxCategoryPages", 25);
     const forumFetchDelayMs = contextNumber(this, "forumFetchDelayMs", 500);
     const logRetention = logRetentionForDays(logRetentionDays);
@@ -482,7 +483,8 @@ export class ZcgPrototypeStack extends Stack {
       const syncWorkerEnvironment = {
         ...workerEnvironment,
         ZCG_FORUM_MAX_TOPICS: String(forumMaxTopics),
-        ZCG_FORUM_MAX_POSTS_PER_TOPIC: String(forumMaxPostsPerTopic),
+        ZCG_FORUM_MAX_POSTS_PER_LINKED_TOPIC: String(forumMaxPostsPerLinkedTopic),
+        ZCG_FORUM_MAX_POSTS_PER_UPDATES_TOPIC: String(forumMaxPostsPerUpdatesTopic),
         ZCG_FORUM_MAX_CATEGORY_PAGES: String(forumMaxCategoryPages),
         ZCG_FORUM_FETCH_DELAY_MS: String(forumFetchDelayMs),
         ...(githubTokenSecretId ? { ZCG_GITHUB_TOKEN_SECRET_ID: githubTokenSecretId } : {})

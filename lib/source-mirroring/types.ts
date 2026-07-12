@@ -43,6 +43,9 @@ export type ForumMirrorConfig = {
   updatesCategoryUrl?: string;
   maxCategoryPages?: number;
   maxTopics?: number;
+  maxPostsPerLinkedTopic?: number;
+  maxPostsPerUpdatesTopic?: number;
+  /** @deprecated Use the source-specific post limits instead. */
   maxPostsPerTopic?: number;
   fetchDelayMs?: number;
 };
