@@ -167,6 +167,23 @@ export function KnowledgeSearchPanel({
 
     return null;
   }, [retrievalMode, canUseSemantic, initialSemanticEnabled]);
+  const selectedSearchExplanation = useMemo(() => {
+    const resultCount = Number(limit).toLocaleString();
+    const retrieval = {
+      keyword:
+        "Searches the indexed text for matching words and phrases, with extra weight for matches in titles, applicant names, and source identifiers.",
+      semantic:
+        "Compares the meaning of your query with each knowledge document’s embedding, so related concepts can match even when they use different wording.",
+      hybrid:
+        "Combines keyword matches with semantic similarity, then merges both rankings to surface records that are strong by wording, meaning, or both."
+    }[retrievalMode];
+    const answer =
+      answerMode === "evidence"
+        ? `Returns up to ${resultCount} matching evidence documents and a short, non-AI list of the leading matches.`
+        : `Uses a wider candidate search, gathers linked evidence around the strongest applications, and asks the configured AI model for a grounded answer with citations. The ${resultCount}-result setting controls the initial matches.`;
+
+    return { retrieval, answer };
+  }, [answerMode, limit, retrievalMode]);
 
   async function submitSearch(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -394,6 +411,24 @@ export function KnowledgeSearchPanel({
             {isSearching ? "Searching" : "Search"}
           </button>
         </div>
+        <aside aria-live="polite" className="knowledge-search-explainer">
+          <p className="knowledge-search-explainer-title">What this search will do</p>
+          <dl>
+            <div>
+              <dt>Retrieval</dt>
+              <dd>{selectedSearchExplanation.retrieval}</dd>
+            </div>
+            <div>
+              <dt>Answer</dt>
+              <dd>{selectedSearchExplanation.answer}</dd>
+            </div>
+          </dl>
+          <p className="knowledge-search-embedding-note">
+            <strong>How semantic search works.</strong> Applications and their linked GitHub, Forum, Google Sheet,
+            label, decision, and reconciliation evidence are stored as individual knowledge documents. Each current
+            document is processed into its own embedding for semantic and hybrid retrieval.
+          </p>
+        </aside>
         {canIndex ? (
           <details className="maintenance-callout knowledge-maintenance">
             <summary>Index maintenance</summary>
