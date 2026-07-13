@@ -421,9 +421,17 @@ export default async function AdminPage({
     activeLabelNames.length ? `labels ${activeLabelNames.join(" or ")}` : null,
     excludedLabelNames.length ? `without ${excludedLabelNames.join(" or ")}` : null
   ].filter(Boolean);
-  const canManageUsers =
-    !isPublicPrototypePrincipal(principal) &&
-    (await principalHasRole(principal.id, "admin"));
+  const publicViewer = isPublicPrototypePrincipal(principal);
+  const canManageUsers = !publicViewer && (await principalHasRole(principal.id, "admin"));
+  const applicationPanelOpen = [
+    resolvedSearchParams.applicationFilter,
+    resolvedSearchParams.applicationSearch,
+    resolvedSearchParams.applicationStatus,
+    resolvedSearchParams.githubIssueState,
+    resolvedSearchParams.applicationLabels,
+    resolvedSearchParams.excludedApplicationLabels,
+    resolvedSearchParams.applicationPage
+  ].some((value) => value !== undefined);
 
   return (
     <main className="admin-shell">
@@ -432,7 +440,7 @@ export default async function AdminPage({
           <p className="eyebrow">Dashboard</p>
           <h1>ZCG Grants Dashboard</h1>
           <p className="lead">
-            {isPublicPrototypePrincipal(principal) ? (
+            {publicViewer ? (
               <>
                 Public read-only prototype view. <Link className="table-link" href="/sign-in">Sign in</Link> for dashboard operations.
               </>
@@ -445,10 +453,10 @@ export default async function AdminPage({
         </div>
       </section>
 
-      <details className="operations-disclosure dashboard-operations">
+      <details className="operations-disclosure dashboard-operations" hidden>
         <summary>
           <span>Operational telemetry</span>
-          <small>Sync, source, reconciliation, and system counts</small>
+          <small>{publicViewer ? "Sync, source, and system counts" : "Sync, source, reconciliation, and system counts"}</small>
         </summary>
         <div className="operations-disclosure-body">
           <section className="metric-grid" aria-label="Operational summary">
@@ -466,11 +474,13 @@ export default async function AdminPage({
               <strong>{numberText(totals.total_grants)}</strong>
               <span className="metric-note">Applications with grant records</span>
             </article>
-            <article className="metric-card">
-              <MetricLabel body={metricHelp.openReconciliation} label="Open reconciliation" text="Open reconciliation" />
-              <strong>{numberText(openReconciliationIssues)}</strong>
-              <span className="metric-note">Items needing review or confirmation</span>
-            </article>
+            {!publicViewer ? (
+              <article className="metric-card">
+                <MetricLabel body={metricHelp.openReconciliation} label="Open reconciliation" text="Open reconciliation" />
+                <strong>{numberText(openReconciliationIssues)}</strong>
+                <span className="metric-note">Items needing review or confirmation</span>
+              </article>
+            ) : null}
           </section>
 
           <section className="admin-grid two-column">
@@ -539,31 +549,33 @@ export default async function AdminPage({
           </section>
 
           <section className="admin-grid two-column">
-            <article className="panel">
-              <div className="section-heading">
-                <h2>
-                  Reconciliation
-                  <MetricHelp body={metricHelp.reconciliationGroup} label="Reconciliation counts" />
-                </h2>
-              </div>
-              <div className="status-list">
-                {dashboard.reconciliationSummary.length ? (
-                  dashboard.reconciliationSummary.map((row) => (
-                    <p className="status-item" key={`${row.status}-${row.severity}`}>
-                      <span className={`dot ${row.severity === "error" ? "red" : row.severity === "warning" ? "amber" : "blue"}`} />
-                      <span>{row.status}</span>
-                      <span>{row.severity}</span>
-                      <strong className="count-with-help">
-                        {numberText(row.issue_count)}
-                        <MetricHelp align="left" body={metricHelp.reconciliationGroup} label={`${row.status} ${row.severity} reconciliation issues`} />
-                      </strong>
-                    </p>
-                  ))
-                ) : (
-                  <p>No reconciliation issues recorded.</p>
-                )}
-              </div>
-            </article>
+            {!publicViewer ? (
+              <article className="panel">
+                <div className="section-heading">
+                  <h2>
+                    Reconciliation
+                    <MetricHelp body={metricHelp.reconciliationGroup} label="Reconciliation counts" />
+                  </h2>
+                </div>
+                <div className="status-list">
+                  {dashboard.reconciliationSummary.length ? (
+                    dashboard.reconciliationSummary.map((row) => (
+                      <p className="status-item" key={`${row.status}-${row.severity}`}>
+                        <span className={`dot ${row.severity === "error" ? "red" : row.severity === "warning" ? "amber" : "blue"}`} />
+                        <span>{row.status}</span>
+                        <span>{row.severity}</span>
+                        <strong className="count-with-help">
+                          {numberText(row.issue_count)}
+                          <MetricHelp align="left" body={metricHelp.reconciliationGroup} label={`${row.status} ${row.severity} reconciliation issues`} />
+                        </strong>
+                      </p>
+                    ))
+                  ) : (
+                    <p>No reconciliation issues recorded.</p>
+                  )}
+                </div>
+              </article>
+            ) : null}
 
             <article className="panel">
               <div className="section-heading">
@@ -610,13 +622,15 @@ export default async function AdminPage({
                     <MetricHelp align="left" body={metricHelp.supportingForumReferences} label="Supporting forum references" />
                   </strong>
                 </p>
-                <p className="status-item">
-                  <span className="dot blue" />
-                  Manual reconciliation workspace
-                  <Link className="table-link" href="/admin/reconciliations">
-                    Open
-                  </Link>
-                </p>
+                {!publicViewer ? (
+                  <p className="status-item">
+                    <span className="dot blue" />
+                    Manual reconciliation workspace
+                    <Link className="table-link" href="/admin/reconciliations">
+                      Open
+                    </Link>
+                  </p>
+                ) : null}
               </div>
             </article>
 
@@ -640,10 +654,58 @@ export default async function AdminPage({
         </div>
       </details>
 
-      <section className="panel application-workflow">
-        <div className="section-heading">
+      <section aria-labelledby="under-review-heading" className="panel under-review-worklist">
+        <div className="under-review-heading">
           <div>
-            <h2>Applications</h2>
+            <p className="eyebrow">Committee worklist</p>
+            <h2 id="under-review-heading">Applications under review</h2>
+          </div>
+          <span className="under-review-count">{numberText(dashboard.underReviewApplications.length)}</span>
+        </div>
+        {dashboard.underReviewApplications.length ? (
+          <div className="under-review-list">
+            {dashboard.underReviewApplications.map((application) => (
+              <article className="under-review-item" key={application.id}>
+                <div className="under-review-identity">
+                  <Link className="under-review-title" href={`/admin/grants/${application.id}`}>
+                    {application.title}
+                  </Link>
+                  <span>{application.applicant_name ?? "Applicant not recorded"}</span>
+                </div>
+                <div className="under-review-actions">
+                  <Link className="under-review-link" href={`/admin/grants/${application.id}`}>
+                    View grant
+                  </Link>
+                  {application.latest_briefing_id ? (
+                    <Link
+                      className="under-review-link primary"
+                      href={`/admin/grants/${application.id}#committee-briefing-${application.latest_briefing_id}`}
+                    >
+                      Open latest briefing
+                    </Link>
+                  ) : (
+                    <span className="under-review-unavailable">No briefing yet</span>
+                  )}
+                </div>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <p className="under-review-empty">No applications are currently under review.</p>
+        )}
+      </section>
+
+      <details className="panel application-workflow application-disclosure" open={applicationPanelOpen}>
+        <summary className="application-disclosure-summary">
+          <span>
+            <strong>Applications</strong>
+            <small>Browse, search, and filter the full application registry</small>
+          </span>
+          <span className="application-disclosure-count">{numberText(totals.total_applications)}</span>
+        </summary>
+        <div className="application-disclosure-body">
+          <div className="section-heading application-results-heading">
+            <div>
             <span className="section-count">
               {resultRangeText(
                 pagination.page,
@@ -660,9 +722,9 @@ export default async function AdminPage({
                 <MetricHelp align="left" body={metricHelp.preTableFilter} label="Source filter count" />
               </span>
             ) : null}
+            </div>
+            <MetricHelp body={metricHelp.filterCounts} label="Application filter counts" />
           </div>
-          <MetricHelp body={metricHelp.filterCounts} label="Application filter counts" />
-        </div>
         <nav className="filter-tabs" aria-label="Application filters">
           {applicationFilterOptions.map((option) => {
             const active = option.key === activeApplicationFilter;
@@ -854,7 +916,8 @@ export default async function AdminPage({
             <span className="page-link disabled">Next</span>
           )}
         </nav>
-      </section>
+        </div>
+      </details>
     </main>
   );
 }

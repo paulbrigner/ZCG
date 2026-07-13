@@ -145,8 +145,9 @@ export const betterAuthDataApiAdapter = createAdapterFactory({
     }) {
       assertNoJoin(join);
       const values: QueryValue[] = [];
+      const order = model === "verification" ? ` order by ${quoteIdentifier("updatedAt")} desc` : "";
       const result = await dataApiQuery<T & Record<string, unknown>>(
-        `select ${selectSql(select)} from ${quoteIdentifier(model)}${whereToSql(where, values)} limit 1`,
+        `select ${selectSql(select)} from ${quoteIdentifier(model)}${whereToSql(where, values)}${order} limit 1`,
         values
       );
       return (result.rows[0] as T | undefined) ?? null;

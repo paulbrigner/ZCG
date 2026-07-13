@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { AdminNavLink } from "./admin-nav-link";
 import { SessionNav } from "./session-nav";
 import "./globals.css";
 
@@ -20,10 +21,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
             <nav className="nav" aria-label="Primary">
               <a href="/dashboard">Dashboard</a>
               <a href="/admin/knowledge">Knowledge</a>
-              <a href="/admin/reconciliations">Reconciliations</a>
-              <a href="/admin">Admin</a>
-              <a href="/api/health">Health</a>
-              <a href="/api/public/grants">Public API</a>
+              <AdminNavLink />
               <SessionNav />
             </nav>
           </div>

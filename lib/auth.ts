@@ -1,6 +1,6 @@
 import pg from "pg";
 import { betterAuth } from "better-auth";
-import { emailOTP } from "better-auth/plugins";
+import { emailOTP, magicLink } from "better-auth/plugins";
 import { databaseUrlFromEnv, getEnv } from "@/lib/env";
 import { sendAuthCodeEmail } from "@/lib/email";
 import { betterAuthDataApiAdapter } from "@/lib/better-auth-data-api-adapter";
@@ -26,6 +26,18 @@ export const auth = betterAuth({
     emailOTP({
       async sendVerificationOTP({ email, otp }) {
         await sendAuthCodeEmail({ email, otp });
+      }
+    }),
+    magicLink({
+      storeToken: "hashed",
+      async sendMagicLink({ email, url, metadata }) {
+        const otp = typeof metadata?.otp === "string" ? metadata.otp : null;
+
+        if (!otp) {
+          throw new Error("A sign-in code is required for the combined sign-in email.");
+        }
+
+        await sendAuthCodeEmail({ email, magicLink: url, otp });
       }
     })
   ]

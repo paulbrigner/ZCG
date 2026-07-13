@@ -84,6 +84,8 @@ export function SessionNav() {
 
   return (
     <span className="session-nav">
+      <Link href="/admin/telemetry">Telemetry</Link>
+      <Link href="/admin/reconciliations">Reconciliations</Link>
       <span className="session-email">{email}</span>
       <button className="nav-button" disabled={pending} onClick={signOut} type="button">
         {pending ? "Signing out..." : "Sign out"}

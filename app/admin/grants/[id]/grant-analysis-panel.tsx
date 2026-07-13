@@ -813,6 +813,7 @@ export function GrantAnalysisPanel({
   );
   const latestBriefing =
     successfulBriefings.find((report) => report.visibility === "shared") ?? successfulBriefings[0] ?? null;
+  const latestBriefingId = latestBriefing?.id ?? null;
   const pendingBriefing = committeeReports.find(
     (report) => report.status === "queued" || report.status === "running"
   );
@@ -820,6 +821,31 @@ export function GrantAnalysisPanel({
     ? committeeReports.filter((report) => report.id !== latestBriefing.id)
     : committeeReports;
   const customReports = orderedReports.filter((report) => report.reportType === "custom");
+
+  useEffect(() => {
+    if (!latestBriefingId) {
+      return;
+    }
+
+    const targetId = `committee-briefing-${latestBriefingId}`;
+    const revealLinkedBriefing = () => {
+      if (window.location.hash !== `#${targetId}`) {
+        return;
+      }
+
+      if (panelRef.current) {
+        panelRef.current.open = true;
+      }
+
+      window.requestAnimationFrame(() => {
+        document.getElementById(targetId)?.scrollIntoView({ block: "start" });
+      });
+    };
+
+    revealLinkedBriefing();
+    window.addEventListener("hashchange", revealLinkedBriefing);
+    return () => window.removeEventListener("hashchange", revealLinkedBriefing);
+  }, [latestBriefingId]);
 
   function mergeReport(report: GrantAnalysisReport) {
     setReports((current) => sortReports([report, ...current.filter((item) => item.id !== report.id)]));
@@ -1226,7 +1252,7 @@ export function GrantAnalysisPanel({
       ) : null}
 
       {latestBriefing ? (
-        <article className={styles.latestReport}>
+        <article className={styles.latestReport} id={`committee-briefing-${latestBriefing.id}`}>
           <div className={styles.reportHeading}>
             <div>
               <div className={styles.chipRow}>

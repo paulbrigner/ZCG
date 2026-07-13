@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { recordAuditEvent } from "@/lib/audit";
 import {
+  isPublicPrototypePrincipal,
   principalHasPermission,
   principalHasRole,
   requirePermission
@@ -117,7 +118,7 @@ export async function GET(
   _request: NextRequest,
   context: { params: Promise<{ id: string }> }
 ) {
-  const principal = await requirePermission("grant:analysis:read");
+  const principal = await requirePermission("grant:analysis:read", { allowPublicPrototypeRead: true });
   const { id: applicationId } = await context.params;
 
   if (!validApplicationId(applicationId)) {
@@ -130,17 +131,26 @@ export async function GET(
     return NextResponse.json({ error: "Grant application not found." }, { status: 404 });
   }
 
-  const permissions = await permissionsFor(principal.id);
+  const publicViewer = isPublicPrototypePrincipal(principal);
+  const permissions = publicViewer
+    ? { canGenerate: false, canPublish: false, canUseSemanticSearch: false, canReadAllPrivateReports: false }
+    : await permissionsFor(principal.id);
   const reports = await listGrantAnalysisReports({
     applicationId,
     access: {
-      principalId: principal.id,
+      principalId: publicViewer ? null : principal.id,
       canReadAllPrivateReports: permissions.canReadAllPrivateReports
-    }
+    },
+    reportType: publicViewer ? "committee_briefing" : undefined
   });
+  const visibleReports = publicViewer
+    ? reports.filter((report) =>
+        report.visibility === "shared" && report.status === "succeeded" && Boolean(report.answerText)
+      )
+    : reports;
 
   return NextResponse.json({
-    reports: await Promise.all(reports.map(serializeReport)),
+    reports: await Promise.all(visibleReports.map(serializeReport)),
     permissions: {
       canRead: true,
       canGenerate: permissions.canGenerate,

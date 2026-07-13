@@ -20,7 +20,7 @@ export type GrantAnalysisEvidenceRole =
   | "external";
 
 export type GrantAnalysisReportAccess = {
-  principalId: string;
+  principalId: string | null;
   canReadAllPrivateReports?: boolean;
 };
 

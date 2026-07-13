@@ -19,6 +19,7 @@ const publicPrototypeReadPermissions = new Set([
   "admin:dashboard:view",
   "source:mirror:read",
   "grant:read",
+  "grant:analysis:read",
   "knowledge:search",
   "reconciliation:read"
 ]);

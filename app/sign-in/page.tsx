@@ -5,15 +5,15 @@ export default function SignInPage() {
     <main>
       <section className="hero">
         <div>
-          <p className="eyebrow">Authentication</p>
+          <p className="eyebrow">Secure access</p>
           <h1>Sign in to the dashboard</h1>
           <p className="lead">
-            Phase 0 uses Better Auth email codes with bootstrap admin assignment
-            controlled by deployment configuration.
+            Enter your email address to receive a one-time sign-in code. Your account
+            will open the areas you have permission to use.
           </p>
         </div>
         <aside className="panel">
-          <h2>Email code</h2>
+          <h2>Get a sign-in code</h2>
           <SignInForm />
         </aside>
       </section>

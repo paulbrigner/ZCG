@@ -99,6 +99,14 @@ export type GrantApplicationRow = {
   updated_at: string;
 };
 
+export type UnderReviewApplicationRow = {
+  id: string;
+  title: string;
+  applicant_name: string | null;
+  latest_briefing_id: string | null;
+  latest_briefing_title: string | null;
+};
+
 export type GitHubLabelRow = {
   application_id: string;
   label_name: string;
@@ -390,6 +398,7 @@ export async function getAdminDashboard({
     applicationStatusOptions,
     githubIssueStateOptions,
     applicationLabelOptions,
+    underReviewApplications,
     applicationResultCount
   ] =
     await Promise.all([
@@ -506,6 +515,30 @@ export async function getAdminDashboard({
         group by label_name, label_slug, label_color, label_category, label_status, label_order
         order by label_order, label_name`
     ),
+    query<UnderReviewApplicationRow>(
+      `select ga.id::text,
+              ga.title,
+              ga.applicant_name,
+              latest_briefing.id as latest_briefing_id,
+              latest_briefing.title as latest_briefing_title
+         from grant_applications ga
+         left join lateral (
+           select gar.id::text,
+                  gar.title
+             from grant_analysis_reports gar
+            where gar.application_id = ga.id
+              and gar.report_type = 'committee_briefing'
+              and gar.visibility = 'shared'
+              and gar.status = 'succeeded'
+              and nullif(trim(gar.answer_text), '') is not null
+            order by gar.created_at desc,
+                     gar.version_number desc
+            limit 1
+         ) latest_briefing on true
+        where ga.normalized_status = 'under_review'
+        order by ga.updated_at desc,
+                 ga.title`
+    ),
     query<{ total_results: string }>(
       `select count(*)::text as total_results
          from grant_applications ga
@@ -594,6 +627,7 @@ export async function getAdminDashboard({
     applicationStatusOptions: applicationStatusOptions.rows,
     githubIssueStateOptions: githubIssueStateOptions.rows,
     applicationLabelOptions: applicationLabelOptions.rows,
+    underReviewApplications: underReviewApplications.rows,
     activeApplicationFilter: applicationFilter,
     applicationPagination: {
       page: boundedPage,

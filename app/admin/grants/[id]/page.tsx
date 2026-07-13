@@ -230,9 +230,13 @@ export default async function GrantApplicationPage({
   let canReadAnalysis = false;
   let canGenerateAnalysis = false;
   let canPublishAnalysis = false;
+  let canReadAllPrivateReports = false;
   let initialAnalysisReports: ClientGrantAnalysisReport[] = [];
+  const publicViewer = isPublicPrototypePrincipal(principal);
 
-  if (!isPublicPrototypePrincipal(principal)) {
+  if (publicViewer) {
+    canReadAnalysis = true;
+  } else {
     const [canRead, canGenerate, canPublish, isAdmin] = await Promise.all([
       principalHasPermission(principal.id, "grant:analysis:read"),
       principalHasPermission(principal.id, "grant:analysis:generate"),
@@ -242,17 +246,25 @@ export default async function GrantApplicationPage({
     canReadAnalysis = canRead;
     canGenerateAnalysis = canGenerate;
     canPublishAnalysis = canPublish;
+    canReadAllPrivateReports = isAdmin;
+  }
 
-    if (canReadAnalysis) {
-      const reports = await listGrantAnalysisReports({
-        applicationId: id,
-        access: {
-          principalId: principal.id,
-          canReadAllPrivateReports: isAdmin
-        }
-      });
+  if (canReadAnalysis) {
+    const reports = await listGrantAnalysisReports({
+      applicationId: id,
+      access: {
+        principalId: publicViewer ? null : principal.id,
+        canReadAllPrivateReports
+      },
+      reportType: publicViewer ? "committee_briefing" : undefined
+    });
+    const visibleReports = publicViewer
+      ? reports.filter((report) =>
+          report.visibility === "shared" && report.status === "succeeded" && Boolean(report.answerText)
+        )
+      : reports;
 
-      initialAnalysisReports = await Promise.all(reports.map(async (report) => {
+    initialAnalysisReports = await Promise.all(visibleReports.map(async (report) => {
         const retrievalMode = report.generationMetadata.retrievalMode;
         const committeeBriefing = report.reportType === "committee_briefing";
         const [evidence, freshnessStatus] = await Promise.all([
@@ -290,8 +302,7 @@ export default async function GrantApplicationPage({
             contentHash: item.contentHash
           }))
         };
-      }));
-    }
+    }));
   }
 
   return (
@@ -469,33 +480,35 @@ export default async function GrantApplicationPage({
             </div>
           </section>
 
-          <section aria-labelledby="application-reconciliation-heading" className="panel">
-            <div className="section-heading">
-              <div>
-                <h2 id="application-reconciliation-heading">Reconciliation issues</h2>
-                <span className="section-count">
-                  {numberText(application.open_issue_count)} open issue{application.open_issue_count === "1" ? "" : "s"}
-                </span>
+          {!publicViewer ? (
+            <section aria-labelledby="application-reconciliation-heading" className="panel">
+              <div className="section-heading">
+                <div>
+                  <h2 id="application-reconciliation-heading">Reconciliation issues</h2>
+                  <span className="section-count">
+                    {numberText(application.open_issue_count)} open issue{application.open_issue_count === "1" ? "" : "s"}
+                  </span>
+                </div>
               </div>
-            </div>
-            <div className="evidence-list">
-              {detail.issues.length ? (
-                detail.issues.map((issue) => (
-                  <article className="evidence-item" key={issue.id}>
-                    <div className="issue-heading">
-                      <span className={`badge ${issue.severity}`}>{issue.severity}</span>
-                      <span className={`badge ${issue.status}`}>{issue.status}</span>
-                    </div>
-                    <h3>{issue.summary}</h3>
-                    <p>{issue.issue_type}</p>
-                    <p className="subtle">{compactJson(issue.details)}</p>
-                  </article>
-                ))
-              ) : (
-                <p>No reconciliation issues recorded.</p>
-              )}
-            </div>
-          </section>
+              <div className="evidence-list">
+                {detail.issues.length ? (
+                  detail.issues.map((issue) => (
+                    <article className="evidence-item" key={issue.id}>
+                      <div className="issue-heading">
+                        <span className={`badge ${issue.severity}`}>{issue.severity}</span>
+                        <span className={`badge ${issue.status}`}>{issue.status}</span>
+                      </div>
+                      <h3>{issue.summary}</h3>
+                      <p>{issue.issue_type}</p>
+                      <p className="subtle">{compactJson(issue.details)}</p>
+                    </article>
+                  ))
+                ) : (
+                  <p>No reconciliation issues recorded.</p>
+                )}
+              </div>
+            </section>
+          ) : null}
         </div>
       </details>
 

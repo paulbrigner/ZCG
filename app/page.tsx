@@ -78,8 +78,8 @@ export default async function HomePage() {
     <main className="home-shell">
       <section className="hero home-hero">
         <div>
-          <p className="eyebrow">Independent working prototype</p>
-          <h1>A provenance-first operating system for Zcash Community Grants</h1>
+          <p className="eyebrow">Working prototype</p>
+          <h1>Zcash Community Grants Decision Support</h1>
           <p className="lead">
             ZCG currently operates across GitHub, the Zcash Community Forum, Google Sheets,
             and private operational workflows. This prototype mirrors the public evidence,
@@ -135,7 +135,7 @@ export default async function HomePage() {
       <section className="section home-section">
         <div className="home-section-heading">
           <p className="eyebrow">Working now</p>
-          <h2>From scattered public records to traceable grant data</h2>
+          <h2>From public records to traceable grant data</h2>
         </div>
         <div className="home-capability-grid">
           {capabilities.map((item, index) => (

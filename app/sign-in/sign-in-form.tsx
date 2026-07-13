@@ -45,12 +45,11 @@ export function SignInForm() {
     setStatus("");
 
     try {
-      await postAuth<{ success: boolean }>("/email-otp/send-verification-otp", {
-        email,
-        type: "sign-in"
+      await postAuth<{ success: boolean }>("/sign-in-options", {
+        email
       });
       setStep("code");
-      setStatus("Code sent.");
+      setStatus("Sign-in email sent. Use the secure link or enter the code below.");
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Unable to send code.");
     } finally {
@@ -71,7 +70,7 @@ export function SignInForm() {
         name: email
       });
       setStatus("Signed in.");
-      router.push("/admin");
+      router.push("/dashboard");
       router.refresh();
     } catch (verifyError) {
       setError(verifyError instanceof Error ? verifyError.message : "Unable to verify code.");
@@ -137,8 +136,8 @@ export function SignInForm() {
       {status ? <p className="form-status">{status}</p> : null}
       {error ? <p className="form-error">{error}</p> : null}
       <div className="form-actions">
-        <button disabled={pending} type="submit">
-          {pending ? "Sending..." : "Send code"}
+          <button disabled={pending} type="submit">
+            {pending ? "Sending..." : "Send sign-in email"}
         </button>
       </div>
     </form>
