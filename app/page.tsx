@@ -204,9 +204,7 @@ export default async function HomePage() {
         </div>
         <nav className="home-surface-links" aria-label="Prototype surfaces">
           <Link href="/dashboard">ZCG Grants Dashboard <span aria-hidden="true">→</span></Link>
-          <Link href="/admin/reconciliations">Reconciliation workspace <span aria-hidden="true">→</span></Link>
           <Link href="/admin/knowledge">Grant knowledge search <span aria-hidden="true">→</span></Link>
-          <Link href="/api/public/grants">Public grants API <span aria-hidden="true">→</span></Link>
         </nav>
       </section>
 

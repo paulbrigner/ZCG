@@ -8,12 +8,12 @@ export default function SignInPage() {
           <p className="eyebrow">Secure access</p>
           <h1>Sign in to the dashboard</h1>
           <p className="lead">
-            Enter your email address to receive a one-time sign-in code. Your account
-            will open the areas you have permission to use.
+            Enter your email address to receive a secure sign-in link and a one-time
+            code. Your account will open the areas you have permission to use.
           </p>
         </div>
         <aside className="panel">
-          <h2>Get a sign-in code</h2>
+          <h2>Get a sign-in email</h2>
           <SignInForm />
         </aside>
       </section>
