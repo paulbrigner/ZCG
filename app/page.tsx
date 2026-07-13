@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { query } from "@/lib/db";
 import { publicGrantProjectionFields } from "@/lib/public-projection";
+import { fundedGrantMetricHelp } from "./grant-metric-copy";
+import { MetricLabel } from "./admin/metric-help";
 
 export const dynamic = "force-dynamic";
 
@@ -53,7 +55,10 @@ async function getProgress() {
   try {
     const result = await query<ProgressRow>(
       `select (select count(*)::text from grant_applications) as application_count,
-              (select count(*)::text from grants) as funded_grant_count,
+              (select count(*)::text
+                 from grants g
+                 join grant_applications ga_funded on ga_funded.id = g.application_id
+                where ga_funded.normalized_status in ('approved', 'active', 'completed')) as funded_grant_count,
               (select count(*)::text
                  from reconciliation_issues
                 where status in ('open', 'assigned')
@@ -114,7 +119,11 @@ export default async function HomePage() {
             </div>
             <div>
               <strong>{countText(progress?.funded_grant_count)}</strong>
-              <span>funded-status grants</span>
+              <MetricLabel
+                body={fundedGrantMetricHelp}
+                label="Funded-status grants"
+                text="funded-status grants"
+              />
             </div>
             <div>
               <strong>{countText(progress?.warning_count)}</strong>

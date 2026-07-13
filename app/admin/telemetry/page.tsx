@@ -3,6 +3,7 @@ import { getAdminDashboard } from "@/lib/admin/dashboard";
 import { principalHasRole, requirePermission } from "@/lib/authorization";
 import { knowledgeProviderStatus } from "@/lib/knowledge/config";
 import { getGrantKnowledgeOverview } from "@/lib/knowledge/search";
+import { fundedGrantMetricHelp } from "../../grant-metric-copy";
 import { MetricHelp, MetricLabel } from "../metric-help";
 
 function numberText(value: string | number | null | undefined) {
@@ -62,7 +63,7 @@ const telemetryHelp = {
   canonicalApplications:
     "Grant applications after the source records have been reconciled into one application view.",
   canonicalGrants:
-    "Applications with grant-level funding or status data.",
+    fundedGrantMetricHelp,
   openReconciliation:
     "Open reconciliation items that still need review or confirmation.",
   syncSeen:
@@ -141,9 +142,9 @@ export default async function TelemetryPage() {
           <span className="metric-note">Total normalized application records</span>
         </article>
         <article className="metric-card">
-          <MetricLabel body={telemetryHelp.canonicalGrants} label="Canonical grants" text="Canonical grants" />
+          <MetricLabel body={telemetryHelp.canonicalGrants} label="Funded-status grants" text="Funded-status grants" />
           <strong>{numberText(totals.total_grants)}</strong>
-          <span className="metric-note">Applications with grant records</span>
+          <span className="metric-note">Current canonical grant records</span>
         </article>
         <article className="metric-card">
           <MetricLabel body={telemetryHelp.openReconciliation} label="Open reconciliation" text="Open reconciliation" />

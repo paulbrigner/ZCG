@@ -148,6 +148,16 @@ type PlannedApplication = {
   issues: Omit<ReconciliationIssueInput, "canonicalId">[];
 };
 
+type ProcessedApplicationStatus = {
+  applicationId: string;
+  normalizedStatus: string;
+};
+
+type QueryRunner = (
+  text: string,
+  values?: readonly unknown[]
+) => Promise<{ rowCount: number | null }>;
+
 const reviewedForumApplications = [
   {
     canonicalKey: "forum:48629",
@@ -181,6 +191,7 @@ const reviewedForumApplications = [
 export type ReconciliationRunResult = {
   ok: true;
   applicationsCreatedOrUpdated: number;
+  grantsDeleted: number;
   grantsCreatedOrUpdated: number;
   linksCreated: number;
   issuesCreated: number;
@@ -1249,6 +1260,30 @@ async function bulkUpsertGrants(grants: GrantInput[]) {
   return grants.length;
 }
 
+async function deleteGrantsForUnfundedProcessedApplications(
+  processedApplications: ProcessedApplicationStatus[],
+  executeQuery: QueryRunner = query
+) {
+  const applicationIds = processedApplications
+    .filter((application) => !isFundedGrantStatus(application.normalizedStatus))
+    .map((application) => application.applicationId);
+  let grantsDeleted = 0;
+
+  for (const batch of chunkArray(applicationIds, writeBatchSize)) {
+    const result = await executeQuery(
+      `delete from grants
+        where application_id in (
+          select application_id
+            from jsonb_to_recordset($1::jsonb) as unfunded(application_id uuid)
+        )`,
+      [JSON.stringify(batch.map((applicationId) => ({ application_id: applicationId })))]
+    );
+    grantsDeleted += result.rowCount ?? 0;
+  }
+
+  return grantsDeleted;
+}
+
 async function replaceApplicationGithubLabels(applicationIds: string[], labels: ApplicationGitHubLabelInput[]) {
   for (const batch of chunkArray(applicationIds, writeBatchSize)) {
     await query(
@@ -1606,6 +1641,7 @@ export async function runGrantReconciliation(): Promise<ReconciliationRunResult>
   const counts: ReconciliationRunResult = {
     ok: true,
     applicationsCreatedOrUpdated: 0,
+    grantsDeleted: 0,
     grantsCreatedOrUpdated: 0,
     linksCreated: 0,
     issuesCreated: 0,
@@ -2003,6 +2039,7 @@ export async function runGrantReconciliation(): Promise<ReconciliationRunResult>
     plannedApplications.flatMap((planned) => planned.forumLinks)
   );
   const grants: GrantInput[] = [];
+  const processedApplicationStatuses: ProcessedApplicationStatus[] = [];
   const links: SourceLinkInput[] = [];
   const githubLabels: ApplicationGitHubLabelInput[] = [];
   const issues: ReconciliationIssueInput[] = [...orphanIssues];
@@ -2014,6 +2051,11 @@ export async function runGrantReconciliation(): Promise<ReconciliationRunResult>
     if (!applicationId) {
       throw new Error(`Failed to upsert grant application ${planned.application.canonicalKey}`);
     }
+
+    processedApplicationStatuses.push({
+      applicationId,
+      normalizedStatus: planned.application.normalizedStatus
+    });
 
     for (const link of planned.links) {
       links.push({ ...link, canonicalId: applicationId });
@@ -2045,6 +2087,7 @@ export async function runGrantReconciliation(): Promise<ReconciliationRunResult>
     }
   }
 
+  counts.grantsDeleted = await deleteGrantsForUnfundedProcessedApplications(processedApplicationStatuses);
   counts.grantsCreatedOrUpdated = await bulkUpsertGrants(grants);
   counts.githubLabelsCreatedOrUpdated = await replaceApplicationGithubLabels(
     [...applicationIds.values()],
@@ -2077,6 +2120,7 @@ export async function runGrantReconciliation(): Promise<ReconciliationRunResult>
 }
 
 export const grantReconciliationTestHooks = {
+  deleteGrantsForUnfundedProcessedApplications,
   resolveCanonicalStatus,
   statusFromGitHub,
   statusFromSheet

@@ -176,6 +176,10 @@ main {
   line-height: 1.35;
 }
 
+.home-progress-grid .metric-label {
+  margin-bottom: 0;
+}
+
 .home-section {
   display: grid;
   gap: 22px;

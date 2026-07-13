@@ -1,0 +1,2 @@
+export const fundedGrantMetricHelp =
+  "This is the current count of canonical grant records whose applications are approved, active, or completed; declined and cancelled applications are excluded. For comparison, the July 13, 2026 payment-ledger snapshot contains 170 regular ZCG project names plus 6 coinholder projects (176 combined). That broader historical ledger count includes cancelled or vetoed entries and title aliases, so it is not a like-for-like grant total.";

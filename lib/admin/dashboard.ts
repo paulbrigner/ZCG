@@ -452,7 +452,10 @@ export async function getAdminDashboard({
     ),
     query<ApplicationTotalsRow>(
       `select count(*)::text as total_applications,
-              (select count(*)::text from grants) as total_grants,
+              (select count(*)::text
+                 from grants g
+                 join grant_applications ga_funded on ga_funded.id = g.application_id
+                where ga_funded.normalized_status in ('approved', 'active', 'completed')) as total_grants,
               count(*) filter (where ${matchedApplicationWhere})::text
                 as matched_applications,
               count(*) filter (where ga.canonical_key like 'github:%' and ga.match_confidence = 0)::text
