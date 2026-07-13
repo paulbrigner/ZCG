@@ -7,6 +7,8 @@ const defaultAiTimeoutMs = 18000;
 const defaultEmbeddingTimeoutMs = 60000;
 const defaultQueryEmbeddingTimeoutMs = 12000;
 const defaultEmbeddingBatchSize = 2;
+const defaultPublicSemanticPerClientMinuteLimit = 10;
+const defaultPublicSemanticDailyLimit = 500;
 
 function stringValue(value: string | undefined) {
   const trimmed = value?.trim();
@@ -94,6 +96,17 @@ export function knowledgeEmbeddingBatchSize() {
 
 export function knowledgeSemanticEnabled() {
   return booleanValue(process.env.ZCG_KNOWLEDGE_SEMANTIC_ENABLED, true) && Boolean(knowledgeEmbeddingApiKey());
+}
+
+export function publicKnowledgeSemanticPerClientMinuteLimit() {
+  return positiveInteger(
+    process.env.ZCG_PUBLIC_SEMANTIC_PER_CLIENT_PER_MINUTE,
+    defaultPublicSemanticPerClientMinuteLimit
+  );
+}
+
+export function publicKnowledgeSemanticDailyLimit() {
+  return positiveInteger(process.env.ZCG_PUBLIC_SEMANTIC_DAILY_LIMIT, defaultPublicSemanticDailyLimit);
 }
 
 export function knowledgeProviderStatus() {

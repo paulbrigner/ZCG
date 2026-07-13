@@ -11,15 +11,16 @@ import { KnowledgeSearchPanel } from "./knowledge-search-panel";
 export default async function GrantKnowledgePage() {
   const principal = await requirePermission("knowledge:search", { allowPublicPrototypeRead: true });
   const providerStatus = knowledgeProviderStatus();
+  const publicViewer = isPublicPrototypePrincipal(principal);
   const canComposeAi =
-    !isPublicPrototypePrincipal(principal) &&
+    !publicViewer &&
     (await principalHasPermission(principal.id, "knowledge:compose"));
   const canIndex =
-    !isPublicPrototypePrincipal(principal) &&
+    !publicViewer &&
     (await principalHasRole(principal.id, "admin"));
-  const canUseSemantic =
-    !isPublicPrototypePrincipal(principal) &&
-    (await principalHasPermission(principal.id, "knowledge:semantic"));
+  const canUseSemantic = publicViewer
+    ? providerStatus.semanticSearchEnabled
+    : await principalHasPermission(principal.id, "knowledge:semantic");
 
   return (
     <main className="admin-shell">
@@ -28,7 +29,7 @@ export default async function GrantKnowledgePage() {
           <p className="eyebrow">Decision support</p>
           <h1>Grant knowledge retrieval</h1>
           <p className="lead">
-            {isPublicPrototypePrincipal(principal) ? (
+            {publicViewer ? (
               <>
                 Public read-only prototype view. <Link className="table-link" href="/sign-in">Sign in</Link> for dashboard operations.
               </>
@@ -45,6 +46,7 @@ export default async function GrantKnowledgePage() {
         canComposeAi={canComposeAi}
         canIndex={canIndex}
         canUseSemantic={canUseSemantic}
+        isPublicViewer={publicViewer}
         initialAiConfigured={providerStatus.aiConfigured}
         initialSemanticEnabled={providerStatus.semanticSearchEnabled}
       />

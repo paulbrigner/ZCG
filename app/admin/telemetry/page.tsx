@@ -3,6 +3,10 @@ import { getAdminDashboard } from "@/lib/admin/dashboard";
 import { principalHasRole, requirePermission } from "@/lib/authorization";
 import { knowledgeProviderStatus } from "@/lib/knowledge/config";
 import { getGrantKnowledgeOverview } from "@/lib/knowledge/search";
+import {
+  getPublicKnowledgeSearchControlStatus,
+  getPublicKnowledgeSearchTelemetry
+} from "@/lib/knowledge/public-search-controls";
 import { fundedGrantMetricHelp } from "../../grant-metric-copy";
 import { MetricHelp, MetricLabel } from "../metric-help";
 
@@ -25,6 +29,34 @@ function dateText(value: string | null) {
         hour: "numeric",
         minute: "2-digit"
       });
+}
+
+function dayText(value: string) {
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return Number.isNaN(parsed.getTime())
+    ? "-"
+    : parsed.toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+        timeZone: "UTC"
+      });
+}
+
+function publicSearchOutcomeText(value: string) {
+  if (value === "rate_limited_fallback") {
+    return "Usage limit; keyword fallback";
+  }
+
+  if (value === "control_unavailable_fallback") {
+    return "Controls unavailable; keyword fallback";
+  }
+
+  if (value === "provider_error_fallback") {
+    return "Semantic unavailable; keyword fallback";
+  }
+
+  return value === "error" ? "Error" : "Served";
 }
 
 function embeddingBacklogText(count: number) {
@@ -97,17 +129,34 @@ const telemetryHelp = {
   aiAnswers:
     "Whether the grounded answer provider is configured.",
   indexedSource:
-    "Knowledge documents grouped by source or document type."
+    "Knowledge documents grouped by source or document type.",
+  publicSearches:
+    "Anonymous evidence-summary searches during the displayed 14-day period. Only daily aggregate counts are retained.",
+  publicSemanticRequests:
+    "Anonymous searches that requested semantic or hybrid retrieval during the displayed period.",
+  publicKeywordFallbacks:
+    "Anonymous semantic or hybrid requests served with keyword retrieval because a usage control or provider fallback applied.",
+  publicSemanticQuota:
+    "Anonymous query embeddings consumed today against the global UTC-day ceiling. Authenticated searches do not use this public quota."
 };
 
 export default async function TelemetryPage() {
   const principal = await requirePermission("source:mirror:read");
   await requirePermission("reconciliation:read");
-  const [telemetry, canManageUsers, knowledgeOverview, providerStatus] = await Promise.all([
+  const [
+    telemetry,
+    canManageUsers,
+    knowledgeOverview,
+    providerStatus,
+    publicSearchTelemetry,
+    publicSearchControlStatus
+  ] = await Promise.all([
     getAdminDashboard(),
     principalHasRole(principal.id, "admin"),
     getGrantKnowledgeOverview(),
-    Promise.resolve(knowledgeProviderStatus())
+    Promise.resolve(knowledgeProviderStatus()),
+    getPublicKnowledgeSearchTelemetry(),
+    getPublicKnowledgeSearchControlStatus()
   ]);
   const totals = telemetry.applicationTotals;
   const totalSourceRecords = telemetry.sourceCounts.reduce(
@@ -118,6 +167,13 @@ export default async function TelemetryPage() {
     .filter((row) => row.status === "open")
     .reduce((total, row) => total + Number(row.issue_count), 0);
   const forumRoleTotals = telemetry.forumRoleTotals;
+  const anonymousSearchCount = publicSearchTelemetry.reduce((total, row) => total + row.requestCount, 0);
+  const anonymousSemanticRequestCount = publicSearchTelemetry
+    .filter((row) => row.requestedMode !== "keyword")
+    .reduce((total, row) => total + row.requestCount, 0);
+  const anonymousKeywordFallbackCount = publicSearchTelemetry
+    .filter((row) => row.requestedMode !== "keyword" && row.servedMode === "keyword")
+    .reduce((total, row) => total + row.requestCount, 0);
 
   return (
     <main className="admin-shell">
@@ -208,6 +264,75 @@ export default async function TelemetryPage() {
               <strong>{numberText(sourceKind.documentCount)}</strong>
             </div>
           )) : <p>No knowledge documents indexed yet.</p>}
+        </div>
+      </section>
+
+      <section className="panel" aria-labelledby="public-search-telemetry-heading">
+        <div className="section-heading">
+          <div>
+            <p className="eyebrow">Privacy-preserving usage</p>
+            <h2 id="public-search-telemetry-heading">Public evidence search</h2>
+          </div>
+        </div>
+        <p>
+          Anonymous activity is retained only as counts by day, requested retrieval mode, served retrieval mode, and
+          outcome. Query text and network addresses are not stored in this telemetry.
+        </p>
+        <section className="metric-grid knowledge-metric-grid" aria-label="Public evidence search summary">
+          <article className="metric-card">
+            <MetricLabel body={telemetryHelp.publicSearches} label="Anonymous searches" text="Anonymous searches" />
+            <strong>{numberText(anonymousSearchCount)}</strong>
+            <span className="metric-note">Last 14 UTC days</span>
+          </article>
+          <article className="metric-card">
+            <MetricLabel body={telemetryHelp.publicSemanticRequests} label="Semantic requests" text="Semantic requests" />
+            <strong>{numberText(anonymousSemanticRequestCount)}</strong>
+            <span className="metric-note">Semantic and hybrid requested</span>
+          </article>
+          <article className="metric-card">
+            <MetricLabel body={telemetryHelp.publicKeywordFallbacks} label="Keyword fallbacks" text="Keyword fallbacks" />
+            <strong>{numberText(anonymousKeywordFallbackCount)}</strong>
+            <span className="metric-note">Served using keyword retrieval</span>
+          </article>
+          <article className="metric-card">
+            <MetricLabel body={telemetryHelp.publicSemanticQuota} label="Daily semantic usage" text="Daily semantic usage" />
+            <strong>
+              {numberText(publicSearchControlStatus.dailySemanticRequests)} / {numberText(publicSearchControlStatus.dailyLimit)}
+            </strong>
+            <span className="metric-note">
+              {numberText(publicSearchControlStatus.perClientMinuteLimit)} per client per minute
+            </span>
+          </article>
+        </section>
+        <div className="table-wrap">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>UTC day</th>
+                <th>Requested</th>
+                <th>Served</th>
+                <th>Outcome</th>
+                <th>Count</th>
+                <th>Last seen</th>
+              </tr>
+            </thead>
+            <tbody>
+              {publicSearchTelemetry.length ? publicSearchTelemetry.map((row) => (
+                <tr key={`${row.usageDate}-${row.requestedMode}-${row.servedMode}-${row.outcome}`}>
+                  <td>{dayText(row.usageDate)}</td>
+                  <td>{row.requestedMode}</td>
+                  <td>{row.servedMode}</td>
+                  <td>{publicSearchOutcomeText(row.outcome)}</td>
+                  <td>{numberText(row.requestCount)}</td>
+                  <td>{dateText(row.lastSeenAt)}</td>
+                </tr>
+              )) : (
+                <tr>
+                  <td colSpan={6}>No anonymous search activity has been recorded yet.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
         </div>
       </section>
 

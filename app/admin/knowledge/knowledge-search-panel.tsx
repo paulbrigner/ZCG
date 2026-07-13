@@ -8,6 +8,7 @@ type KnowledgeSearchPanelProps = {
   canComposeAi: boolean;
   canIndex: boolean;
   canUseSemantic: boolean;
+  isPublicViewer: boolean;
   initialAiConfigured: boolean;
   initialSemanticEnabled: boolean;
 };
@@ -119,6 +120,7 @@ export function KnowledgeSearchPanel({
   canComposeAi,
   canIndex,
   canUseSemantic,
+  isPublicViewer,
   initialAiConfigured,
   initialSemanticEnabled
 }: KnowledgeSearchPanelProps) {
@@ -158,7 +160,7 @@ export function KnowledgeSearchPanel({
     }
 
     if (!canUseSemantic) {
-      return "Semantic retrieval requires an authenticated role with semantic access.";
+      return "Semantic retrieval is not available for this account.";
     }
 
     if (!initialSemanticEnabled) {
@@ -428,6 +430,13 @@ export function KnowledgeSearchPanel({
             label, decision, and reconciliation evidence are stored as individual knowledge documents. Each current
             document is processed into its own embedding for semantic and hybrid retrieval.
           </p>
+          {isPublicViewer ? (
+            <p className="knowledge-search-embedding-note">
+              <strong>Public-use controls.</strong> Anonymous semantic and hybrid evidence searches have short-term and
+              daily usage limits. If a limit is reached, the same request automatically uses keyword retrieval instead.
+              Query text and network addresses are not stored in public-search telemetry.
+            </p>
+          ) : null}
         </aside>
         {canIndex ? (
           <details className="maintenance-callout knowledge-maintenance">
@@ -499,6 +508,9 @@ export function KnowledgeSearchPanel({
               {answerBadgeText(result.answerStatus)}
             </span>
           </div>
+          {result.retrievalNotice ? (
+            <p className="form-status neutral-status">{result.retrievalNotice}</p>
+          ) : null}
           {result.answerText ? <pre className="knowledge-answer">{result.answerText}</pre> : null}
           <div className="evidence-list knowledge-citations">
             {result.results.map((item, index) => (

@@ -75,6 +75,7 @@ export type GrantKnowledgeSearchResponse = {
   query: string;
   answerMode: KnowledgeAnswerMode;
   retrievalMode: KnowledgeRetrievalMode;
+  retrievalNotice?: string;
   answerText: string | null;
   answerStatus: "evidence" | "generated" | "fallback" | "disabled" | "not_requested";
   results: GrantKnowledgeSearchResult[];
@@ -425,18 +426,20 @@ export async function getGrantKnowledgeOverview(): Promise<GrantKnowledgeOvervie
 export async function searchGrantKnowledge({
   searchText,
   limit,
-  retrievalMode = "keyword"
+  retrievalMode = "keyword",
+  onSemanticFallback
 }: {
   searchText: string;
   limit: number;
   retrievalMode?: KnowledgeRetrievalMode;
+  onSemanticFallback?: () => void;
 }) {
   if (retrievalMode === "semantic") {
     return searchSemanticGrantKnowledge({ searchText, limit });
   }
 
   if (retrievalMode === "hybrid") {
-    return searchHybridGrantKnowledge({ searchText, limit });
+    return searchHybridGrantKnowledge({ searchText, limit, onSemanticFallback });
   }
 
   return searchKeywordGrantKnowledge({ searchText, limit });
@@ -842,10 +845,12 @@ async function expandResultsWithApplicationSources({
 
 async function searchHybridGrantKnowledge({
   searchText,
-  limit
+  limit,
+  onSemanticFallback
 }: {
   searchText: string;
   limit: number;
+  onSemanticFallback?: () => void;
 }) {
   const expandedLimit = Math.min(60, Math.max(limit * 4, limit));
   const [keywordOutcome, semanticOutcome] = await Promise.allSettled([
@@ -861,6 +866,7 @@ async function searchHybridGrantKnowledge({
 
   if (semanticOutcome.status === "rejected") {
     console.error("Grant knowledge semantic retrieval failed; falling back to keyword retrieval", semanticOutcome.reason);
+    onSemanticFallback?.();
     return keywordResults.slice(0, limit);
   }
 
@@ -935,12 +941,18 @@ export async function runGrantKnowledgeSearch({
   principalId?: string | null;
 }): Promise<GrantKnowledgeSearchResponse> {
   const effectiveRetrievalMode = allowSemanticSearch ? retrievalMode : "keyword";
+  let servedRetrievalMode = effectiveRetrievalMode;
+  let retrievalNotice: string | undefined;
   const shouldGenerateAiAnswer = answerMode === "ai" && allowAiAnswer && knowledgeAiEnabled();
   const candidateLimit = shouldGenerateAiAnswer ? maxAnswerCandidateDocuments : limit;
   const candidateResults = await searchGrantKnowledge({
     searchText,
     limit: candidateLimit,
-    retrievalMode: effectiveRetrievalMode
+    retrievalMode: effectiveRetrievalMode,
+    onSemanticFallback: () => {
+      servedRetrievalMode = "keyword";
+      retrievalNotice = "Semantic retrieval was temporarily unavailable, so keyword retrieval was used instead.";
+    }
   });
   const results = shouldGenerateAiAnswer ? candidateResults.slice(0, limit) : candidateResults;
   let answerEvidenceResults = results;
@@ -982,7 +994,8 @@ export async function runGrantKnowledgeSearch({
         query: searchText,
         limit,
         answerMode,
-        retrievalMode: effectiveRetrievalMode,
+        retrievalMode: servedRetrievalMode,
+        requestedRetrievalMode: effectiveRetrievalMode,
         answerStatus,
         resultCount: answerEvidenceResults.length,
         initialResultCount: results.length,
@@ -1004,12 +1017,13 @@ export async function runGrantKnowledgeSearch({
       [
         principalId,
         searchText,
-        effectiveRetrievalMode === "keyword" ? "postgres_full_text" : effectiveRetrievalMode,
+        servedRetrievalMode === "keyword" ? "postgres_full_text" : servedRetrievalMode,
         results.length,
         answerMode,
         JSON.stringify({
           answerStatus,
-          retrievalMode: effectiveRetrievalMode,
+          retrievalMode: servedRetrievalMode,
+          requestedRetrievalMode: effectiveRetrievalMode,
           initialResultCount: results.length,
           expandedEvidenceCount: answerEvidenceResults.length,
           candidateResultCount: candidateResults.length,
@@ -1023,7 +1037,8 @@ export async function runGrantKnowledgeSearch({
     ok: true,
     query: searchText,
     answerMode,
-    retrievalMode: effectiveRetrievalMode,
+    retrievalMode: servedRetrievalMode,
+    retrievalNotice,
     answerText,
     answerStatus,
     results: answerEvidenceResults.map(resultForClient),
@@ -1033,7 +1048,7 @@ export async function runGrantKnowledgeSearch({
       expandedEvidenceCount: answerEvidenceResults.length,
       candidateResultCount: candidateResults.length,
       limit,
-      mode: effectiveRetrievalMode,
+      mode: servedRetrievalMode,
       semanticSearchEnabled: providerStatus.semanticSearchEnabled
     },
     providerStatus

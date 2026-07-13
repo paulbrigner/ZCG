@@ -208,8 +208,8 @@ Important boundaries:
 | `/dashboard` | Clean committee worklist for applications under review, direct grant and briefing links, and a full application registry that is collapsed by default | Public read-only mode; authenticated operations depend on role permissions |
 | `/admin/grants/:id` | Application details, labels, linked evidence, decision history, and committee/custom grounded analysis | Core evidence and published shared briefings are public; reconciliation details and private reports require authentication and permissions |
 | `/briefings/:id` | Dedicated, citation-grounded committee briefing with links back to its grant and the dashboard | Public when the shared briefing completed successfully and has content |
-| `/admin/knowledge` | Keyword, semantic, hybrid, and grounded evidence search with an explanation of the selected retrieval and answer modes | Public keyword/evidence search; semantic, hybrid, and AI-composed answers require permissions |
-| `/admin/telemetry` | Source, reconciliation, corpus, index, embedding, and provider status | Authenticated operational roles |
+| `/admin/knowledge` | Keyword, semantic, hybrid, and grounded evidence search with an explanation of the selected retrieval and answer modes | Public evidence summaries can use all retrieval modes; anonymous semantic and hybrid searches have usage controls and keyword fallback; AI-composed answers require permissions |
+| `/admin/telemetry` | Source, reconciliation, corpus, index, embedding, provider, and aggregate anonymous-search status | Authenticated operational roles |
 | `/admin/reconciliations` | Review and persist ambiguous source-to-application decisions | Authenticated roles with reconciliation access; writes require reconciliation write access |
 | `/admin` | Protected administrative overview | Administrator-authorized users |
 | `/admin/users` | Email and domain role grants | Administrator-authorized users |
@@ -217,8 +217,12 @@ Important boundaries:
 `PUBLIC_PROTOTYPE_READONLY=true` exposes selected server-rendered dashboard,
 grant-detail, published committee-briefing, and keyword-search views. It does
 not expose telemetry, reconciliation operations, user management, indexing,
-embedding, synchronization, semantic retrieval, AI answer composition, private
-reports, or writes.
+embedding, synchronization, AI answer composition, private reports, or writes.
+Public evidence summaries may use semantic or hybrid retrieval when embeddings
+are configured. Those anonymous embedding requests are limited per client and
+across each UTC day, fall back to keyword retrieval when a limit is reached,
+and produce only aggregate usage telemetry without query text or network
+addresses.
 
 ## Runtime Architecture
 
