@@ -107,6 +107,12 @@ export type UnderReviewApplicationRow = {
   latest_briefing_title: string | null;
 };
 
+export type GrantApplicationHeadingRow = {
+  id: string;
+  title: string;
+  applicant_name: string | null;
+};
+
 export type GitHubLabelRow = {
   application_id: string;
   label_name: string;
@@ -642,6 +648,19 @@ export async function getAdminDashboard({
     } satisfies ApplicationPagination,
     applications: applications.rows
   };
+}
+
+export async function getGrantApplicationHeading(id: string) {
+  const result = await query<GrantApplicationHeadingRow>(
+    `select id::text,
+            title,
+            applicant_name
+       from grant_applications
+      where id = $1`,
+    [id]
+  );
+
+  return result.rows[0] ?? null;
 }
 
 export async function getGrantApplicationDetail(id: string) {

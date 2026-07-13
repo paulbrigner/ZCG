@@ -249,6 +249,16 @@
   background: #fbfdff;
 }
 
+.briefingDocument {
+  background: #ffffff;
+}
+
+.briefingDocumentTitle {
+  font-size: clamp(24px, 3vw, 34px);
+  line-height: 1.12;
+  margin: 8px 0 0;
+}
+
 .temporaryReport {
   background: #fffdf7;
   border-color: #e7d8aa;

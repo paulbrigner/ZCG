@@ -363,6 +363,21 @@ export function isGrantAnalysisReportFresh(
   return Boolean(savedFingerprint && currentFingerprint && savedFingerprint === currentFingerprint);
 }
 
+export function isPublishedCommitteeBriefing(
+  report:
+    | Pick<GrantAnalysisReport, "reportType" | "visibility" | "status" | "answerText">
+    | null
+    | undefined
+) {
+  return Boolean(
+    report &&
+      report.reportType === "committee_briefing" &&
+      report.visibility === "shared" &&
+      report.status === "succeeded" &&
+      report.answerText?.trim()
+  );
+}
+
 export async function getGrantAnalysisReportFreshness({
   report,
   currentTemplateKey,

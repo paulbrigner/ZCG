@@ -527,6 +527,23 @@ button:disabled {
   margin-bottom: 18px;
 }
 
+.briefing-page-header {
+  display: grid;
+  gap: 12px;
+}
+
+.briefing-page-header h1,
+.briefing-page-header .lead {
+  margin: 0;
+}
+
+.briefing-page-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
 .application-evaluation-summary {
   display: grid;
   gap: 16px;

@@ -754,6 +754,34 @@ function ReportBody({ report, compact = false }: { report: GrantAnalysisReport; 
   );
 }
 
+export function CommitteeBriefingDocument({ report }: { report: GrantAnalysisReport }) {
+  const normalizedReport = normalizeReport(report);
+
+  if (!normalizedReport) {
+    return <p className={styles.errorBox}>This committee briefing could not be displayed.</p>;
+  }
+
+  const reportFreshness = freshness(normalizedReport);
+
+  return (
+    <article className={`${styles.latestReport} ${styles.briefingDocument}`}>
+      <div className={styles.reportHeading}>
+        <div>
+          <div className={styles.chipRow}>
+            <span className={`${styles.freshnessBadge} ${styles[reportFreshness]}`}>
+              {humanize(reportFreshness)} evidence
+            </span>
+            <span className={styles.chip}>{humanize(normalizedReport.visibility)}</span>
+          </div>
+          <h2 className={styles.briefingDocumentTitle}>{normalizedReport.title}</h2>
+        </div>
+      </div>
+      <ReportMetadata report={normalizedReport} />
+      <ReportBody report={normalizedReport} />
+    </article>
+  );
+}
+
 function SavedReportCard({ report }: { report: GrantAnalysisReport }) {
   return (
     <article className={styles.savedReport}>

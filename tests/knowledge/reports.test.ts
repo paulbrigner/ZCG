@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   buildGrantAnalysisEvidenceFingerprint,
   isGrantAnalysisReportFresh,
+  isPublishedCommitteeBriefing,
   stableFingerprintValue,
   type GrantAnalysisEvidenceFingerprintInput
 } from "../../lib/knowledge/reports";
@@ -99,4 +100,21 @@ test("template, content, retrieval, and model changes make a report stale", () =
       modelConfiguration: { provider: "example", model: "grounded-2", temperature: 0.2 }
     })
   );
+});
+
+test("only completed shared committee briefings with content are publicly viewable", () => {
+  const published = {
+    reportType: "committee_briefing" as const,
+    visibility: "shared" as const,
+    status: "succeeded" as const,
+    answerText: "Grounded briefing"
+  };
+
+  assert.equal(isPublishedCommitteeBriefing(published), true);
+  assert.equal(isPublishedCommitteeBriefing({ ...published, reportType: "custom" }), false);
+  assert.equal(isPublishedCommitteeBriefing({ ...published, visibility: "private" }), false);
+  assert.equal(isPublishedCommitteeBriefing({ ...published, status: "running" }), false);
+  assert.equal(isPublishedCommitteeBriefing({ ...published, status: "failed" }), false);
+  assert.equal(isPublishedCommitteeBriefing({ ...published, answerText: "  " }), false);
+  assert.equal(isPublishedCommitteeBriefing(null), false);
 });

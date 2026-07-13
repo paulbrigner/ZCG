@@ -679,9 +679,9 @@ export default async function AdminPage({
                   {application.latest_briefing_id ? (
                     <Link
                       className="under-review-link primary"
-                      href={`/admin/grants/${application.id}#committee-briefing-${application.latest_briefing_id}`}
+                      href={`/briefings/${application.latest_briefing_id}`}
                     >
-                      Open latest briefing
+                      Open briefing
                     </Link>
                   ) : (
                     <span className="under-review-unavailable">No briefing yet</span>
