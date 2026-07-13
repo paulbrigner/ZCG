@@ -68,13 +68,12 @@ function headerValue(headers: Headers, name: string) {
 }
 
 function publicClientAddress(headers: Headers) {
-  // Trusted reverse proxies append the observed client address, so use the last
-  // forwarded value instead of a potentially client-supplied prefix.
+  // Amplify places the viewer address first and may append varying internal
+  // proxy hops, so the first forwarded value is the stable client boundary.
   const forwardedFor = headerValue(headers, "x-forwarded-for")
     ?.split(",")
     .map((value) => value.trim())
-    .filter(Boolean)
-    .at(-1);
+    .find(Boolean);
 
   return (
     forwardedFor ||

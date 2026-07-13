@@ -11,7 +11,7 @@ import {
 } from "../../lib/knowledge/public-search-controls";
 
 test("hashes the public client address without retaining the raw address", () => {
-  const firstHeaders = new Headers({ "x-forwarded-for": "10.0.0.2, 203.0.113.9" });
+  const firstHeaders = new Headers({ "x-forwarded-for": "203.0.113.9, 10.0.0.2" });
   const sameHeaders = new Headers({ "x-forwarded-for": "203.0.113.9" });
   const otherHeaders = new Headers({ "x-forwarded-for": "203.0.113.10" });
   const first = publicKnowledgeSearchClientHash(firstHeaders, "test-secret");
@@ -29,7 +29,7 @@ test("uses proxy client-address headers in a stable order", () => {
       "cf-connecting-ip": "198.51.100.6",
       "x-real-ip": "198.51.100.7"
     })),
-    "10.0.0.1"
+    "198.51.100.5"
   );
   assert.equal(
     publicSearchControlTestHooks.publicClientAddress(new Headers({ "cf-connecting-ip": "198.51.100.6" })),
