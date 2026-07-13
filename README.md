@@ -1,21 +1,19 @@
-# ZCG Grants Prototype
+# Zcash Community Grants Decision Support
 
-An independent, working proposal for turning Zcash Community Grants (ZCG) from
-a collection of manually synchronized public tools into a structured grants
-operating system.
+An independent, working prototype and architecture proposal for Zcash Community
+Grants (ZCG) decision support.
 
 The prototype mirrors existing public records, preserves their provenance,
-reconciles them into canonical applications and grants, and exposes public and
-administrator views without asking ZCG to replace its current tools first.
+reconciles them into canonical applications and funded-status grant records,
+and provides public review and authenticated operational views without asking
+ZCG to replace its current tools first.
 
 - [Live prototype](https://zcg.pgpz.org)
 - [ZCG Grants Dashboard](https://zcg.pgpz.org/dashboard)
 - [Grounded grant knowledge search](https://zcg.pgpz.org/admin/knowledge)
-- [Public grants API](https://zcg.pgpz.org/api/public/grants)
-- [Health check](https://zcg.pgpz.org/api/health)
 
-> **Status:** independent prototype and architecture proposal. It is not an
-> official ZCG production system unless and until the relevant Zcash ecosystem
+> **Status:** This is an independent prototype and architecture proposal, not
+> an official ZCG production system unless relevant Zcash ecosystem
 > stakeholders adopt it.
 
 ## Current Implementation at a Glance
@@ -24,12 +22,12 @@ administrator views without asking ZCG to replace its current tools first.
 | --- | --- |
 | Source mirroring | GitHub issues and comments, two public ZCG Google Sheet tabs, linked Zcash Community Forum topics, and the Forum's Community Grants Updates category |
 | Evidence preservation | Checksum-tracked source records in PostgreSQL and optional aggregate JSON snapshots in private S3 |
-| Reconciliation | Canonical applications, funded-grant records, GitHub label normalization, source links, confidence scores, generated issues, and durable reviewer decisions |
+| Reconciliation | Canonical applications, funded-status grant records, stale-grant cleanup when an application leaves a funded status, GitHub label normalization, source links, confidence scores, generated issues, and durable reviewer decisions |
 | Decision history | Meeting-minute topics parsed into decision sources and grant mentions with rationale, speaker notes, provenance, and review status |
 | Knowledge retrieval | PostgreSQL full-text search, pgvector embeddings, hybrid retrieval, citation-grounded answers, and application-scoped evidence packs |
-| Committee decision support | Versioned shared briefings plus temporary, private, or shared custom analyses with durable citation snapshots, freshness checks, and audit history |
-| Product surfaces | Public read-only dashboard, application details, reconciliation workspace, knowledge search, permissioned committee briefings, user access management, and an allowlisted public API |
-| Access and audit | Better Auth email codes, application-owned roles and permissions, server-side authorization, and audit events |
+| Committee decision support | Versioned, publicly viewable shared briefings plus temporary, private, or shared custom analyses with durable citation snapshots, freshness checks, and audit history |
+| Product surfaces | Public review worklist, collapsible application registry, grant details, dedicated briefing pages, knowledge search, protected telemetry and reconciliation workspaces, and user access management |
+| Access and audit | Better Auth sign-in emails containing both a secure link and one-time code, application-owned roles and permissions, server-side authorization, and audit events |
 | Deployment | Next.js on AWS Amplify SSR, Aurora PostgreSQL through the RDS Data API, and CDK-managed workers, snapshots, secrets, logs, and optional alarms |
 
 Not yet implemented as first-class workflow data: milestones, progress updates,
@@ -39,18 +37,27 @@ applicant portal, or controlled writeback to the current public systems.
 ### Last-observed prototype corpus
 
 These are reconciliation outputs, not authoritative ZCG production totals.
-They were observed on the live prototype on **July 10, 2026** after source
-syncs completed on July 9 and the decision-minute reconciliation was refreshed.
+They were observed on the live prototype on **July 13, 2026** after the latest
+grant reconciliation completed. Source ingestion remains operator-triggered.
 
 | Metric | Count |
 | --- | ---: |
-| Mirrored source records | 4,336 |
-| Canonical applications | 624 |
-| Funded-status grant records | 164 |
-| Open reconciliation items | 31 |
-| Open warning items | 19 |
-| Grant knowledge documents | 6,052 |
-| Embedded knowledge documents | 5,557 |
+| Mirrored source records | 4,357 |
+| Canonical applications | 627 |
+| Funded-status grant records | 161 |
+| Open reconciliation items | 11 |
+| Open warning or error items | 0 |
+| Grant knowledge documents | 15,871 |
+| Embedded knowledge documents | 15,871 |
+
+The funded-status total counts canonical grant records whose applications are
+`approved`, `active`, or `completed`; declined and cancelled applications are
+excluded. For context, the July 13
+[OpenZcash payment-ledger snapshot](https://openzcash.org/zcg/grants) contains
+170 regular ZCG project names and 6 coinholder projects (176 combined). That
+broader historical ledger includes cancelled or vetoed entries and title
+aliases, so it is not a like-for-like grant total. The interface exposes this
+distinction from an information control beside each funded-grant statistic.
 
 ## How ZCG Operates Today
 
@@ -184,9 +191,13 @@ Important boundaries:
   default.
 - A `grant_application` represents a proposal broadly. A `grant` is created only
   for applications normalized to `approved`, `active`, or `completed`.
+  Reconciliation also deletes an existing grant row if its processed
+  application later becomes declined, withdrawn, cancelled, or otherwise
+  leaves those funded statuses.
 - Milestone and payment detail is still source evidence and coarse summary data,
   not normalized milestone or payment objects.
-- Forum topic mirroring defaults to at most 20 posts per topic.
+- Linked application Forum topics can mirror up to 1,000 posts by default;
+  Community Grants Updates topics default to 20 posts per topic.
 - S3 snapshots are optional. When no snapshot bucket is configured, raw payloads
   still live in PostgreSQL `source_records`.
 
@@ -194,19 +205,20 @@ Important boundaries:
 
 | Route | Purpose | Access |
 | --- | --- | --- |
-| `/dashboard` | Source telemetry, canonical applications, filters, and evidence links | Authenticated roles, or public read-only mode |
-| `/admin/grants/:id` | Application details, labels, sources, decisions, reconciliation issues, and permissioned committee/custom grounded analysis | Core evidence is available in public read-only mode; saved AI analysis requires report permissions |
-| `/admin/reconciliations` | Review and persist ambiguous source-to-application decisions | Public read-only mode; persistence requires reconciliation write access |
-| `/admin/knowledge` | Keyword, semantic, hybrid, and grounded evidence search | Public keyword/evidence search; richer modes require permissions |
-| `/admin` | Landing page for protected administrative functions | Administrator |
-| `/admin/users` | Email and domain role grants | Administrator |
-| `/api/public/grants` | Allowlisted public grant projection, currently capped at 100 rows | Public |
-| `/api/health` and `/api/health/db` | Application and database health | Public deployment checks |
+| `/dashboard` | Clean committee worklist for applications under review, direct grant and briefing links, and a full application registry that is collapsed by default | Public read-only mode; authenticated operations depend on role permissions |
+| `/admin/grants/:id` | Application details, labels, linked evidence, decision history, and committee/custom grounded analysis | Core evidence and published shared briefings are public; reconciliation details and private reports require authentication and permissions |
+| `/briefings/:id` | Dedicated, citation-grounded committee briefing with links back to its grant and the dashboard | Public when the shared briefing completed successfully and has content |
+| `/admin/knowledge` | Keyword, semantic, hybrid, and grounded evidence search with an explanation of the selected retrieval and answer modes | Public keyword/evidence search; semantic, hybrid, and AI-composed answers require permissions |
+| `/admin/telemetry` | Source, reconciliation, corpus, index, embedding, and provider status | Authenticated operational roles |
+| `/admin/reconciliations` | Review and persist ambiguous source-to-application decisions | Authenticated roles with reconciliation access; writes require reconciliation write access |
+| `/admin` | Protected administrative overview | Administrator-authorized users |
+| `/admin/users` | Email and domain role grants | Administrator-authorized users |
 
 `PUBLIC_PROTOTYPE_READONLY=true` exposes selected server-rendered dashboard,
-detail, reconciliation, and keyword-search views without enabling semantic
-search, AI answers, user management, indexing, embedding, synchronization, or
-writes.
+grant-detail, published committee-briefing, and keyword-search views. It does
+not expose telemetry, reconciliation operations, user management, indexing,
+embedding, synchronization, semantic retrieval, AI answer composition, private
+reports, or writes.
 
 ## Runtime Architecture
 
@@ -222,9 +234,9 @@ writes.
 - **Knowledge workers:** deployed index, embedding, and asynchronous answer
   workers use the Data API. Embeddings and answer composition use a configurable
   OpenAI-compatible endpoint.
-- **Authentication:** Better Auth sends email one-time codes through SES in
-  deployed environments and logs them to the server console locally when SES is
-  unset.
+- **Authentication:** Better Auth sends a single sign-in email containing both
+  a secure magic link and a one-time code through SES in deployed environments.
+  When SES is unset locally, the link and code are logged to the server console.
 - **Scheduling:** the embedding schedule can be enabled in CDK. The six-hour
   source-sync rule is defined but disabled by default, so source refreshes are
   currently operator-triggered.
@@ -234,7 +246,9 @@ writes.
 | Path | Purpose |
 | --- | --- |
 | `app/` | Next.js pages, layouts, and route handlers |
-| `app/admin/` | Dashboard, grant details, reconciliation, knowledge, and user access UI |
+| `app/dashboard/` | Public dashboard entry point |
+| `app/admin/` | Dashboard, grant details, telemetry, reconciliation, knowledge, and user access UI |
+| `app/briefings/` | Public pages for successfully published shared committee briefings |
 | `app/api/` | Health, auth, administration, synchronization, and public API routes |
 | `lib/source-mirroring/` | GitHub, Google Sheet, and Forum collectors plus source storage |
 | `lib/reconciliation/` | Canonical grant reconciliation, durable reviewer decisions, and meeting-minute parsing |
@@ -244,6 +258,7 @@ writes.
 | `workers/` | Sync, migration, knowledge index, embedding, and answer workers |
 | `migrations/` | Better Auth, authorization, source, canonical, decision, and retrieval schema |
 | `infra/` | AWS CDK backend stack |
+| `tests/` | Reconciliation, knowledge, briefing, and source-mirroring tests |
 | `docs/` | Discovery, architecture, migration, reconciliation, and deployment notes |
 
 ## Local Development
@@ -290,8 +305,9 @@ npm run db:migrate
 npm run dev
 ```
 
-Open `http://localhost:3000/sign-in`. With `SES_FROM_EMAIL` unset, the one-time
-sign-in code appears in the development-server console.
+Open `http://localhost:3000/sign-in` and request a sign-in email. With
+`SES_FROM_EMAIL` unset, both the secure sign-in link and one-time code appear in
+the development-server console.
 
 `npm run db:seed` is a legacy/manual seed path and requires `SEED_ADMIN_EMAIL`.
 For a normal Better Auth sign-in, prefer `BOOTSTRAP_ADMIN_EMAILS` as described
@@ -326,14 +342,19 @@ npm run worker:knowledge-embed
 npm run infra:synth
 ```
 
-Run the repository checks with:
+Run the automated reconciliation, knowledge, and source-mirroring tests with:
+
+```bash
+npm test
+```
+
+Run the static and production-build checks with:
 
 ```bash
 npm run check
 ```
 
-`check` runs TypeScript checking, ESLint, and a production build. The repository
-does not currently include an automated test suite.
+`check` runs TypeScript checking, ESLint, and a production build.
 
 ## Deployment
 
@@ -352,6 +373,19 @@ Two CDK cost modes are available: `prototype-low-cost`, which omits the optional
 ECS/ALB web tier and permits Aurora scale-to-zero, and `production-ready`, which
 restores production-style web compute, minimum database capacity, monitoring,
 and alarms.
+
+Preview and deploy the current low-cost prototype with the repository's named
+AWS profile and region:
+
+```bash
+AWS_PROFILE=zodldashboard AWS_REGION=us-east-1 \
+  npm run infra:diff:prototype-low-cost -- \
+  --profile zodldashboard --region us-east-1
+
+AWS_PROFILE=zodldashboard AWS_REGION=us-east-1 \
+  npm run infra:deploy:prototype-low-cost -- \
+  --profile zodldashboard --region us-east-1 --require-approval never
+```
 
 See [AWS account portability](docs/deployment/aws-account-portability.md),
 [Amplify target](docs/deployment/amplify-zcg-target.md),
@@ -384,7 +418,9 @@ files and account-specific CDK context are ignored.
 2. Add reviewer-assisted status normalization and richer decision-link review.
 3. Decide whether and how to mirror Jotform, website content, and approved
    private operational records.
-4. Build dedicated public grant pages and exports from explicit projections.
+4. Promote stable public grant URLs and exports from explicit projections; the
+   current public grant details still live under the prototype's `/admin/grants`
+   route structure.
 5. Add applicant and FPF/ZCG workflow surfaces only after source confidence and
    privacy boundaries are agreed.
 6. Define incremental sync, writeback, cutover, archive, and rollback policies
@@ -401,6 +437,7 @@ contains the fuller target-system argument and proposed architecture.
 - [Phase 0 build checklist](docs/phase-0-build-checklist.md)
 - [Phase 1 source mirroring](docs/phase-1-source-mirroring.md)
 - [Manual reconciliation decisions](docs/manual-reconciliation-decisions.md)
+- [Committee grant briefing plan](docs/committee-grant-briefing-plan.md)
 - [Deployment cost modes](docs/deployment/cost-modes.md)
 - [AWS account portability](docs/deployment/aws-account-portability.md)
 
