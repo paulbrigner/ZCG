@@ -404,12 +404,25 @@ contains the fuller target-system argument and proposed architecture.
 - [Deployment cost modes](docs/deployment/cost-modes.md)
 - [AWS account portability](docs/deployment/aws-account-portability.md)
 
-## License, Governance, and Security
+## License, Contributions, and Security
 
-A license has not yet been selected. Before external contribution or production
-adoption, the project should choose an open-source license, identify
-maintainers, and document contribution, governance, and security-disclosure
-processes.
+Except as otherwise noted, original project-authored software, documentation,
+and other original repository materials are available under either of these
+licenses, at your option:
+
+- [Apache License, Version 2.0](LICENSE-APACHE)
+- [MIT License](LICENSE-MIT)
+
+The corresponding SPDX expression is `MIT OR Apache-2.0`.
+
+These project licenses do not relicense mirrored or imported records, grant
+materials, source excerpts, applicant content, third-party assets, or names,
+logos, and other marks. See [Third-party notices](THIRD_PARTY_NOTICES.md) for
+the applicable boundaries and the OpenZcash favicon attribution.
+
+Unless you explicitly state otherwise, any contribution intentionally
+submitted for inclusion in this project is licensed under both the Apache-2.0
+and MIT terms above, without additional terms or conditions.
 
 If you discover a security issue, do not open a public issue containing exploit
 details. Contact the repository owner privately until a formal security policy
