@@ -1197,6 +1197,8 @@ button:disabled {
 }
 
 .github-label-list {
+  align-content: flex-start;
+  align-items: flex-start;
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
@@ -1205,6 +1207,7 @@ button:disabled {
 }
 
 .github-label-chip {
+  align-items: center;
   background: #eef2f7;
   border: 1px solid var(--line);
   border-radius: 999px;
