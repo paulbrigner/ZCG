@@ -9,7 +9,7 @@ import {
 import { grantAnalysisAiModel } from "@/lib/knowledge/config";
 import {
   getGrantAnalysisReport,
-  getGrantAnalysisReportFreshness,
+  getGrantAnalysisReportFreshnessDetails,
   isPublishedCommitteeBriefing,
   listGrantAnalysisReportEvidence
 } from "@/lib/knowledge/reports";
@@ -42,10 +42,10 @@ export default async function CommitteeBriefingPage({
     notFound();
   }
 
-  const [application, evidence, freshnessStatus] = await Promise.all([
+  const [application, evidence, freshnessDetails] = await Promise.all([
     getGrantApplicationHeading(report.applicationId),
     listGrantAnalysisReportEvidence(report.id),
-    getGrantAnalysisReportFreshness({
+    getGrantAnalysisReportFreshnessDetails({
       report,
       currentTemplateKey: COMMITTEE_BRIEFING_TEMPLATE_KEY,
       currentTemplateVersion: COMMITTEE_BRIEFING_TEMPLATE_VERSION,
@@ -65,7 +65,8 @@ export default async function CommitteeBriefingPage({
       retrievalMode === "keyword" || retrievalMode === "semantic" || retrievalMode === "hybrid"
         ? retrievalMode
         : null,
-    freshnessStatus,
+    freshnessStatus: freshnessDetails.status,
+    freshnessDetails,
     evidence: evidence.map((item) => ({
       id: `${report.id}:${item.citationNumber}`,
       citationNumber: item.citationNumber,

@@ -24,7 +24,7 @@ import {
   attachGrantAnalysisReportJob,
   createGrantAnalysisReport,
   failGrantAnalysisReport,
-  getGrantAnalysisReportFreshness,
+  getGrantAnalysisReportFreshnessDetails,
   listGrantAnalysisReportEvidence,
   listGrantAnalysisReports,
   type GrantAnalysisReport,
@@ -69,8 +69,8 @@ function reportRetrievalMode(report: GrantAnalysisReport) {
 
 async function serializeReport(report: GrantAnalysisReport) {
   const committeeBriefing = report.reportType === "committee_briefing";
-  const [freshnessStatus, evidence] = await Promise.all([
-    getGrantAnalysisReportFreshness({
+  const [freshnessDetails, evidence] = await Promise.all([
+    getGrantAnalysisReportFreshnessDetails({
       report,
       currentTemplateKey: committeeBriefing
         ? COMMITTEE_BRIEFING_TEMPLATE_KEY
@@ -86,7 +86,8 @@ async function serializeReport(report: GrantAnalysisReport) {
   return {
     ...report,
     retrievalMode: reportRetrievalMode(report),
-    freshnessStatus,
+    freshnessStatus: freshnessDetails.status,
+    freshnessDetails,
     evidence
   };
 }

@@ -44,6 +44,15 @@ export type GrantAnalysisPromptPacking = {
   };
 };
 
+export type GrantAnalysisFreshnessDetails = {
+  status: "fresh" | "stale" | "unknown";
+  evidenceStatus: "current" | "changed" | "unknown";
+  evidenceRecordCount: number;
+  changedEvidenceRecordCount: number;
+  templateChanged: boolean;
+  modelChanged: boolean;
+};
+
 export type GrantAnalysisReport = {
   id: string;
   applicationId: string;
@@ -59,6 +68,7 @@ export type GrantAnalysisReport = {
   currentEvidenceFingerprint?: string | null;
   isStale?: boolean | null;
   freshnessStatus?: "fresh" | "stale" | "unknown" | null;
+  freshnessDetails?: GrantAnalysisFreshnessDetails | null;
   templateKey?: string | null;
   templateVersion?: string | number | null;
   provider?: string | null;
@@ -206,6 +216,35 @@ function normalizePromptPacking(value: unknown): GrantAnalysisPromptPacking | nu
   };
 }
 
+function normalizeFreshnessDetails(value: unknown): GrantAnalysisFreshnessDetails | null {
+  const record = asRecord(value);
+
+  if (!record) {
+    return null;
+  }
+
+  return {
+    status: oneOf(field(record, "status"), ["fresh", "stale", "unknown"] as const, "unknown"),
+    evidenceStatus: oneOf(
+      field(record, "evidenceStatus", "evidence_status"),
+      ["current", "changed", "unknown"] as const,
+      "unknown"
+    ),
+    evidenceRecordCount: nonNegativeNumberField(
+      record,
+      "evidenceRecordCount",
+      "evidence_record_count"
+    ),
+    changedEvidenceRecordCount: nonNegativeNumberField(
+      record,
+      "changedEvidenceRecordCount",
+      "changed_evidence_record_count"
+    ),
+    templateChanged: booleanField(record, "templateChanged", "template_changed") ?? false,
+    modelChanged: booleanField(record, "modelChanged", "model_changed") ?? false
+  };
+}
+
 function oneOf<T extends string>(value: unknown, allowed: readonly T[], fallback: T): T {
   return typeof value === "string" && allowed.includes(value as T) ? (value as T) : fallback;
 }
@@ -287,6 +326,9 @@ function normalizeReport(value: unknown): GrantAnalysisReport | null {
   const promptPacking = normalizePromptPacking(
     field(generationMetadata, "promptPacking", "prompt_packing")
   );
+  const freshnessDetails = normalizeFreshnessDetails(
+    field(record, "freshnessDetails", "freshness_details")
+  );
 
   return {
     id,
@@ -321,6 +363,7 @@ function normalizeReport(value: unknown): GrantAnalysisReport | null {
       ["fresh", "stale", "unknown"] as const,
       "unknown"
     ),
+    freshnessDetails,
     templateKey: stringField(record, "templateKey", "template_key"),
     templateVersion:
       stringField(record, "templateVersion", "template_version") ??
@@ -471,6 +514,61 @@ function freshness(report: GrantAnalysisReport): "fresh" | "stale" | "unknown" {
   return "unknown";
 }
 
+function freshnessLabel(report: GrantAnalysisReport) {
+  const details = report.freshnessDetails;
+
+  if (details?.status === "unknown") {
+    return "Freshness unknown";
+  }
+
+  if (details?.evidenceStatus === "changed") {
+    return "Evidence changed";
+  }
+
+  if (details?.templateChanged || details?.modelChanged) {
+    return "Briefing update available";
+  }
+
+  if (details?.evidenceStatus === "current" || freshness(report) === "fresh") {
+    return "Evidence current";
+  }
+
+  if (freshness(report) === "stale") {
+    return "Evidence changed";
+  }
+
+  return "Freshness unknown";
+}
+
+function staleNotice(report: GrantAnalysisReport) {
+  if (freshness(report) !== "stale") {
+    return null;
+  }
+
+  const details = report.freshnessDetails;
+
+  if (!details) {
+    return "Evidence used by this briefing or its generation settings have changed. Regeneration will preserve this version in history.";
+  }
+
+  const changes: string[] = [];
+
+  if (details.evidenceStatus === "changed") {
+    const recordWord = details.evidenceRecordCount === 1 ? "record" : "records";
+    const verb = details.changedEvidenceRecordCount === 1 ? "has" : "have";
+    const availabilityVerb = details.changedEvidenceRecordCount === 1 ? "is" : "are";
+    changes.push(
+      `${formatCount(details.changedEvidenceRecordCount)} of ${formatCount(details.evidenceRecordCount)} evidence ${recordWord} used by this briefing ${verb} changed or ${availabilityVerb} no longer available`
+    );
+  }
+
+  if (details.templateChanged || details.modelChanged) {
+    changes.push("the briefing template or model has changed");
+  }
+
+  return `${changes.join("; ")}. Regeneration will preserve this version in history.`;
+}
+
 function clampPollMs(value: unknown) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? Math.min(Math.max(parsed, 750), 5000) : defaultPollMs;
@@ -592,7 +690,7 @@ function ReportMetadata({ report }: { report: GrantAnalysisReport }) {
         <dt>Evidence</dt>
         <dd>
           <span className={`${styles.freshnessBadge} ${styles[reportFreshness]}`}>
-            {humanize(reportFreshness)}
+            {freshnessLabel(report)}
           </span>
         </dd>
       </div>
@@ -762,6 +860,7 @@ export function CommitteeBriefingDocument({ report }: { report: GrantAnalysisRep
   }
 
   const reportFreshness = freshness(normalizedReport);
+  const reportFreshnessNotice = staleNotice(normalizedReport);
 
   return (
     <article className={`${styles.latestReport} ${styles.briefingDocument}`}>
@@ -769,13 +868,16 @@ export function CommitteeBriefingDocument({ report }: { report: GrantAnalysisRep
         <div>
           <div className={styles.chipRow}>
             <span className={`${styles.freshnessBadge} ${styles[reportFreshness]}`}>
-              {humanize(reportFreshness)} evidence
+              {freshnessLabel(normalizedReport)}
             </span>
             <span className={styles.chip}>{humanize(normalizedReport.visibility)}</span>
           </div>
           <h2 className={styles.briefingDocumentTitle}>{normalizedReport.title}</h2>
         </div>
       </div>
+      {reportFreshnessNotice ? (
+        <p className={styles.staleNotice}>{reportFreshnessNotice}</p>
+      ) : null}
       <ReportMetadata report={normalizedReport} />
       <ReportBody report={normalizedReport} />
     </article>
@@ -1255,7 +1357,7 @@ export function GrantAnalysisPanel({
           {pendingBriefing
             ? "In progress"
             : latestBriefing
-              ? `Version ${latestBriefing.version ?? "—"} · ${humanize(latestFreshness)} evidence`
+              ? `Version ${latestBriefing.version ?? "—"} · ${freshnessLabel(latestBriefing)}`
               : "Not generated"}
         </span>
       </summary>
@@ -1285,7 +1387,7 @@ export function GrantAnalysisPanel({
             <div>
               <div className={styles.chipRow}>
                 <span className={`${styles.freshnessBadge} ${styles[latestFreshness ?? "unknown"]}`}>
-                  {humanize(latestFreshness)} evidence
+                  {freshnessLabel(latestBriefing)}
                 </span>
                 <span className={styles.chip}>{humanize(latestBriefing.visibility)}</span>
               </div>
@@ -1339,8 +1441,7 @@ export function GrantAnalysisPanel({
           ) : null}
           {latestFreshness === "stale" ? (
             <p className={styles.staleNotice}>
-              Indexed evidence or the briefing template has changed since this version was generated. Regeneration
-              will preserve this version in history.
+              {staleNotice(latestBriefing)}
             </p>
           ) : null}
           <ReportMetadata report={latestBriefing} />

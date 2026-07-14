@@ -5,6 +5,36 @@ export type GrantAnalysisReportType = "committee_briefing" | "custom";
 export type GrantAnalysisReportVisibility = "private" | "shared";
 export type GrantAnalysisReportStatus = "queued" | "running" | "succeeded" | "failed";
 export type GrantAnalysisReportFreshness = "fresh" | "stale" | "unknown";
+export type GrantAnalysisReportEvidenceFreshness = "current" | "changed" | "unknown";
+export type GrantAnalysisReportFreshnessDetails = {
+  status: GrantAnalysisReportFreshness;
+  evidenceStatus: GrantAnalysisReportEvidenceFreshness;
+  evidenceRecordCount: number;
+  changedEvidenceRecordCount: number;
+  templateChanged: boolean;
+  modelChanged: boolean;
+};
+export type GrantAnalysisReportFreshnessInput = {
+  report: Pick<
+    GrantAnalysisReport,
+    | "id"
+    | "status"
+    | "evidenceFingerprint"
+    | "completedAt"
+    | "templateKey"
+    | "templateVersion"
+    | "model"
+  >;
+  currentTemplateKey: string;
+  currentTemplateVersion: string;
+  currentModel: string;
+};
+type GrantAnalysisReportFreshnessDependencies = {
+  query: <T extends Record<string, unknown>>(
+    text: string,
+    values?: readonly unknown[]
+  ) => Promise<{ rows: T[] }>;
+};
 export type GrantAnalysisReportAnswerStatus =
   | "evidence"
   | "generated"
@@ -363,6 +393,23 @@ export function isGrantAnalysisReportFresh(
   return Boolean(savedFingerprint && currentFingerprint && savedFingerprint === currentFingerprint);
 }
 
+export function compareGrantAnalysisReportEvidence(
+  savedEvidence: ReadonlyArray<{ documentKey: string; contentHash: string }>,
+  currentEvidence: ReadonlyArray<{ documentKey: string; contentHash: string }>
+) {
+  const currentByDocumentKey = new Map(
+    currentEvidence.map((document) => [document.documentKey, document.contentHash])
+  );
+  const changedEvidenceRecordCount = savedEvidence.filter(
+    (document) => currentByDocumentKey.get(document.documentKey) !== document.contentHash
+  ).length;
+
+  return {
+    evidenceRecordCount: savedEvidence.length,
+    changedEvidenceRecordCount
+  };
+}
+
 export function isPublishedCommitteeBriefing(
   report:
     | Pick<GrantAnalysisReport, "reportType" | "visibility" | "status" | "answerText">
@@ -378,73 +425,81 @@ export function isPublishedCommitteeBriefing(
   );
 }
 
-export async function getGrantAnalysisReportFreshness({
-  report,
-  currentTemplateKey,
-  currentTemplateVersion,
-  currentModel
-}: {
-  report: GrantAnalysisReport;
-  currentTemplateKey: string;
-  currentTemplateVersion: string;
-  currentModel: string;
-}): Promise<GrantAnalysisReportFreshness> {
+export async function getGrantAnalysisReportFreshnessDetails(
+  {
+    report,
+    currentTemplateKey,
+    currentTemplateVersion,
+    currentModel
+  }: GrantAnalysisReportFreshnessInput,
+  dependencies: GrantAnalysisReportFreshnessDependencies = {
+    query: query as GrantAnalysisReportFreshnessDependencies["query"]
+  }
+): Promise<GrantAnalysisReportFreshnessDetails> {
+  const templateChanged =
+    report.templateKey !== currentTemplateKey || report.templateVersion !== currentTemplateVersion;
+  const modelChanged = report.model !== currentModel;
+
   if (report.status !== "succeeded" || !report.evidenceFingerprint || !report.completedAt) {
-    return "unknown";
+    return {
+      status: "unknown",
+      evidenceStatus: "unknown",
+      evidenceRecordCount: 0,
+      changedEvidenceRecordCount: 0,
+      templateChanged,
+      modelChanged
+    };
   }
 
-  if (
-    report.templateKey !== currentTemplateKey ||
-    report.templateVersion !== currentTemplateVersion ||
-    report.model !== currentModel
-  ) {
-    return "stale";
-  }
-
-  const result = await query<{ changed: boolean }>(
-    `select exists (
-       select 1
-         from grant_analysis_report_evidence saved
-         left join grant_knowledge_documents current_document
-           on current_document.document_key = saved.document_key
-        where saved.report_id = $1
-          and (
-            current_document.id is null
-            or current_document.content_hash <> saved.content_hash
-          )
-       union all
-       select 1
-         from grant_knowledge_documents changed_document
-        where changed_document.indexed_at > $3::timestamptz
-          and changed_document.application_id in (
-            select $2::uuid
-            union
-            select saved_application.application_id
-              from grant_analysis_report_evidence saved_application
-             where saved_application.report_id = $1
-          )
-       union all
-       select 1
-         from grant_application_relationships relationship
-        where (relationship.from_application_id = $2 or relationship.to_application_id = $2)
-          and relationship.updated_at > $3::timestamptz
-       union all
-       select 1
-         from grant_application_participants participant
-        where participant.application_id = $2
-          and participant.updated_at > $3::timestamptz
-       union all
-       select 1
-        where not exists (
-          select 1
-            from grant_analysis_report_evidence saved
-           where saved.report_id = $1
-        )
-     ) as changed`,
-    [report.id, report.applicationId, report.completedAt]
+  const result = await dependencies.query<{
+    saved_document_key: string;
+    saved_content_hash: string;
+    current_document_key: string | null;
+    current_content_hash: string | null;
+  }>(
+    `select saved.document_key as saved_document_key,
+            saved.content_hash as saved_content_hash,
+            current_document.document_key as current_document_key,
+            current_document.content_hash as current_content_hash
+       from grant_analysis_report_evidence saved
+       left join grant_knowledge_documents current_document
+         on current_document.document_key = saved.document_key
+      where saved.report_id = $1
+      order by saved.citation_number`,
+    [report.id]
   );
 
-  return result.rows[0]?.changed ? "stale" : "fresh";
+  const comparison = compareGrantAnalysisReportEvidence(
+    result.rows.map((row) => ({
+      documentKey: row.saved_document_key,
+      contentHash: row.saved_content_hash
+    })),
+    result.rows.flatMap((row) =>
+      row.current_document_key && row.current_content_hash
+        ? [{ documentKey: row.current_document_key, contentHash: row.current_content_hash }]
+        : []
+    )
+  );
+  const hasEvidenceSnapshot = comparison.evidenceRecordCount > 0;
+  const evidenceChanged = comparison.changedEvidenceRecordCount > 0;
+
+  return {
+    status: !hasEvidenceSnapshot
+      ? "unknown"
+      : evidenceChanged || templateChanged || modelChanged
+        ? "stale"
+        : "fresh",
+    evidenceStatus: !hasEvidenceSnapshot ? "unknown" : evidenceChanged ? "changed" : "current",
+    ...comparison,
+    templateChanged,
+    modelChanged
+  };
+}
+
+export async function getGrantAnalysisReportFreshness(
+  input: GrantAnalysisReportFreshnessInput
+): Promise<GrantAnalysisReportFreshness> {
+  return (await getGrantAnalysisReportFreshnessDetails(input)).status;
 }
 
 export async function createGrantAnalysisReport({

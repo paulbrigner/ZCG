@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildGrantAnalysisEvidenceFingerprint,
+  compareGrantAnalysisReportEvidence,
+  getGrantAnalysisReportFreshnessDetails,
   isGrantAnalysisReportFresh,
   isPublishedCommitteeBriefing,
   stableFingerprintValue,
@@ -100,6 +102,116 @@ test("template, content, retrieval, and model changes make a report stale", () =
       modelConfiguration: { provider: "example", model: "grounded-2", temperature: 0.2 }
     })
   );
+});
+
+test("report evidence freshness ignores documents that were not in the saved briefing", () => {
+  const savedEvidence = [
+    { documentKey: "application:summary", contentHash: "summary-v1" },
+    { documentKey: "application:github", contentHash: "github-v1" }
+  ];
+  const currentEvidence = [
+    ...savedEvidence,
+    { documentKey: "unrelated:comparison:document", contentHash: "changed-after-report" }
+  ];
+
+  assert.deepEqual(compareGrantAnalysisReportEvidence(savedEvidence, currentEvidence), {
+    evidenceRecordCount: 2,
+    changedEvidenceRecordCount: 0
+  });
+});
+
+test("report evidence freshness counts changed and missing saved records", () => {
+  const savedEvidence = [
+    { documentKey: "application:summary", contentHash: "summary-v1" },
+    { documentKey: "application:github", contentHash: "github-v1" },
+    { documentKey: "application:sheet", contentHash: "sheet-v1" }
+  ];
+  const currentEvidence = [
+    { documentKey: "application:summary", contentHash: "summary-v2" },
+    { documentKey: "application:github", contentHash: "github-v1" }
+  ];
+
+  assert.deepEqual(compareGrantAnalysisReportEvidence(savedEvidence, currentEvidence), {
+    evidenceRecordCount: 3,
+    changedEvidenceRecordCount: 2
+  });
+  assert.deepEqual(compareGrantAnalysisReportEvidence([], currentEvidence), {
+    evidenceRecordCount: 0,
+    changedEvidenceRecordCount: 0
+  });
+});
+
+test("report freshness queries only the saved evidence snapshot and returns precise reasons", async () => {
+  const queries: string[] = [];
+  const matchingRows = [
+    {
+      saved_document_key: "application:summary",
+      saved_content_hash: "summary-v1",
+      current_document_key: "application:summary",
+      current_content_hash: "summary-v1"
+    }
+  ];
+  const dependencies = {
+    query: async <T extends Record<string, unknown>>(text: string) => {
+      queries.push(text);
+      return { rows: matchingRows as unknown as T[] };
+    }
+  };
+  const input = {
+    report: {
+      id: "00000000-0000-4000-8000-000000000030",
+      status: "succeeded" as const,
+      evidenceFingerprint: "saved-fingerprint",
+      completedAt: "2026-07-13T15:13:00.000Z",
+      templateKey: "zcg_committee_briefing",
+      templateVersion: "4",
+      model: "grounded-model"
+    },
+    currentTemplateKey: "zcg_committee_briefing",
+    currentTemplateVersion: "4",
+    currentModel: "grounded-model"
+  };
+
+  assert.deepEqual(await getGrantAnalysisReportFreshnessDetails(input, dependencies), {
+    status: "fresh",
+    evidenceStatus: "current",
+    evidenceRecordCount: 1,
+    changedEvidenceRecordCount: 0,
+    templateChanged: false,
+    modelChanged: false
+  });
+  assert.equal(queries.length, 1);
+  assert.doesNotMatch(queries[0], /indexed_at|application_id|grant_application_relationships|grant_application_participants/);
+
+  assert.deepEqual(
+    await getGrantAnalysisReportFreshnessDetails(
+      { ...input, currentTemplateVersion: "5" },
+      dependencies
+    ),
+    {
+      status: "stale",
+      evidenceStatus: "current",
+      evidenceRecordCount: 1,
+      changedEvidenceRecordCount: 0,
+      templateChanged: true,
+      modelChanged: false
+    }
+  );
+
+  const noSnapshot = await getGrantAnalysisReportFreshnessDetails(input, {
+    query: async <T extends Record<string, unknown>>() => ({ rows: [] as T[] })
+  });
+  assert.equal(noSnapshot.status, "unknown");
+  assert.equal(noSnapshot.evidenceStatus, "unknown");
+
+  const changedSnapshot = await getGrantAnalysisReportFreshnessDetails(input, {
+    query: async <T extends Record<string, unknown>>() => ({
+      rows: [{ ...matchingRows[0], current_content_hash: "summary-v2" }] as unknown as T[]
+    })
+  });
+  assert.equal(changedSnapshot.status, "stale");
+  assert.equal(changedSnapshot.evidenceStatus, "changed");
+  assert.equal(changedSnapshot.changedEvidenceRecordCount, 1);
 });
 
 test("only completed shared committee briefings with content are publicly viewable", () => {

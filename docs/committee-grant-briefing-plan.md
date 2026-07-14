@@ -252,7 +252,8 @@ authorized users, not public internet publication.
 - A committee member can generate a briefing from a grant detail page and leave the page while the
   existing async worker completes it.
 - Another authorized user can read the saved shared briefing and its exact evidence snapshot.
-- New or changed knowledge documents mark the report stale; regeneration creates a new version.
+- Changed or missing knowledge documents from the report's saved evidence snapshot mark the report
+  stale; unrelated corpus changes do not. Regeneration creates a new version.
 - The report includes current evidence, explicit relationships, reviewed team history, balanced
   similar-grant comparisons, missing-evidence warnings, and valid clickable citations.
 - A custom answer can remain temporary, be saved privately, or be shared according to permissions.
