@@ -15,7 +15,7 @@ The Phase 0 portable deployment path is CDK-managed AWS infrastructure:
 - Secrets Manager secrets for database credentials and Better Auth.
 - Lambda migration runner.
 - Lambda sync worker.
-- Disabled EventBridge schedule for future sync jobs.
+- EventBridge Scheduler source-refresh pipeline and knowledge-embedding schedule.
 - CloudWatch log groups and basic alarms.
 
 This is intentionally more complete than a static hosting setup. The prototype needs a private relational database, worker execution, secrets, and audit/security foundations from day one. Keeping those resources in one CDK stack makes the system easier to reproduce in another AWS account.
@@ -139,21 +139,28 @@ This avoids manual SQL in a new AWS account while keeping authorization in platf
 
 In local development without `SES_FROM_EMAIL`, auth codes are logged by the server process. In a deployed AWS account, verify an SES identity and set `SES_FROM_EMAIL` before expecting email delivery.
 
-## First sync-worker check
+## First corpus-refresh check
 
-The EventBridge schedule is disabled by default. Invoke the worker manually after migrations:
+The source-refresh schedule is enabled when workers are enabled. It starts a
+Step Functions pipeline every morning at 3:00 AM in the `America/New_York`
+timezone. GitHub issues and Forum topics are processed in bounded batches before
+reconciliation and a synchronous knowledge-index rebuild. The pipeline uses a
+finite database lease so duplicate schedule delivery or repeated Admin requests
+cannot overlap.
+Set the CDK context `enableSourceSyncSchedule=false` when a deployment must remain
+manual. Start the pipeline once after migrations to verify the path immediately:
 
 ```bash
-aws lambda invoke \
+aws stepfunctions start-execution \
   --profile TARGET_PROFILE \
-  --function-name SYNC_WORKER_FUNCTION_NAME \
-  --payload '{"source":"phase0-manual","dryRun":true}' \
-  /tmp/zcg-sync-output.json
-
-cat /tmp/zcg-sync-output.json
+  --state-machine-arn CORPUS_REFRESH_STATE_MACHINE_ARN \
+  --name "manual-refresh-$(date -u +%Y%m%dT%H%M%SZ)" \
+  --input '{"trigger":"manual","requestedAt":null,"requestedByPrincipalId":null}'
 ```
 
-Expected result includes a successful `syncRunId` and, when the snapshot bucket is configured, an S3 snapshot key.
+Expected output includes an execution ARN. The execution should finish in
+`SUCCEEDED`, with a completed `phase1-all` parent run and bounded child runs on
+the Telemetry page.
 
 ## Required follow-up before stakeholder use
 

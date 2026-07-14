@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   fetchCompleteForumTopic,
   groupForumTopicReferences,
+  mirrorForumUpdatesCategory,
   normalizeForumTopicUrl,
   parseForumTopicReference,
   type DiscoursePost
@@ -204,4 +205,126 @@ test("returns partial progress when a post batch exhausts retries", async () => 
   assert.equal(topic?.coverageCapped, false);
   assert.equal(topic?.missingPostIds.length, 25);
   assert.equal(topic?.fetchFailures.length, 1);
+});
+
+test("discovers normalized update topic URLs without fetching topic bodies", async () => {
+  const originalFetch = globalThis.fetch;
+  const requestedUrls: string[] = [];
+
+  globalThis.fetch = (async (input) => {
+    const url = new URL(String(input));
+    requestedUrls.push(url.toString());
+
+    assert.equal(url.pathname, "/c/grants/zomg-updates/34.json");
+    return jsonResponse({
+      topic_list: {
+        more_topics_url: null,
+        topics: [
+          { id: 901, slug: "july-grant-update", title: "July grant update" },
+          { id: 902, slug: "august-grant-update", title: "August grant update" },
+          { id: 903, slug: "september-grant-update", title: "September grant update" }
+        ]
+      }
+    });
+  }) as typeof fetch;
+
+  try {
+    const result = await mirrorForumUpdatesCategory({
+      discoveryOnly: true,
+      maxTopics: 2,
+      maxCategoryPages: 1
+    });
+
+    const selectedTopicUrls = [
+      "https://forum.zcashcommunity.com/t/july-grant-update/901",
+      "https://forum.zcashcommunity.com/t/august-grant-update/902"
+    ];
+
+    assert.equal(requestedUrls.length, 1);
+    assert.equal(result.records.length, 0);
+    assert.equal(result.rawPayload.discoveryOnly, true);
+    assert.equal(result.rawPayload.directUrlMode, false);
+    assert.deepEqual(result.rawPayload.selectedTopicUrls, selectedTopicUrls);
+    assert.deepEqual(result.rawPayload.urls, selectedTopicUrls);
+    assert.deepEqual(result.metadata?.selectedTopicUrls, selectedTopicUrls);
+    assert.equal(result.metadata?.topicCountSelected, 2);
+    assert.equal(result.metadata?.topicCountMirrored, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("reports an unavailable updates category as a blocking discovery failure", async () => {
+  const originalFetch = globalThis.fetch;
+
+  globalThis.fetch = (async () =>
+    new Response("Not found", {
+      status: 404,
+      statusText: "Not Found"
+    })) as typeof fetch;
+
+  try {
+    const result = await mirrorForumUpdatesCategory({
+      discoveryOnly: true,
+      maxCategoryPages: 3
+    });
+
+    assert.equal(result.metadata?.categoryFailureCount, 1);
+    assert.deepEqual(result.rawPayload.categoryFailures, [
+      {
+        url: "https://forum.zcashcommunity.com/c/grants/zomg-updates/34.json",
+        error: "Updates category unavailable or not public.",
+        kind: "error"
+      }
+    ]);
+    assert.deepEqual(result.rawPayload.urls, []);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("keeps direct forum update URL mode fetching topic bodies", async () => {
+  const originalFetch = globalThis.fetch;
+  const topicUrl = "https://forum.zcashcommunity.com/t/july-grant-update/901";
+  const requestedUrls: string[] = [];
+
+  globalThis.fetch = (async (input) => {
+    const url = new URL(String(input));
+    requestedUrls.push(url.toString());
+    assert.equal(url.pathname, "/t/july-grant-update/901.json");
+
+    return jsonResponse({
+      id: 901,
+      slug: "july-grant-update",
+      title: "July grant update",
+      posts_count: 1,
+      post_stream: {
+        stream: [90101],
+        posts: [{
+          id: 90101,
+          topic_id: 901,
+          post_number: 1,
+          username: "grant-author",
+          cooked: "<p>Milestone complete.</p>"
+        }]
+      }
+    });
+  }) as typeof fetch;
+
+  try {
+    const result = await mirrorForumUpdatesCategory({
+      discoveryOnly: true,
+      urls: [`${topicUrl}/1?ignored=true`]
+    });
+
+    assert.equal(requestedUrls.length, 1);
+    assert.equal(result.rawPayload.discoveryOnly, false);
+    assert.equal(result.rawPayload.directUrlMode, true);
+    assert.deepEqual(result.rawPayload.selectedTopicUrls, [topicUrl]);
+    assert.equal(result.records.length, 1);
+    assert.equal(result.records[0]?.sourceId, `${topicUrl}/1`);
+    assert.equal(result.records[0]?.summary, "Milestone complete.");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });

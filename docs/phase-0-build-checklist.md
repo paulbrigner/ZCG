@@ -51,7 +51,7 @@ This checklist turns the prototype development plan into implementation-facing w
 
 - [x] Add S3 snapshot writer scaffold.
 - [x] Add scheduled sync worker Lambda scaffold.
-- [x] Keep EventBridge sync schedule disabled by default.
+- [x] Run the daily 3:00 AM Eastern source refresh through bounded source batches, reconciliation, and knowledge indexing.
 - [x] Add worker-side Secrets Manager database credential loading.
 - [x] Verify migration-runner handler applies/skips migrations against local Postgres.
 - [x] Verify sync-worker handler records a completed DB-side sync run and audit event locally.

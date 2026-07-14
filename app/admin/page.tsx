@@ -1,5 +1,6 @@
 import type { CSSProperties } from "react";
 import Link from "next/link";
+import { CorpusRefreshButton } from "./corpus-refresh-button";
 import {
   getAdminDashboard,
   normalizeApplicationFilter,
@@ -8,8 +9,10 @@ import {
   normalizeApplicationSearch,
   normalizeApplicationStatus,
   normalizeGitHubIssueState,
+  normalizeWorklistSortDirection,
   type ApplicationFilter,
-  type GrantApplicationRow
+  type GrantApplicationRow,
+  type WorklistSortDirection
 } from "@/lib/admin/dashboard";
 import { isPublicPrototypePrincipal, principalHasRole, requirePermission } from "@/lib/authorization";
 import { MetricHelp, MetricLabel } from "./metric-help";
@@ -95,6 +98,18 @@ function dateText(value: string | null) {
         day: "numeric",
         hour: "numeric",
         minute: "2-digit"
+      });
+}
+
+function calendarDateText(value: string) {
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime())
+    ? "an unknown date"
+    : parsed.toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+        timeZone: "America/New_York"
       });
 }
 
@@ -184,6 +199,7 @@ function adminHref(params: {
   applicationLabels?: string[];
   excludedApplicationLabels?: string[];
   applicationPage?: number;
+  worklistSortDirection?: WorklistSortDirection;
 }) {
   const searchParams = new URLSearchParams();
 
@@ -215,6 +231,10 @@ function adminHref(params: {
 
   if (params.applicationPage && params.applicationPage > 1) {
     searchParams.set("applicationPage", String(params.applicationPage));
+  }
+
+  if (params.worklistSortDirection === "desc") {
+    searchParams.set("worklistOrder", params.worklistSortDirection);
   }
 
   const queryString = searchParams.toString();
@@ -302,6 +322,7 @@ export default async function AdminPage({
     applicationLabels?: string | string[];
     excludedApplicationLabels?: string | string[];
     applicationPage?: string | string[];
+    worklistOrder?: string | string[];
     dashboardView?: string | string[];
   }>;
 }) {
@@ -347,6 +368,15 @@ export default async function AdminPage({
             <Link className="table-link" href="/admin/knowledge">Open grant knowledge</Link>
           </article>
           <article className="card">
+            <h2>Source corpus</h2>
+            <p>
+              Fetch current GitHub, Google Sheet, and Forum records, reconcile applications, and rebuild the knowledge
+              index.
+            </p>
+            <CorpusRefreshButton />
+            <Link className="table-link" href="/admin/telemetry">View refresh telemetry</Link>
+          </article>
+          <article className="card">
             <h2>Grants dashboard</h2>
             <p>Return to application search, source telemetry, and grant evidence.</p>
             <Link className="table-link" href="/dashboard">Open dashboard</Link>
@@ -363,6 +393,7 @@ export default async function AdminPage({
   const activeApplicationLabels = normalizeApplicationLabels(resolvedSearchParams.applicationLabels);
   const activeExcludedApplicationLabels = normalizeApplicationLabels(resolvedSearchParams.excludedApplicationLabels);
   const activeApplicationPage = normalizeApplicationPage(resolvedSearchParams.applicationPage);
+  const activeWorklistSortDirection = normalizeWorklistSortDirection(resolvedSearchParams.worklistOrder);
   const dashboard = await getAdminDashboard({
     applicationFilter: activeApplicationFilter,
     applicationSearch: activeApplicationSearch,
@@ -370,7 +401,8 @@ export default async function AdminPage({
     githubIssueState: activeGitHubIssueState,
     applicationLabels: activeApplicationLabels,
     excludedApplicationLabels: activeExcludedApplicationLabels,
-    applicationPage: activeApplicationPage
+    applicationPage: activeApplicationPage,
+    worklistSortDirection: activeWorklistSortDirection
   });
   const totals = dashboard.applicationTotals;
   const pagination = dashboard.applicationPagination;
@@ -516,6 +548,9 @@ export default async function AdminPage({
                         <td>{run.source}</td>
                         <td>
                           <span className={`badge ${run.status}`}>{run.status}</span>
+                          {!publicViewer && run.error_summary ? (
+                            <span className="subtle">{run.error_summary}</span>
+                          ) : null}
                         </td>
                         <td>{numberText(run.records_seen)}</td>
                         <td>{numberText(Number(run.records_created) + Number(run.records_updated))}</td>
@@ -661,7 +696,29 @@ export default async function AdminPage({
             <p className="eyebrow">Committee worklist</p>
             <h2 id="under-review-heading">Applications under review</h2>
           </div>
-          <span className="under-review-count">{numberText(dashboard.underReviewApplications.length)}</span>
+          <div className="under-review-heading-tools">
+            <span className="under-review-count">{numberText(dashboard.underReviewApplications.length)}</span>
+            <Link
+              aria-label={`Reverse days outstanding order to ${
+                activeWorklistSortDirection === "asc" ? "most to least" : "least to most"
+              }`}
+              className="under-review-sort"
+              href={adminHref({
+                applicationFilter: activeApplicationFilter,
+                applicationSearch: activeApplicationSearch,
+                applicationStatus: activeApplicationStatus,
+                githubIssueState: activeGitHubIssueState,
+                applicationLabels: activeApplicationLabels,
+                excludedApplicationLabels: activeExcludedApplicationLabels,
+                applicationPage: activeApplicationPage,
+                worklistSortDirection: activeWorklistSortDirection === "asc" ? "desc" : "asc"
+              })}
+              title="Calendar days since the application was opened on GitHub; falls back to when it was first added to this system."
+            >
+              <span>Days outstanding</span>
+              <strong>{activeWorklistSortDirection === "asc" ? "Least to most ↑" : "Most to least ↓"}</strong>
+            </Link>
+          </div>
         </div>
         {dashboard.underReviewApplications.length ? (
           <div className="under-review-list">
@@ -673,10 +730,18 @@ export default async function AdminPage({
                   </Link>
                   <span>{application.applicant_name ?? "Applicant not recorded"}</span>
                 </div>
+                <div
+                  className="under-review-age"
+                  title={`Calendar days since ${
+                    application.outstanding_basis === "github_created_at"
+                      ? "the application was opened on GitHub"
+                      : "the application was first added to this system"
+                  } on ${calendarDateText(application.outstanding_since)}.`}
+                >
+                  <strong>{numberText(application.days_outstanding)}</strong>
+                  <span>{application.days_outstanding === 1 ? "day outstanding" : "days outstanding"}</span>
+                </div>
                 <div className="under-review-actions">
-                  <Link className="under-review-link" href={`/admin/grants/${application.id}`}>
-                    View grant
-                  </Link>
                   {application.latest_briefing_id ? (
                     <Link
                       className="under-review-link primary"

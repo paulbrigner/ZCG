@@ -22,6 +22,11 @@ export type GitHubMirrorConfig = {
   owner?: string;
   repo?: string;
   token?: string;
+  /** One-based issue-list page at which this mirror invocation should begin. */
+  startPage?: number;
+  /** Number of GitHub issue-list entries requested per page (maximum 100). */
+  pageSize?: number;
+  /** Maximum number of issue-list pages to include, starting at startPage. */
   maxPages?: number;
   commentMaxPages?: number;
 };
@@ -40,6 +45,8 @@ export type ForumMirrorConfig = {
   urls?: string[];
   skipUrls?: string[];
   skipExistingSourceRecords?: boolean;
+  /** Discover update-category topic URLs without fetching individual topic bodies. Ignored in direct URL mode. */
+  discoveryOnly?: boolean;
   updatesCategoryUrl?: string;
   maxCategoryPages?: number;
   maxTopics?: number;

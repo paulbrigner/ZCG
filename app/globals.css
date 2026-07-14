@@ -707,6 +707,36 @@ button:disabled {
   margin: 4px 0 0;
 }
 
+.under-review-heading-tools {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.under-review-sort {
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  display: inline-flex;
+  font-size: 11px;
+  font-weight: 750;
+  gap: 6px;
+  padding: 7px 9px;
+}
+
+.under-review-sort strong {
+  color: #1d4ed8;
+  font-weight: 850;
+}
+
+.under-review-sort:hover {
+  border-color: #93c5fd;
+}
+
 .under-review-count,
 .application-disclosure-count {
   align-items: center;
@@ -735,7 +765,7 @@ button:disabled {
   border-bottom: 1px solid var(--line);
   display: grid;
   gap: 16px;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   min-width: 0;
   padding: 14px 0;
 }
@@ -765,10 +795,24 @@ button:disabled {
 }
 
 .under-review-identity > span,
+.under-review-age > span,
 .under-review-unavailable,
 .under-review-empty {
   color: var(--muted);
   font-size: 12px;
+}
+
+.under-review-age {
+  display: grid;
+  gap: 1px;
+  justify-items: end;
+  min-width: 90px;
+}
+
+.under-review-age > strong {
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 850;
 }
 
 .under-review-actions {
@@ -795,6 +839,7 @@ button:disabled {
 }
 
 .under-review-title:focus-visible,
+.under-review-sort:focus-visible,
 .under-review-link:focus-visible,
 .application-disclosure > summary:focus-visible {
   outline: 3px solid rgba(37, 99, 235, 0.22);
@@ -2024,6 +2069,10 @@ button:disabled {
   .under-review-item {
     align-items: start;
     grid-template-columns: 1fr;
+  }
+
+  .under-review-age {
+    justify-items: start;
   }
 
   .under-review-actions {

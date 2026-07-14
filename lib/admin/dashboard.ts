@@ -2,10 +2,12 @@ import { query } from "@/lib/db";
 
 export const applicationFilters = ["all", "matched", "github_only", "sheet_only", "needs_review"] as const;
 export const githubIssueStates = ["open", "closed", "none"] as const;
+export const worklistSortDirections = ["asc", "desc"] as const;
 const applicationPageSize = 20;
 
 export type ApplicationFilter = (typeof applicationFilters)[number];
 export type GitHubIssueStateFilter = (typeof githubIssueStates)[number];
+export type WorklistSortDirection = (typeof worklistSortDirections)[number];
 
 export type SyncRunRow = {
   id: string;
@@ -103,6 +105,9 @@ export type UnderReviewApplicationRow = {
   id: string;
   title: string;
   applicant_name: string | null;
+  outstanding_since: string;
+  outstanding_basis: "github_created_at" | "canonical_created_at";
+  days_outstanding: number;
   latest_briefing_id: string | null;
   latest_briefing_title: string | null;
 };
@@ -247,6 +252,15 @@ export function normalizeApplicationPage(value: string | string[] | undefined) {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : 1;
 }
 
+export function normalizeWorklistSortDirection(
+  value: string | string[] | undefined
+): WorklistSortDirection {
+  const candidate = Array.isArray(value) ? value[0] : value;
+  return worklistSortDirections.includes(candidate as WorklistSortDirection)
+    ? (candidate as WorklistSortDirection)
+    : "asc";
+}
+
 const emptyApplicationTotals: ApplicationTotalsRow = {
   total_applications: "0",
   total_grants: "0",
@@ -366,7 +380,8 @@ export async function getAdminDashboard({
   applicationStatus = "",
   githubIssueState = "",
   applicationLabels = [],
-  excludedApplicationLabels = []
+  excludedApplicationLabels = [],
+  worklistSortDirection = "asc"
 }: {
   applicationFilter?: ApplicationFilter;
   applicationPage?: number;
@@ -375,6 +390,7 @@ export async function getAdminDashboard({
   githubIssueState?: string;
   applicationLabels?: string[];
   excludedApplicationLabels?: string[];
+  worklistSortDirection?: WorklistSortDirection;
 } = {}) {
   const whereClause = applicationFilterWhere[applicationFilter];
   const search = normalizeApplicationSearch(applicationSearch);
@@ -382,6 +398,10 @@ export async function getAdminDashboard({
   const issueState = normalizeGitHubIssueState(githubIssueState);
   const excludedLabels = normalizeApplicationLabels(excludedApplicationLabels);
   const labels = normalizeApplicationLabels(applicationLabels).filter((label) => !excludedLabels.includes(label));
+  const worklistOrder = normalizeWorklistSortDirection(worklistSortDirection);
+  const worklistOrderSql = worklistOrder === "desc"
+    ? "days_outstanding desc, coalesce(github_issue_source.created_at, ga.created_at) asc, ga.title"
+    : "days_outstanding asc, coalesce(github_issue_source.created_at, ga.created_at) desc, ga.title";
   const page = Math.max(1, applicationPage);
   const searchWhere = applicationSearchWhere(search);
   const statusWhere = applicationStatusWhere(status, searchWhere.values.length + 1);
@@ -528,9 +548,27 @@ export async function getAdminDashboard({
       `select ga.id::text,
               ga.title,
               ga.applicant_name,
+              coalesce(github_issue_source.created_at, ga.created_at)::text as outstanding_since,
+              case
+                when github_issue_source.created_at is not null then 'github_created_at'
+                else 'canonical_created_at'
+              end as outstanding_basis,
+              greatest(
+                0,
+                (current_timestamp at time zone 'America/New_York')::date
+                  - (coalesce(github_issue_source.created_at, ga.created_at) at time zone 'America/New_York')::date
+              ) as days_outstanding,
               latest_briefing.id as latest_briefing_id,
               latest_briefing.title as latest_briefing_title
          from grant_applications ga
+         left join lateral (
+           select min(nullif(sr_created.raw_payload->>'created_at', '')::timestamptz) as created_at
+             from source_links sl_created
+             join source_records sr_created on sr_created.id = sl_created.source_record_id
+            where sl_created.canonical_type = 'grant_application'
+              and sl_created.canonical_id = ga.id
+              and sr_created.source_kind = 'github_issue'
+         ) github_issue_source on true
          left join lateral (
            select gar.id::text,
                   gar.title
@@ -545,8 +583,7 @@ export async function getAdminDashboard({
             limit 1
          ) latest_briefing on true
         where ga.normalized_status = 'under_review'
-        order by ga.updated_at desc,
-                 ga.title`
+        order by ${worklistOrderSql}`
     ),
     query<{ total_results: string }>(
       `select count(*)::text as total_results

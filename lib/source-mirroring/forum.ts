@@ -734,9 +734,11 @@ export async function mirrorForumTopics(config: ForumMirrorConfig = {}): Promise
   const topicReferenceGroups = groupForumTopicReferences(discoveredUrls).slice(0, maxTopicCount);
   const urls = topicReferenceGroups.flat().map((reference) => reference.referencedUrl);
   const records: SourceMirrorRecord[] = [];
-  const failures: Array<{ url: string; error: string }> = [];
+  const failures: Array<{ url: string; error: string; kind: "unavailable" | "error" | "rate_limit" }> = [];
   let topicsMirrored = 0;
   let topicsWithPartialCoverage = 0;
+  let topicsUnavailable = 0;
+  let topicErrors = 0;
   let rateLimitedAt: string | null = null;
 
   for (const [index, references] of topicReferenceGroups.entries()) {
@@ -750,7 +752,8 @@ export async function mirrorForumTopics(config: ForumMirrorConfig = {}): Promise
       const topic = await fetchForumTopic(references, maxPostCount);
 
       if (!topic) {
-        failures.push({ url, error: "Topic unavailable or not public." });
+        failures.push({ url, error: "Topic unavailable or not public.", kind: "unavailable" });
+        topicsUnavailable += 1;
         continue;
       }
 
@@ -763,7 +766,12 @@ export async function mirrorForumTopics(config: ForumMirrorConfig = {}): Promise
         break;
       }
     } catch (error) {
-      failures.push({ url, error: error instanceof Error ? error.message : String(error) });
+      failures.push({
+        url,
+        error: error instanceof Error ? error.message : String(error),
+        kind: error instanceof ForumRateLimitError ? "rate_limit" : "error"
+      });
+      topicErrors += 1;
 
       if (error instanceof ForumRateLimitError) {
         rateLimitedAt = url;
@@ -790,6 +798,8 @@ export async function mirrorForumTopics(config: ForumMirrorConfig = {}): Promise
       topicCountMirrored: topicsMirrored,
       topicCountPartial: topicsWithPartialCoverage,
       topicCountFailed: failures.length,
+      topicCountUnavailable: topicsUnavailable,
+      topicErrorCount: topicErrors,
       topicCountSkippedAfterRateLimit,
       maxTopics: maxTopicCount,
       maxPostsPerLinkedTopic: maxPostCount,
@@ -807,6 +817,8 @@ export async function mirrorForumTopics(config: ForumMirrorConfig = {}): Promise
       topicCountMirrored: topicsMirrored,
       topicCountPartial: topicsWithPartialCoverage,
       topicCountFailed: failures.length,
+      topicCountUnavailable: topicsUnavailable,
+      topicErrorCount: topicErrors,
       topicCountSkippedAfterRateLimit,
       maxTopics: maxTopicCount,
       maxPostsPerLinkedTopic: maxPostCount,
@@ -835,10 +847,12 @@ export async function mirrorForumUpdatesCategory(config: ForumMirrorConfig = {})
         )
       ]
     : null;
-  const categoryFailures: Array<{ url: string; error: string }> = [];
-  const topicFailures: Array<{ url: string; error: string }> = [];
+  const categoryFailures: Array<{ url: string; error: string; kind: "error" | "rate_limit" }> = [];
+  const topicFailures: Array<{ url: string; error: string; kind: "unavailable" | "error" | "rate_limit" }> = [];
   let moreTopicsUrl: string | null = null;
   let rateLimitedAt: string | null = null;
+  let topicsUnavailable = 0;
+  let topicErrors = 0;
 
   if (directTopicUrls) {
     topicUrls.push(...directTopicUrls);
@@ -852,6 +866,16 @@ export async function mirrorForumUpdatesCategory(config: ForumMirrorConfig = {})
 
       try {
         const category = await fetchJson<DiscourseCategoryResponse>(url);
+
+        if (!category) {
+          categoryFailures.push({
+            url,
+            error: "Updates category unavailable or not public.",
+            kind: "error"
+          });
+          break;
+        }
+
         const topics = category?.topic_list?.topics ?? [];
         moreTopicsUrl = category?.topic_list?.more_topics_url ?? null;
 
@@ -867,7 +891,11 @@ export async function mirrorForumUpdatesCategory(config: ForumMirrorConfig = {})
           break;
         }
       } catch (error) {
-        categoryFailures.push({ url, error: error instanceof Error ? error.message : String(error) });
+        categoryFailures.push({
+          url,
+          error: error instanceof Error ? error.message : String(error),
+          kind: error instanceof ForumRateLimitError ? "rate_limit" : "error"
+        });
 
         if (error instanceof ForumRateLimitError) {
           rateLimitedAt = url;
@@ -881,11 +909,13 @@ export async function mirrorForumUpdatesCategory(config: ForumMirrorConfig = {})
   const selectedUrls = discoveredUrls.filter((url) => !skippedTopicUrls.has(url));
   const topicReferenceGroups = groupForumTopicReferences(selectedUrls).slice(0, maxTopicCount);
   const urls = topicReferenceGroups.flat().map((reference) => reference.referencedUrl);
+  const selectedTopicUrls = topicReferenceGroups.map((references) => references[0]!.canonicalUrl);
+  const discoveryOnly = Boolean(config.discoveryOnly && !directTopicUrls);
   const records: SourceMirrorRecord[] = [];
   let topicsMirrored = 0;
   let topicsWithPartialCoverage = 0;
 
-  for (const [index, references] of topicReferenceGroups.entries()) {
+  for (const [index, references] of discoveryOnly ? [] : topicReferenceGroups.entries()) {
     if (index > 0 && delayMs > 0) {
       await sleep(delayMs);
     }
@@ -896,7 +926,8 @@ export async function mirrorForumUpdatesCategory(config: ForumMirrorConfig = {})
       const topic = await fetchForumTopic(references, maxPostCount);
 
       if (!topic) {
-        topicFailures.push({ url, error: "Topic unavailable or not public." });
+        topicFailures.push({ url, error: "Topic unavailable or not public.", kind: "unavailable" });
+        topicsUnavailable += 1;
         continue;
       }
 
@@ -918,7 +949,12 @@ export async function mirrorForumUpdatesCategory(config: ForumMirrorConfig = {})
         break;
       }
     } catch (error) {
-      topicFailures.push({ url, error: error instanceof Error ? error.message : String(error) });
+      topicFailures.push({
+        url,
+        error: error instanceof Error ? error.message : String(error),
+        kind: error instanceof ForumRateLimitError ? "rate_limit" : "error"
+      });
+      topicErrors += 1;
 
       if (error instanceof ForumRateLimitError) {
         rateLimitedAt = url;
@@ -935,6 +971,7 @@ export async function mirrorForumUpdatesCategory(config: ForumMirrorConfig = {})
       fetchedAt,
       categoryUrl,
       directUrlMode: Boolean(directTopicUrls),
+      discoveryOnly,
       topicCountDiscovered: discoveredUrls.length,
       topicCountSelected: topicReferenceGroups.length,
       referenceCountSelected: urls.length,
@@ -942,6 +979,8 @@ export async function mirrorForumUpdatesCategory(config: ForumMirrorConfig = {})
       topicCountMirrored: topicsMirrored,
       topicCountPartial: topicsWithPartialCoverage,
       topicCountFailed: topicFailures.length,
+      topicCountUnavailable: topicsUnavailable,
+      topicErrorCount: topicErrors,
       maxTopics: maxTopicCount,
       maxCategoryPages: maxPages,
       maxPostsPerUpdatesTopic: maxPostCount,
@@ -949,6 +988,7 @@ export async function mirrorForumUpdatesCategory(config: ForumMirrorConfig = {})
       moreTopicsUrl,
       rateLimitedAt,
       urls,
+      selectedTopicUrls,
       categoryFailures,
       topicFailures
     },
@@ -957,6 +997,7 @@ export async function mirrorForumUpdatesCategory(config: ForumMirrorConfig = {})
       fetchedAt,
       categoryUrl,
       directUrlMode: Boolean(directTopicUrls),
+      discoveryOnly,
       topicCountDiscovered: discoveredUrls.length,
       topicCountSelected: topicReferenceGroups.length,
       referenceCountSelected: urls.length,
@@ -964,12 +1005,15 @@ export async function mirrorForumUpdatesCategory(config: ForumMirrorConfig = {})
       topicCountMirrored: topicsMirrored,
       topicCountPartial: topicsWithPartialCoverage,
       topicCountFailed: topicFailures.length,
+      topicCountUnavailable: topicsUnavailable,
+      topicErrorCount: topicErrors,
       categoryFailureCount: categoryFailures.length,
       maxTopics: maxTopicCount,
       maxCategoryPages: maxPages,
       maxPostsPerUpdatesTopic: maxPostCount,
       fetchDelayMs: delayMs,
       rateLimitedAt,
+      selectedTopicUrls,
       recordCount: records.length
     }
   };

@@ -134,6 +134,7 @@ export function KnowledgeSearchPanel({
   const [activeJob, setActiveJob] = useState<{ jobId: string; status: KnowledgeAnswerJobStatus } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<GrantKnowledgeSearchResponse | null>(null);
+  const [refreshState, setRefreshState] = useState<IndexState>({ status: "idle", message: "" });
   const [indexState, setIndexState] = useState<IndexState>({ status: "idle", message: "" });
   const [embeddingState, setEmbeddingState] = useState<IndexState>({ status: "idle", message: "" });
   const runTokenRef = useRef(0);
@@ -331,6 +332,38 @@ export function KnowledgeSearchPanel({
     }
   }
 
+  async function refreshCorpus() {
+    setRefreshState({ status: "running", message: "Starting a full corpus refresh." });
+
+    try {
+      const response = await fetch("/api/admin/knowledge/refresh", { method: "POST" });
+      const body = await responseJson(response) as {
+        accepted?: boolean;
+        message?: string;
+      } | null;
+
+      if (!response.ok) {
+        throw new Error(errorMessage(body, "Corpus refresh could not be started."));
+      }
+
+      if (!body?.accepted) {
+        throw new Error("The server did not accept the corpus refresh request.");
+      }
+
+      setRefreshState({
+        status: "done",
+        message:
+          body.message ??
+          "Corpus refresh started. Source mirroring, reconciliation, and knowledge indexing will continue in the background."
+      });
+    } catch (refreshError) {
+      setRefreshState({
+        status: "error",
+        message: refreshError instanceof Error ? refreshError.message : "Corpus refresh could not be started."
+      });
+    }
+  }
+
   async function rebuildEmbeddings() {
     setEmbeddingState({ status: "running", message: "Embedding the next grant knowledge batch with BGE-M3." });
 
@@ -440,9 +473,17 @@ export function KnowledgeSearchPanel({
         </aside>
         {canIndex ? (
           <details className="maintenance-callout knowledge-maintenance">
-            <summary>Index maintenance</summary>
+            <summary>Corpus maintenance</summary>
             <div className="result-actions">
-              <button disabled={indexState.status === "running"} onClick={rebuildIndex} type="button">
+              <button disabled={refreshState.status === "running"} onClick={refreshCorpus} type="button">
+                {refreshState.status === "running" ? "Starting refresh" : "Refresh corpus"}
+              </button>
+              <button
+                className="ghost-button"
+                disabled={indexState.status === "running"}
+                onClick={rebuildIndex}
+                type="button"
+              >
                 {indexState.status === "running" ? "Indexing" : "Rebuild index"}
               </button>
               <button
@@ -455,10 +496,14 @@ export function KnowledgeSearchPanel({
               </button>
             </div>
             <p>
-              Rebuild index regenerates the searchable text documents from canonical grant applications and their linked
-              GitHub, Google Sheet, Forum, label, and reconciliation evidence. Embed next batch writes BGE-M3 vector
-              embeddings for indexed documents that are new, missing, or stale. Keyword search can use rebuilt text
-              immediately; semantic and hybrid retrieval are strongest after the embedding backlog is caught up.
+              Refresh corpus mirrors all configured public sources, reconciles their records into canonical grant
+              applications, and then rebuilds the knowledge index. Use it when a new or changed application is missing.
+            </p>
+            <p>
+              Rebuild index only regenerates searchable documents from canonical applications already in this system; it
+              does not fetch new or changed source records. Embed next batch writes BGE-M3 vector embeddings for indexed
+              documents that are new, missing, or stale. Keyword search can use rebuilt text immediately; semantic and
+              hybrid retrieval are strongest after the embedding backlog is caught up.
             </p>
             <p>
               The scheduled embedding worker continues catching up in the background, so manual embedding is mainly for
@@ -468,6 +513,9 @@ export function KnowledgeSearchPanel({
         ) : null}
         {retrievalModeNote ? <p className="form-status neutral-status">{retrievalModeNote}</p> : null}
         {answerModeNote ? <p className="form-status neutral-status">{answerModeNote}</p> : null}
+        {refreshState.message ? (
+          <p className={refreshState.status === "error" ? "form-error" : "form-status"}>{refreshState.message}</p>
+        ) : null}
         {indexState.message ? (
           <p className={indexState.status === "error" ? "form-error" : "form-status"}>{indexState.message}</p>
         ) : null}

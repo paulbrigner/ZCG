@@ -59,6 +59,7 @@ Default behavior:
 - CloudWatch log retention defaults to 7 days.
 - Nonessential alarms are disabled.
 - Lambda workers remain deployed.
+- The low-volume Step Functions pipeline for the daily 3:00 AM Eastern source refresh and the hourly embedding catch-up remain enabled.
 - One NAT gateway remains deployed because the current sync worker needs public
   internet egress for GitHub and Google Sheet mirroring.
 

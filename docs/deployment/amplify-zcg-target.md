@@ -57,10 +57,12 @@ Secrets should live in Secrets Manager or service-managed secrets. Avoid copying
    - `DB_CLUSTER_ARN=<DatabaseClusterArn output>`
    - `DB_SECRET_ARN=<DatabaseSecretArn output>`
    - `DB_NAME=zcg`
+   - `ZCG_CORPUS_REFRESH_STATE_MACHINE_ARN=<CorpusRefreshStateMachineArn output>`
+   - `ZCG_KNOWLEDGE_INDEX_WORKER_FUNCTION_NAME=<KnowledgeIndexWorkerFunctionName output>`
    - `BETTER_AUTH_URL=https://zcg.pgpz.org`
    - `BETTER_AUTH_SECRET=<Secrets Manager-backed or generated strong secret>`
    - `BOOTSTRAP_ADMIN_EMAILS=<initial admin emails>`
-10. Verify `/api/health/db`, Better Auth sign-in, `/dashboard`, and `/api/admin/source-records`.
+10. Verify `/api/health/db`, Better Auth sign-in, `/dashboard`, `/api/admin/source-records`, and an Administrator-triggered **Refresh corpus** run.
 11. Create and associate a CloudFront-scope WAF web ACL before wider stakeholder access if public exposure increases.
 
 ## Phase 1 implication

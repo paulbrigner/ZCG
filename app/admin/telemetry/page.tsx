@@ -354,7 +354,10 @@ export default async function TelemetryPage() {
                 {telemetry.syncRuns.map((run) => (
                   <tr key={run.id}>
                     <td>{run.source}</td>
-                    <td><span className={`badge ${run.status}`}>{run.status}</span></td>
+                    <td>
+                      <span className={`badge ${run.status}`}>{run.status}</span>
+                      {run.error_summary ? <span className="subtle">{run.error_summary}</span> : null}
+                    </td>
                     <td>{numberText(run.records_seen)}</td>
                     <td>{numberText(Number(run.records_created) + Number(run.records_updated))}</td>
                     <td>{dateText(run.completed_at)}</td>

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { query } from "../db";
 import {
   applyManualReconciliationDecisions,
@@ -205,6 +206,158 @@ export type ReconciliationRunResult = {
   unmatchedGitHubApplications: number;
   unmatchedSheetProjects: number;
 };
+
+export class ReconciliationBusyError extends Error {
+  readonly busy = true;
+  readonly lockedUntil: string | null;
+
+  constructor(lockedUntil: string | null = null) {
+    super(
+      lockedUntil
+        ? `Grant reconciliation is already running (lease expires at ${lockedUntil}).`
+        : "Grant reconciliation is already running."
+    );
+    this.name = "ReconciliationBusyError";
+    this.lockedUntil = lockedUntil;
+  }
+}
+
+type ReconciliationLeaseQueryResult = {
+  rowCount: number | null;
+  rows: Array<Record<string, unknown>>;
+};
+
+type ReconciliationLeaseQueryRunner = (
+  text: string,
+  values?: readonly unknown[]
+) => Promise<ReconciliationLeaseQueryResult>;
+
+type ReconciliationLeaseState = "completed" | "failed";
+
+const grantReconciliationLeaseKey = "zcg:grant-reconciliation:v1";
+const grantReconciliationLeaseScope = "grant_reconciliation";
+const grantReconciliationLeaseMinutes = 30;
+
+function leaseTimestamp(value: unknown) {
+  if (typeof value === "string") {
+    return value;
+  }
+
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value.toISOString();
+  }
+
+  return null;
+}
+
+async function acquireGrantReconciliationLease(
+  runQuery: ReconciliationLeaseQueryRunner,
+  ownerId: string
+): Promise<{ acquired: boolean; lockedUntil: string | null }> {
+  const acquired = await runQuery(
+    `insert into idempotency_keys (key, scope, locked_until, result, created_at, updated_at)
+     values (
+       $1,
+       $2,
+       now() + ($3::integer * interval '1 minute'),
+       jsonb_build_object(
+         'ownerId', $4::text,
+         'state', 'running',
+         'acquiredAt', now()
+       ),
+       now(),
+       now()
+     )
+     on conflict (key) do update
+       set scope = excluded.scope,
+           locked_until = excluded.locked_until,
+           result = excluded.result,
+           updated_at = now()
+       where idempotency_keys.locked_until is null
+          or idempotency_keys.locked_until <= now()
+     returning locked_until`,
+    [
+      grantReconciliationLeaseKey,
+      grantReconciliationLeaseScope,
+      grantReconciliationLeaseMinutes,
+      ownerId
+    ]
+  );
+
+  if (acquired.rows.length) {
+    return {
+      acquired: true,
+      lockedUntil: leaseTimestamp(acquired.rows[0]?.locked_until)
+    };
+  }
+
+  const current = await runQuery(
+    `select locked_until
+       from idempotency_keys
+      where key = $1`,
+    [grantReconciliationLeaseKey]
+  );
+
+  return {
+    acquired: false,
+    lockedUntil: leaseTimestamp(current.rows[0]?.locked_until)
+  };
+}
+
+async function releaseGrantReconciliationLease(
+  runQuery: ReconciliationLeaseQueryRunner,
+  ownerId: string,
+  state: ReconciliationLeaseState
+) {
+  const released = await runQuery(
+    `update idempotency_keys
+        set locked_until = null,
+            result = coalesce(result, '{}'::jsonb) || jsonb_build_object(
+              'ownerId', $2::text,
+              'state', $3::text,
+              'releasedAt', now()
+            ),
+            updated_at = now()
+      where key = $1
+        and result->>'ownerId' = $2::text
+      returning key`,
+    [grantReconciliationLeaseKey, ownerId, state]
+  );
+
+  return Boolean(released.rowCount || released.rows.length);
+}
+
+async function withGrantReconciliationLease<T>(
+  work: () => Promise<T>,
+  options: {
+    runQuery?: ReconciliationLeaseQueryRunner;
+    ownerId?: string;
+  } = {}
+): Promise<T> {
+  const runQuery: ReconciliationLeaseQueryRunner = options.runQuery ?? query;
+  const ownerId = options.ownerId ?? randomUUID();
+  const lease = await acquireGrantReconciliationLease(runQuery, ownerId);
+
+  if (!lease.acquired) {
+    throw new ReconciliationBusyError(lease.lockedUntil);
+  }
+
+  let state: ReconciliationLeaseState = "failed";
+
+  try {
+    const result = await work();
+    state = "completed";
+    return result;
+  } finally {
+    try {
+      await releaseGrantReconciliationLease(runQuery, ownerId, state);
+    } catch (error) {
+      // The lease is finite, so a transient release failure cannot deadlock future runs.
+      // Preserve the reconciliation result/error rather than masking it with cleanup failure.
+      console.error("Failed to release the grant reconciliation lease", error);
+    }
+  }
+}
 
 const generatedBy = "grant_reconciliation_v1";
 const sourceRecordBatchSize = 10;
@@ -1601,7 +1754,7 @@ async function deleteMatchedHistoricalRegistryApplications(matchedHistoricalKeys
   );
 }
 
-export async function runGrantReconciliation(): Promise<ReconciliationRunResult> {
+async function performGrantReconciliation(): Promise<ReconciliationRunResult> {
   const [githubRecords, githubCommentRecords, sheetRecords] = await Promise.all([
     fetchSourceRecords("github_issue"),
     fetchSourceRecords("github_issue_comment"),
@@ -2119,9 +2272,19 @@ export async function runGrantReconciliation(): Promise<ReconciliationRunResult>
   return counts;
 }
 
+export async function runGrantReconciliation(): Promise<ReconciliationRunResult> {
+  return withGrantReconciliationLease(performGrantReconciliation);
+}
+
 export const grantReconciliationTestHooks = {
+  acquireGrantReconciliationLease,
   deleteGrantsForUnfundedProcessedApplications,
+  grantReconciliationLeaseKey,
+  grantReconciliationLeaseMinutes,
+  grantReconciliationLeaseScope,
+  releaseGrantReconciliationLease,
   resolveCanonicalStatus,
   statusFromGitHub,
-  statusFromSheet
+  statusFromSheet,
+  withGrantReconciliationLease
 };

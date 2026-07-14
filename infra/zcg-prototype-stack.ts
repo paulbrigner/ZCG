@@ -1,6 +1,6 @@
 import path from "node:path";
 import * as cdk from "aws-cdk-lib";
-import { Duration, RemovalPolicy, Stack, StackProps } from "aws-cdk-lib";
+import { Duration, RemovalPolicy, Stack, StackProps, TimeZone } from "aws-cdk-lib";
 import * as cloudwatch from "aws-cdk-lib/aws-cloudwatch";
 import { Platform } from "aws-cdk-lib/aws-ecr-assets";
 import * as ec2 from "aws-cdk-lib/aws-ec2";
@@ -15,7 +15,11 @@ import * as lambdaNodejs from "aws-cdk-lib/aws-lambda-nodejs";
 import * as logs from "aws-cdk-lib/aws-logs";
 import * as rds from "aws-cdk-lib/aws-rds";
 import * as s3 from "aws-cdk-lib/aws-s3";
+import * as scheduler from "aws-cdk-lib/aws-scheduler";
+import * as schedulerTargets from "aws-cdk-lib/aws-scheduler-targets";
 import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
+import * as sfn from "aws-cdk-lib/aws-stepfunctions";
+import * as sfnTasks from "aws-cdk-lib/aws-stepfunctions-tasks";
 import { Construct } from "constructs";
 
 type CostMode = "prototype-low-cost" | "production-ready";
@@ -118,6 +122,7 @@ export class ZcgPrototypeStack extends Stack {
     const enableWebService = contextBoolean(this, "enableWebService", !isPrototypeLowCost);
     const enableAlb = contextBoolean(this, "enableAlb", true);
     const enableWorkers = contextBoolean(this, "enableWorkers", true);
+    const enableSourceSyncSchedule = contextBoolean(this, "enableSourceSyncSchedule", enableWorkers);
     const enableKnowledgeEmbeddingSchedule = contextBoolean(this, "enableKnowledgeEmbeddingSchedule", enableWorkers);
     const enableAlarms = contextBoolean(this, "enableAlarms", !isPrototypeLowCost);
     const enableContainerInsights = contextBoolean(this, "containerInsights", !isPrototypeLowCost);
@@ -138,6 +143,8 @@ export class ZcgPrototypeStack extends Stack {
     const forumMaxPostsPerUpdatesTopic = contextNumber(this, "forumMaxPostsPerUpdatesTopic", 20);
     const forumMaxCategoryPages = contextNumber(this, "forumMaxCategoryPages", 25);
     const forumFetchDelayMs = contextNumber(this, "forumFetchDelayMs", 500);
+    const githubIssueBatchSize = contextNumber(this, "githubIssueBatchSize", 25);
+    const forumTopicBatchSize = contextNumber(this, "forumTopicBatchSize", 20);
     const logRetention = logRetentionForDays(logRetentionDays);
 
     if (dbMinAcu === 0 && (dbAutoPauseSeconds < 300 || dbAutoPauseSeconds > 86400)) {
@@ -250,6 +257,8 @@ export class ZcgPrototypeStack extends Stack {
     let webServiceName = "disabled";
     let webServiceDesiredCount = 0;
     let webTargetGroup: elbv2.ApplicationTargetGroup | undefined;
+    const webTaskRoles: iam.IRole[] = [];
+    const webContainers: ecs.ContainerDefinition[] = [];
 
     const webCpu = contextNumber(this, "webCpu", 512);
     const webMemoryMiB = contextNumber(this, "webMemoryMiB", 1024);
@@ -326,6 +335,10 @@ export class ZcgPrototypeStack extends Stack {
 
         database.connections.allowDefaultPortFrom(service.service);
         snapshotBucket.grantReadWrite(service.taskDefinition.taskRole);
+        webTaskRoles.push(service.taskDefinition.taskRole);
+        if (service.taskDefinition.defaultContainer) {
+          webContainers.push(service.taskDefinition.defaultContainer);
+        }
         webTargetGroup = service.targetGroup;
         webServiceName = service.service.serviceName;
         appUrl = `http://${service.loadBalancer.loadBalancerDnsName}`;
@@ -404,6 +417,8 @@ export class ZcgPrototypeStack extends Stack {
 
         database.connections.allowDefaultPortFrom(webSecurityGroup);
         snapshotBucket.grantReadWrite(taskDefinition.taskRole);
+        webTaskRoles.push(taskDefinition.taskRole);
+        webContainers.push(container);
         webServiceName = service.serviceName;
         appUrl = "ECS task public IP; run scripts/ecs-public-task-url.sh after resume";
 
@@ -473,11 +488,17 @@ export class ZcgPrototypeStack extends Stack {
       removalPolicy
     });
 
+    const corpusRefreshStateMachineLogGroup = new logs.LogGroup(this, "CorpusRefreshStateMachineLogGroup", {
+      retention: logRetention,
+      removalPolicy
+    });
+
     let syncWorkerFunctionName = "disabled";
     let migrationRunnerFunctionName = "disabled";
     let knowledgeIndexWorkerFunctionName = "disabled";
     let knowledgeEmbeddingWorkerFunctionName = "disabled";
     let knowledgeAnswerWorkerFunctionName = "disabled";
+    let corpusRefreshStateMachineArn = "disabled";
 
     if (enableWorkers) {
       const syncWorkerEnvironment = {
@@ -624,6 +645,11 @@ export class ZcgPrototypeStack extends Stack {
       githubTokenSecret?.grantRead(syncWorker);
       knowledgeEmbeddingApiSecret?.grantRead(knowledgeEmbeddingWorker);
       knowledgeEmbeddingApiSecret?.grantRead(knowledgeAnswerWorker);
+      syncWorker.addEnvironment(
+        "ZCG_KNOWLEDGE_INDEX_WORKER_FUNCTION_NAME",
+        knowledgeIndexWorker.functionName
+      );
+      knowledgeIndexWorker.grantInvoke(syncWorker);
       knowledgeIndexWorker.grantInvoke(amplifyComputeRole);
       knowledgeAnswerWorker.grantInvoke(amplifyComputeRole);
       database.connections.allowDefaultPortFrom(syncWorker);
@@ -665,10 +691,289 @@ export class ZcgPrototypeStack extends Stack {
         })
       );
 
-      new events.Rule(this, "SyncSchedule", {
-        enabled: false,
-        schedule: events.Schedule.rate(Duration.hours(6)),
-        targets: [new targets.LambdaFunction(syncWorker)]
+      const prepareCorpusRefresh = new sfn.Pass(this, "PrepareCorpusRefresh", {
+        parameters: {
+          "trigger.$": "$.trigger",
+          "requestedAt.$": "$.requestedAt",
+          "requestedByPrincipalId.$": "$.requestedByPrincipalId",
+          "refreshId.$": "$$.Execution.Name"
+        }
+      });
+      const acquireCorpusRefresh = new sfnTasks.LambdaInvoke(this, "AcquireCorpusRefreshLease", {
+        lambdaFunction: syncWorker,
+        payloadResponseOnly: true,
+        payload: sfn.TaskInput.fromObject({
+          source: "corpus-refresh-acquire",
+          refreshId: sfn.JsonPath.stringAt("$.refreshId"),
+          trigger: sfn.JsonPath.stringAt("$.trigger"),
+          requestedAt: sfn.JsonPath.stringAt("$.requestedAt"),
+          requestedByPrincipalId: sfn.JsonPath.stringAt("$.requestedByPrincipalId")
+        }),
+        resultPath: "$.lease"
+      });
+      const initializeGitHubCursor = new sfn.Pass(this, "InitializeGitHubCursor", {
+        result: sfn.Result.fromObject({ nextPage: 1, hasMore: true }),
+        resultPath: "$.github"
+      });
+      const mirrorGitHubBatch = new sfnTasks.LambdaInvoke(this, "MirrorGitHubIssueBatch", {
+        lambdaFunction: syncWorker,
+        payloadResponseOnly: true,
+        payload: sfn.TaskInput.fromObject({
+          source: "github-issues-batch",
+          refreshId: sfn.JsonPath.stringAt("$.refreshId"),
+          parentSyncRunId: sfn.JsonPath.stringAt("$.lease.parentSyncRunId"),
+          batchIndex: sfn.JsonPath.numberAt("$.github.nextPage"),
+          batchSize: githubIssueBatchSize
+        }),
+        resultPath: "$.github"
+      });
+      const mirrorGoogleSheet = new sfnTasks.LambdaInvoke(this, "MirrorGoogleSheet", {
+        lambdaFunction: syncWorker,
+        payloadResponseOnly: true,
+        payload: sfn.TaskInput.fromObject({
+          source: "google-sheet",
+          refreshId: sfn.JsonPath.stringAt("$.refreshId"),
+          parentSyncRunId: sfn.JsonPath.stringAt("$.lease.parentSyncRunId")
+        }),
+        resultPath: "$.googleSheet"
+      });
+      const planLinkedForumTopics = new sfnTasks.LambdaInvoke(this, "PlanLinkedForumTopicBatches", {
+        lambdaFunction: syncWorker,
+        payloadResponseOnly: true,
+        payload: sfn.TaskInput.fromObject({
+          source: "forum-url-plan",
+          refreshId: sfn.JsonPath.stringAt("$.refreshId"),
+          parentSyncRunId: sfn.JsonPath.stringAt("$.lease.parentSyncRunId"),
+          batchSize: forumTopicBatchSize
+        }),
+        resultPath: "$.forumPlan"
+      });
+      const mirrorLinkedForumBatch = new sfnTasks.LambdaInvoke(this, "MirrorLinkedForumTopicBatch", {
+        lambdaFunction: syncWorker,
+        payloadResponseOnly: true,
+        payload: sfn.TaskInput.fromObject({
+          source: "forum-topics-batch",
+          refreshId: sfn.JsonPath.stringAt("$.refreshId"),
+          parentSyncRunId: sfn.JsonPath.stringAt("$.parentSyncRunId"),
+          batchIndex: sfn.JsonPath.numberAt("$.batchIndex"),
+          batchSize: forumTopicBatchSize
+        }),
+        resultPath: sfn.JsonPath.DISCARD
+      });
+      const linkedForumMap = new sfn.Map(this, "MirrorLinkedForumTopicBatches", {
+        itemsPath: "$.forumPlan.batchIndexes",
+        maxConcurrency: 1,
+        resultPath: sfn.JsonPath.DISCARD,
+        itemSelector: {
+          "batchIndex.$": "$$.Map.Item.Value",
+          "refreshId.$": "$.refreshId",
+          "parentSyncRunId.$": "$.lease.parentSyncRunId"
+        }
+      });
+      linkedForumMap.itemProcessor(mirrorLinkedForumBatch);
+
+      const planForumUpdates = new sfnTasks.LambdaInvoke(this, "PlanForumUpdateBatches", {
+        lambdaFunction: syncWorker,
+        payloadResponseOnly: true,
+        payload: sfn.TaskInput.fromObject({
+          source: "forum-updates-plan",
+          refreshId: sfn.JsonPath.stringAt("$.refreshId"),
+          parentSyncRunId: sfn.JsonPath.stringAt("$.lease.parentSyncRunId"),
+          batchSize: forumTopicBatchSize
+        }),
+        resultPath: "$.forumUpdatesPlan"
+      });
+      const mirrorForumUpdatesBatch = new sfnTasks.LambdaInvoke(this, "MirrorForumUpdateBatch", {
+        lambdaFunction: syncWorker,
+        payloadResponseOnly: true,
+        payload: sfn.TaskInput.fromObject({
+          source: "forum-updates-batch",
+          refreshId: sfn.JsonPath.stringAt("$.refreshId"),
+          parentSyncRunId: sfn.JsonPath.stringAt("$.parentSyncRunId"),
+          batchIndex: sfn.JsonPath.numberAt("$.batchIndex"),
+          batchSize: forumTopicBatchSize
+        }),
+        resultPath: sfn.JsonPath.DISCARD
+      });
+      const forumUpdatesMap = new sfn.Map(this, "MirrorForumUpdateBatches", {
+        itemsPath: "$.forumUpdatesPlan.forumUpdatesPlan.batchIndexes",
+        maxConcurrency: 1,
+        resultPath: sfn.JsonPath.DISCARD,
+        itemSelector: {
+          "batchIndex.$": "$$.Map.Item.Value",
+          "refreshId.$": "$.refreshId",
+          "parentSyncRunId.$": "$.lease.parentSyncRunId"
+        }
+      });
+      forumUpdatesMap.itemProcessor(mirrorForumUpdatesBatch);
+
+      const reconcileCorpus = new sfnTasks.LambdaInvoke(this, "ReconcileCorpusApplications", {
+        lambdaFunction: syncWorker,
+        payloadResponseOnly: true,
+        payload: sfn.TaskInput.fromObject({
+          source: "reconcile-grants",
+          refreshId: sfn.JsonPath.stringAt("$.refreshId"),
+          parentSyncRunId: sfn.JsonPath.stringAt("$.lease.parentSyncRunId")
+        }),
+        resultPath: "$.reconciliation"
+      });
+      const rebuildKnowledgeIndex = new sfnTasks.LambdaInvoke(this, "RebuildCorpusKnowledgeIndex", {
+        lambdaFunction: knowledgeIndexWorker,
+        payloadResponseOnly: true,
+        payload: sfn.TaskInput.fromObject({
+          refreshId: sfn.JsonPath.stringAt("$.refreshId"),
+          requestedAt: sfn.JsonPath.stringAt("$.requestedAt"),
+          requestedByPrincipalId: sfn.JsonPath.stringAt("$.requestedByPrincipalId")
+        }),
+        resultPath: "$.knowledgeIndex"
+      });
+      const failBecauseReconciliationBusy = new sfn.Fail(this, "CorpusReconciliationBusy", {
+        error: "CorpusRefresh.ReconciliationBusy",
+        cause: "Grant reconciliation was already running."
+      });
+      const reconciliationReady = new sfn.Choice(this, "CorpusReconciliationCompleted")
+        .when(
+          sfn.Condition.and(
+            sfn.Condition.isPresent("$.reconciliation.busy"),
+            sfn.Condition.booleanEquals("$.reconciliation.busy", true)
+          ),
+          failBecauseReconciliationBusy
+        )
+        .otherwise(rebuildKnowledgeIndex);
+      const continueGitHubBatches = new sfn.Choice(this, "MoreGitHubIssueBatches");
+      mirrorGitHubBatch.next(continueGitHubBatches);
+      continueGitHubBatches
+        .when(sfn.Condition.booleanEquals("$.github.hasMore", true), mirrorGitHubBatch)
+        .otherwise(mirrorGoogleSheet);
+      mirrorGoogleSheet
+        .next(planLinkedForumTopics)
+        .next(linkedForumMap)
+        .next(planForumUpdates)
+        .next(forumUpdatesMap)
+        .next(reconcileCorpus)
+        .next(reconciliationReady);
+      const corpusRefreshWork = new sfn.Parallel(this, "RunStagedCorpusRefresh", {
+        resultPath: sfn.JsonPath.DISCARD
+      });
+      corpusRefreshWork.branch(initializeGitHubCursor.next(mirrorGitHubBatch));
+
+      const completeCorpusRefresh = new sfnTasks.LambdaInvoke(this, "CompleteCorpusRefresh", {
+        lambdaFunction: syncWorker,
+        payloadResponseOnly: true,
+        payload: sfn.TaskInput.fromObject({
+          source: "corpus-refresh-complete",
+          refreshId: sfn.JsonPath.stringAt("$.refreshId"),
+          parentSyncRunId: sfn.JsonPath.stringAt("$.lease.parentSyncRunId"),
+          trigger: sfn.JsonPath.stringAt("$.trigger"),
+          requestedAt: sfn.JsonPath.stringAt("$.requestedAt"),
+          requestedByPrincipalId: sfn.JsonPath.stringAt("$.requestedByPrincipalId")
+        }),
+        resultPath: "$.completion"
+      });
+      const failCorpusRefresh = new sfnTasks.LambdaInvoke(this, "FailCorpusRefresh", {
+        lambdaFunction: syncWorker,
+        payloadResponseOnly: true,
+        payload: sfn.TaskInput.fromObject({
+          source: "corpus-refresh-fail",
+          refreshId: sfn.JsonPath.stringAt("$.refreshId"),
+          parentSyncRunId: sfn.JsonPath.stringAt("$.lease.parentSyncRunId"),
+          trigger: sfn.JsonPath.stringAt("$.trigger"),
+          requestedAt: sfn.JsonPath.stringAt("$.requestedAt"),
+          requestedByPrincipalId: sfn.JsonPath.stringAt("$.requestedByPrincipalId"),
+          errorSummary: sfn.JsonPath.stringAt("$.pipelineError.Cause")
+        }),
+        resultPath: sfn.JsonPath.DISCARD
+      });
+      for (const task of [
+        acquireCorpusRefresh,
+        mirrorGitHubBatch,
+        mirrorGoogleSheet,
+        planLinkedForumTopics,
+        mirrorLinkedForumBatch,
+        planForumUpdates,
+        mirrorForumUpdatesBatch,
+        reconcileCorpus,
+        rebuildKnowledgeIndex,
+        completeCorpusRefresh,
+        failCorpusRefresh
+      ]) {
+        task.addRetry({
+          errors: ["States.TaskFailed", "States.Timeout"],
+          interval: Duration.seconds(20),
+          backoffRate: 2,
+          maxAttempts: 2
+        });
+      }
+      const corpusRefreshFailed = new sfn.Fail(this, "CorpusRefreshFailed", {
+        error: "CorpusRefresh.PipelineFailed",
+        cause: "The staged corpus refresh failed."
+      });
+      failCorpusRefresh.next(corpusRefreshFailed);
+      corpusRefreshWork.addCatch(failCorpusRefresh, { resultPath: "$.pipelineError" });
+      completeCorpusRefresh.addCatch(failCorpusRefresh, { resultPath: "$.pipelineError" });
+      corpusRefreshWork.next(completeCorpusRefresh);
+
+      const skipConcurrentCorpusRefresh = new sfn.Succeed(this, "SkipConcurrentCorpusRefresh", {
+        comment: "A non-expired full corpus refresh lease is already active."
+      });
+      const corpusRefreshLeaseAcquired = new sfn.Choice(this, "CorpusRefreshLeaseAcquired")
+        .when(sfn.Condition.booleanEquals("$.lease.acquired", true), corpusRefreshWork)
+        .otherwise(skipConcurrentCorpusRefresh);
+
+      const corpusRefreshStateMachine = new sfn.StateMachine(this, "CorpusRefreshStateMachine", {
+        definitionBody: sfn.DefinitionBody.fromChainable(
+          prepareCorpusRefresh.next(acquireCorpusRefresh).next(corpusRefreshLeaseAcquired)
+        ),
+        stateMachineType: sfn.StateMachineType.STANDARD,
+        timeout: Duration.hours(3),
+        logs: {
+          destination: corpusRefreshStateMachineLogGroup,
+          level: sfn.LogLevel.ERROR,
+          includeExecutionData: true
+        },
+        tracingEnabled: true
+      });
+      corpusRefreshStateMachineArn = corpusRefreshStateMachine.stateMachineArn;
+      corpusRefreshStateMachine.grantStartExecution(amplifyComputeRole);
+      amplifyComputeRole.addToPolicy(
+        new iam.PolicyStatement({
+          actions: ["states:ListExecutions"],
+          resources: [corpusRefreshStateMachine.stateMachineArn]
+        })
+      );
+      for (const role of webTaskRoles) {
+        corpusRefreshStateMachine.grantStartExecution(role);
+        role.addToPrincipalPolicy(
+          new iam.PolicyStatement({
+            actions: ["states:ListExecutions"],
+            resources: [corpusRefreshStateMachine.stateMachineArn]
+          })
+        );
+      }
+      for (const container of webContainers) {
+        container.addEnvironment(
+          "ZCG_CORPUS_REFRESH_STATE_MACHINE_ARN",
+          corpusRefreshStateMachine.stateMachineArn
+        );
+      }
+
+      new scheduler.Schedule(this, "DailySourceSyncSchedule", {
+        enabled: enableSourceSyncSchedule,
+        description: "Refresh the full ZCG source corpus every morning at 3:00 AM Eastern time.",
+        schedule: scheduler.ScheduleExpression.cron({
+          minute: "0",
+          hour: "3",
+          timeZone: TimeZone.AMERICA_NEW_YORK
+        }),
+        target: new schedulerTargets.StepFunctionsStartExecution(corpusRefreshStateMachine, {
+          maxEventAge: Duration.hours(2),
+          retryAttempts: 2,
+          input: scheduler.ScheduleTargetInput.fromObject({
+            trigger: "schedule",
+            requestedAt: null,
+            requestedByPrincipalId: null
+          })
+        })
       });
 
       new events.Rule(this, "KnowledgeEmbeddingSchedule", {
@@ -707,6 +1012,20 @@ export class ZcgPrototypeStack extends Stack {
 
         knowledgeAnswerWorker.metricErrors().createAlarm(this, "KnowledgeAnswerWorkerErrorsAlarm", {
           alarmName: `${appName}-${environmentName}-knowledge-answer-worker-errors`,
+          threshold: 1,
+          evaluationPeriods: 1,
+          comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD
+        });
+
+        corpusRefreshStateMachine.metricFailed().createAlarm(this, "CorpusRefreshFailedAlarm", {
+          alarmName: `${appName}-${environmentName}-corpus-refresh-failed`,
+          threshold: 1,
+          evaluationPeriods: 1,
+          comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD
+        });
+
+        corpusRefreshStateMachine.metricTimedOut().createAlarm(this, "CorpusRefreshTimedOutAlarm", {
+          alarmName: `${appName}-${environmentName}-corpus-refresh-timed-out`,
           threshold: 1,
           evaluationPeriods: 1,
           comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD
@@ -755,6 +1074,9 @@ export class ZcgPrototypeStack extends Stack {
     });
     new cdk.CfnOutput(this, "KnowledgeAnswerWorkerFunctionName", {
       value: knowledgeAnswerWorkerFunctionName
+    });
+    new cdk.CfnOutput(this, "CorpusRefreshStateMachineArn", {
+      value: corpusRefreshStateMachineArn
     });
     new cdk.CfnOutput(this, "CostMode", {
       value: costMode

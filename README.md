@@ -37,17 +37,18 @@ applicant portal, or controlled writeback to the current public systems.
 ### Last-observed prototype corpus
 
 These are reconciliation outputs, not authoritative ZCG production totals.
-They were observed on the live prototype on **July 13, 2026** after the latest
-grant reconciliation completed. Source ingestion remains operator-triggered.
+They were observed on the live prototype on **July 14, 2026** after the latest
+grant reconciliation completed. Source ingestion now runs daily and
+administrators can also start an on-demand refresh.
 
 | Metric | Count |
 | --- | ---: |
-| Mirrored source records | 4,357 |
-| Canonical applications | 627 |
+| Mirrored source records | 4,391 |
+| Canonical applications | 632 |
 | Funded-status grant records | 161 |
-| Open reconciliation items | 11 |
-| Open warning or error items | 0 |
-| Grant knowledge documents | 15,871 |
+| Open reconciliation items | 12 |
+| Open warning or error items | 1 |
+| Grant knowledge documents | 15,924 |
 | Embedded knowledge documents | 15,871 |
 
 The funded-status total counts canonical grant records whose applications are
@@ -241,9 +242,11 @@ addresses.
 - **Authentication:** Better Auth sends a single sign-in email containing both
   a secure magic link and a one-time code through SES in deployed environments.
   When SES is unset locally, the link and code are logged to the server console.
-- **Scheduling:** the embedding schedule can be enabled in CDK. The six-hour
-  source-sync rule is defined but disabled by default, so source refreshes are
-  currently operator-triggered.
+- **Scheduling:** a Step Functions pipeline runs every morning at 3:00 AM
+  `America/New_York`. It mirrors configured public sources in bounded GitHub and
+  Forum batches, reconciles canonical applications, and waits for a knowledge-
+  index rebuild. A durable lease prevents overlapping full refreshes, and the
+  embedding worker catches up new or changed documents on its hourly schedule.
 
 ### Repository map
 
@@ -319,8 +322,8 @@ above.
 
 ### Refresh the local corpus
 
-The normal operator sequence is mirror, reconcile, rebuild the knowledge index,
-and optionally embed documents:
+For local development, the compatibility command can still mirror, reconcile,
+rebuild the knowledge index, and optionally embed documents:
 
 Reliable full-corpus GitHub comment mirroring requires `GITHUB_TOKEN` or
 `ZCG_GITHUB_TOKEN` with read-only Issues access; anonymous API rate limits are
@@ -332,8 +335,18 @@ npm run knowledge:index
 npm run knowledge:embed
 ```
 
+The deployed Admin action and daily schedule use the bounded Step Functions
+pipeline instead of the compatibility command so growth in GitHub issues or
+Forum topics cannot exceed one Lambda invocation's runtime limit.
+
 The embedding command requires a configured embedding API key. Keyword search
 works without embeddings or AI answer composition.
+
+Administrators can run the same deployed sequence from **Admin → Source corpus →
+Refresh corpus** or **Knowledge → Corpus maintenance → Refresh corpus**. **Rebuild
+index** is intentionally narrower: it only regenerates searchable documents from
+canonical applications already in the database and does not fetch new GitHub,
+Google Sheet, or Forum records.
 
 Useful maintenance commands:
 
