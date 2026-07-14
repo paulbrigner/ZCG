@@ -180,6 +180,10 @@ main {
   margin-bottom: 0;
 }
 
+.home-progress-grid .home-progress-total {
+  grid-column: 1 / -1;
+}
+
 .home-section {
   display: grid;
   gap: 22px;
@@ -795,7 +799,6 @@ button:disabled {
 }
 
 .under-review-identity > span,
-.under-review-age > span,
 .under-review-unavailable,
 .under-review-empty {
   color: var(--muted);
@@ -804,15 +807,24 @@ button:disabled {
 
 .under-review-age {
   display: grid;
-  gap: 1px;
   justify-items: end;
-  min-width: 90px;
+  min-width: 24px;
 }
 
 .under-review-age > strong {
   color: var(--ink);
   font-size: 15px;
   font-weight: 850;
+}
+
+.visually-hidden {
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  height: 1px;
+  overflow: hidden;
+  position: absolute;
+  white-space: nowrap;
+  width: 1px;
 }
 
 .under-review-actions {

@@ -14,7 +14,7 @@ import {
   type GrantApplicationRow,
   type WorklistSortDirection
 } from "@/lib/admin/dashboard";
-import { isPublicPrototypePrincipal, principalHasRole, requirePermission } from "@/lib/authorization";
+import { isPublicPrototypePrincipal, requirePermission } from "@/lib/authorization";
 import { MetricHelp, MetricLabel } from "./metric-help";
 import { fundedGrantMetricHelp } from "../grant-metric-copy";
 
@@ -455,7 +455,6 @@ export default async function AdminPage({
     excludedLabelNames.length ? `without ${excludedLabelNames.join(" or ")}` : null
   ].filter(Boolean);
   const publicViewer = isPublicPrototypePrincipal(principal);
-  const canManageUsers = !publicViewer && (await principalHasRole(principal.id, "admin"));
   const applicationPanelOpen = [
     resolvedSearchParams.applicationFilter,
     resolvedSearchParams.applicationSearch,
@@ -669,23 +668,6 @@ export default async function AdminPage({
                 ) : null}
               </div>
             </article>
-
-            {canManageUsers ? (
-              <article className="panel">
-                <div className="section-heading">
-                  <h2>Dashboard tools</h2>
-                </div>
-                <div className="status-list">
-                  <p className="status-item">
-                    <span className="dot blue" />
-                    User access management
-                    <Link className="table-link" href="/admin/users">
-                      Open
-                    </Link>
-                  </p>
-                </div>
-              </article>
-            ) : null}
           </section>
         </div>
       </details>
@@ -738,8 +720,12 @@ export default async function AdminPage({
                       : "the application was first added to this system"
                   } on ${calendarDateText(application.outstanding_since)}.`}
                 >
-                  <strong>{numberText(application.days_outstanding)}</strong>
-                  <span>{application.days_outstanding === 1 ? "day outstanding" : "days outstanding"}</span>
+                  <strong>
+                    {numberText(application.days_outstanding)}
+                    <span className="visually-hidden">
+                      {application.days_outstanding === 1 ? " day outstanding" : " days outstanding"}
+                    </span>
+                  </strong>
                 </div>
                 <div className="under-review-actions">
                   {application.latest_briefing_id ? (

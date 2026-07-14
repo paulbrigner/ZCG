@@ -9,6 +9,8 @@ export const dynamic = "force-dynamic";
 type ProgressRow = {
   application_count: string;
   funded_grant_count: string;
+  paid_ledger_row_count: string;
+  historical_disbursement_amount_usd: string;
   warning_count: string;
   knowledge_document_count: string;
 };
@@ -60,6 +62,25 @@ async function getProgress() {
                  join grant_applications ga_funded on ga_funded.id = g.application_id
                 where ga_funded.normalized_status in ('approved', 'active', 'completed')) as funded_grant_count,
               (select count(*)::text
+                 from source_records sr_paid
+                where sr_paid.source_kind = 'google_sheet_row'
+                  and sr_paid.metadata->>'gid' = '803214474'
+                  and nullif(trim(sr_paid.raw_payload->>'Paid Out'), '') is not null) as paid_ledger_row_count,
+              (select coalesce(
+                        sum(
+                          nullif(
+                            regexp_replace(sr_paid.raw_payload->>'Amount (USD)', '[^0-9.-]', '', 'g'),
+                            ''
+                          )::numeric
+                        ),
+                        0
+                      )::text
+                 from source_records sr_paid
+                where sr_paid.source_kind = 'google_sheet_row'
+                  and sr_paid.metadata->>'gid' = '803214474'
+                  and nullif(trim(sr_paid.raw_payload->>'Paid Out'), '') is not null)
+                as historical_disbursement_amount_usd,
+              (select count(*)::text
                  from reconciliation_issues
                 where status in ('open', 'assigned')
                   and severity in ('warning', 'error')) as warning_count,
@@ -74,6 +95,32 @@ async function getProgress() {
 function countText(value: string | null | undefined) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed.toLocaleString("en-US") : "—";
+}
+
+function compactCurrencyText(value: string | null | undefined) {
+  const parsed = Number(value);
+
+  return Number.isFinite(parsed)
+    ? parsed.toLocaleString("en-US", {
+        style: "currency",
+        currency: "USD",
+        notation: "compact",
+        maximumFractionDigits: 1
+      })
+    : "—";
+}
+
+function currencyText(value: string | null | undefined) {
+  const parsed = Number(value);
+
+  return Number.isFinite(parsed)
+    ? parsed.toLocaleString("en-US", {
+        style: "currency",
+        currency: "USD",
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+      })
+    : "—";
 }
 
 export default async function HomePage() {
@@ -132,6 +179,18 @@ export default async function HomePage() {
             <div>
               <strong>{countText(progress?.knowledge_document_count)}</strong>
               <span>knowledge documents</span>
+            </div>
+            <div className="home-progress-total">
+              <strong>{compactCurrencyText(progress?.historical_disbursement_amount_usd)}</strong>
+              <MetricLabel
+                body={`This prototype sums Amount (USD) for ${countText(
+                  progress?.paid_ledger_row_count
+                )} rows with a Paid Out date in the mirrored FPF ZCG Grants ledger, producing ${currencyText(
+                  progress?.historical_disbursement_amount_usd
+                )}. FPF’s official dashboard calculates $19,272,719.425 for the same regular-grant milestone scope and displays $19,272,719. The half-cent difference comes from one source adjustment that exports at two-decimal precision, so the totals reconcile. This excludes Coinholder grants, independent-contractor payouts, committee stipends, and discretionary-budget spending. OpenZcash currently shows $23.7M across 753 payments; that broader, differently aggregated figure is not substituted for this evidence-derived metric.`}
+                label="Historical grant payments"
+                text="historical grant payments"
+              />
             </div>
           </div>
           <p className="home-status-note">
