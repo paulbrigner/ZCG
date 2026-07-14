@@ -6,6 +6,7 @@ export type GrantAnalysisReportVisibility = "private" | "shared";
 export type GrantAnalysisReportStatus = "queued" | "running" | "succeeded" | "failed";
 export type GrantAnalysisReportFreshness = "fresh" | "stale" | "unknown";
 export type GrantAnalysisReportEvidenceFreshness = "current" | "changed" | "unknown";
+export type GrantAnalysisReportEvidenceChangeStatus = "current" | "changed" | "missing";
 export type GrantAnalysisReportFreshnessDetails = {
   status: GrantAnalysisReportFreshness;
   evidenceStatus: GrantAnalysisReportEvidenceFreshness;
@@ -103,12 +104,13 @@ export type GrantAnalysisReportEvidence = {
   sourceUrl: string | null;
   contentSnapshot: string | null;
   metadata: Record<string, unknown>;
+  changeStatus: GrantAnalysisReportEvidenceChangeStatus;
   createdAt: string;
 };
 
 export type GrantAnalysisReportEvidenceInput = Omit<
   GrantAnalysisReportEvidence,
-  "reportId" | "createdAt"
+  "reportId" | "changeStatus" | "createdAt"
 >;
 
 export type GrantAnalysisEvidenceFingerprintInput = {
@@ -178,6 +180,7 @@ type GrantAnalysisReportEvidenceRow = {
   source_url: string | null;
   content_snapshot: string | null;
   metadata: string | Record<string, unknown> | null;
+  current_content_hash: string | null;
   created_at: string;
 };
 
@@ -325,8 +328,20 @@ function mapEvidenceRow(row: GrantAnalysisReportEvidenceRow): GrantAnalysisRepor
     sourceUrl: row.source_url,
     contentSnapshot: row.content_snapshot,
     metadata: parseJsonRecord(row.metadata),
+    changeStatus: grantAnalysisEvidenceChangeStatus(row.content_hash, row.current_content_hash),
     createdAt: row.created_at
   };
+}
+
+export function grantAnalysisEvidenceChangeStatus(
+  savedContentHash: string,
+  currentContentHash: string | null
+): GrantAnalysisReportEvidenceChangeStatus {
+  if (currentContentHash === null) {
+    return "missing";
+  }
+
+  return savedContentHash === currentContentHash ? "current" : "changed";
 }
 
 function canonicalFingerprintValue(value: unknown): unknown {
@@ -401,7 +416,11 @@ export function compareGrantAnalysisReportEvidence(
     currentEvidence.map((document) => [document.documentKey, document.contentHash])
   );
   const changedEvidenceRecordCount = savedEvidence.filter(
-    (document) => currentByDocumentKey.get(document.documentKey) !== document.contentHash
+    (document) =>
+      grantAnalysisEvidenceChangeStatus(
+        document.contentHash,
+        currentByDocumentKey.get(document.documentKey) ?? null
+      ) !== "current"
   ).length;
 
   return {
@@ -828,25 +847,28 @@ export async function replaceGrantAnalysisReportEvidence(
 
 export async function listGrantAnalysisReportEvidence(reportId: string) {
   const result = await query<GrantAnalysisReportEvidenceRow>(
-    `select report_id::text,
-            citation_number,
-            knowledge_document_id::text,
-            document_key,
-            content_hash,
-            evidence_role,
-            retrieval_rank,
-            application_id::text,
-            source_record_id::text,
-            title,
-            source_kind,
-            source_id,
-            source_url,
-            left(content_snapshot, 600) as content_snapshot,
-            metadata::text,
-            created_at::text
-       from grant_analysis_report_evidence
-      where report_id = $1
-      order by citation_number`,
+    `select saved.report_id::text,
+            saved.citation_number,
+            saved.knowledge_document_id::text,
+            saved.document_key,
+            saved.content_hash,
+            saved.evidence_role,
+            saved.retrieval_rank,
+            saved.application_id::text,
+            saved.source_record_id::text,
+            saved.title,
+            saved.source_kind,
+            saved.source_id,
+            saved.source_url,
+            left(saved.content_snapshot, 600) as content_snapshot,
+            saved.metadata::text,
+            current_document.content_hash as current_content_hash,
+            saved.created_at::text
+       from grant_analysis_report_evidence saved
+       left join grant_knowledge_documents current_document
+         on current_document.document_key = saved.document_key
+      where saved.report_id = $1
+      order by saved.citation_number`,
     [reportId]
   );
 

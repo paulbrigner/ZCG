@@ -4,6 +4,7 @@ import {
   buildGrantAnalysisEvidenceFingerprint,
   compareGrantAnalysisReportEvidence,
   getGrantAnalysisReportFreshnessDetails,
+  grantAnalysisEvidenceChangeStatus,
   isGrantAnalysisReportFresh,
   isPublishedCommitteeBriefing,
   stableFingerprintValue,
@@ -139,6 +140,12 @@ test("report evidence freshness counts changed and missing saved records", () =>
     evidenceRecordCount: 0,
     changedEvidenceRecordCount: 0
   });
+});
+
+test("individual report evidence identifies current, changed, and missing records", () => {
+  assert.equal(grantAnalysisEvidenceChangeStatus("hash-v1", "hash-v1"), "current");
+  assert.equal(grantAnalysisEvidenceChangeStatus("hash-v1", "hash-v2"), "changed");
+  assert.equal(grantAnalysisEvidenceChangeStatus("hash-v1", null), "missing");
 });
 
 test("report freshness queries only the saved evidence snapshot and returns precise reasons", async () => {

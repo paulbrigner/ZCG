@@ -7,11 +7,15 @@
   - Attached Dashboard tools screenshot, originally `/var/folders/y7/001_hzx12fv3fnlcdr121ggh0000gn/T/TemporaryItems/NSIRD_screencaptureui_xmmjWj/Screenshot 2026-07-14 at 9.08.52 AM.png`.
   - Attached Current corpus screenshot, originally `/Users/paulbrigner/Desktop/Screenshot 2026-07-14 at 9.11.25 AM.png`.
   - Attached committee-briefing freshness screenshot, originally `/var/folders/y7/001_hzx12fv3fnlcdr121ggh0000gn/T/TemporaryItems/NSIRD_screencaptureui_r7age1/Screenshot 2026-07-14 at 9.51.56 AM.png`.
+  - Attached committee-briefing evidence-list screenshot, originally `/Users/paulbrigner/Desktop/Screenshot 2026-07-14 at 10.25.38 AM.png`.
+  - Pre-change deployed evidence-list capture: `/tmp/zcg-evidence-baseline-live.png`.
 - Browser-rendered implementation:
   - `/tmp/zcg-dashboard-viewport-final.png`
   - `/tmp/zcg-dashboard-after-mobile.png`
   - `/tmp/zcg-home-viewport-final.png`
   - `/tmp/zcg-report-freshness-local.png`
+  - `/tmp/zcg-evidence-indicators-local.png`
+  - `/tmp/zcg-evidence-indicators-mobile.png`
 - Viewports: 1280 x 720 desktop and 390 x 844 mobile.
 - State: public read-only Dashboard; home page with the Historical grant payments information popup open; public changed-evidence and current-evidence briefing pages.
 
@@ -22,12 +26,14 @@
 - The information popup remains inside the desktop viewport, uses the existing information-control styling, and does not obscure the metric that opened it.
 - The Dashboard tools card has been removed from the implementation rather than restyled or relocated.
 - The committee-briefing badge now says `Evidence changed` rather than the ambiguous `Stale evidence`, and the warning names the exact changed-record count from that briefing's saved evidence snapshot.
+- The evidence disclosure now exposes the affected-record count before expansion, and citations 1–3 are highlighted without changing citation order or replacing the saved snapshots.
 
 ## Focused region comparison evidence
 
 - Worklist age column: `/tmp/zcg-dashboard-viewport-final.png` visibly shows `3`, `4`, and `7` without repeating `days outstanding`; `/tmp/zcg-dashboard-after-mobile.png` confirms the same treatment at the narrow breakpoint.
 - Current corpus metric and explanation: `/tmp/zcg-home-viewport-final.png` shows `$19.3M`, the `historical grant payments` label, a circular information control, and the reconciled FPF/OpenZcash scope explanation.
 - Committee briefing freshness: `/tmp/zcg-report-freshness-local.png` shows the updated badge and the report-specific `3 of 11 evidence records` explanation without changing the established card layout.
+- Changed evidence: `/tmp/zcg-evidence-indicators-local.png` marks the GitHub issue, canonical application, and Google Sheet citations with an orange `Changed since briefing` badge and left-edge highlight; `/tmp/zcg-evidence-indicators-mobile.png` confirms the same state remains readable at 390 pixels.
 - No additional crop was needed because both focused regions are readable at original screenshot resolution.
 
 ## Required fidelity surfaces
@@ -45,6 +51,7 @@
 - Checked the desktop and mobile worklist layouts.
 - Verified the explanatory popup exposes its content and expanded state to assistive technology.
 - Opened the Web3Lagos committee briefing panel and verified the report-specific freshness count on both the grant page and its public briefing page.
+- Expanded the Web3Lagos evidence list and verified exactly three `Changed since briefing` indicators; a current-evidence briefing displayed no change indicators.
 
 ## Findings
 
@@ -56,6 +63,7 @@
 2. The source Dashboard contained a Dashboard tools card. The card and its now-unused authorization lookup were removed. Post-fix evidence: source inspection and the final Dashboard render.
 3. The source Current corpus card had no evidence-backed historical amount. A full-width `$19.3M` metric and reconciled information popup were added. Post-fix evidence: `/tmp/zcg-home-viewport-final.png`.
 4. The source briefing used a broad `Stale evidence` indicator. The badge now distinguishes changed evidence from a template/model update, and the notice reports how many saved evidence records changed. Post-fix evidence: `/tmp/zcg-report-freshness-local.png`.
+5. The source evidence list did not identify which records caused the stale state. The disclosure now reports `3 changed or unavailable`, and each affected row is highlighted while retaining the original title, excerpt, role, source type, and links. Post-fix evidence: `/tmp/zcg-evidence-indicators-local.png` and `/tmp/zcg-evidence-indicators-mobile.png`.
 
 ## Console check
 

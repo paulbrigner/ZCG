@@ -23,6 +23,7 @@ export type GrantAnalysisEvidence = {
   knowledgeDocumentId?: string | null;
   evidenceRole?: string | null;
   contentHash?: string | null;
+  changeStatus?: "current" | "changed" | "missing" | null;
 };
 
 export type GrantAnalysisPromptPacking = {
@@ -278,6 +279,13 @@ function normalizeEvidence(value: unknown, fallbackPrefix: string): GrantAnalysi
     const knowledgeDocumentId = stringField(record, "knowledgeDocumentId", "knowledge_document_id");
     const sourceId = stringField(record, "sourceId", "source_id");
     const id = stringField(record, "id") ?? knowledgeDocumentId ?? `${fallbackPrefix}-${citationNumber}`;
+    const rawChangeStatus = field(record, "changeStatus", "change_status");
+    const changeStatus: GrantAnalysisEvidence["changeStatus"] =
+      rawChangeStatus === "current" ||
+      rawChangeStatus === "changed" ||
+      rawChangeStatus === "missing"
+        ? rawChangeStatus
+        : null;
 
     return [{
       id,
@@ -297,7 +305,8 @@ function normalizeEvidence(value: unknown, fallbackPrefix: string): GrantAnalysi
       applicationId: stringField(record, "applicationId", "application_id"),
       knowledgeDocumentId,
       evidenceRole: stringField(record, "evidenceRole", "evidence_role"),
-      contentHash: stringField(record, "contentHash", "content_hash")
+      contentHash: stringField(record, "contentHash", "content_hash"),
+      changeStatus
     }];
   }).sort((left, right) => left.citationNumber - right.citationNumber);
 }
@@ -651,32 +660,79 @@ function EvidenceList({
 
   return (
     <ol className={styles.evidenceList}>
-      {evidence.map((item) => (
-        <li className={styles.evidenceItem} id={`${anchorPrefix}-${item.citationNumber}`} key={`${item.id}-${item.citationNumber}`}>
-          <div className={styles.evidenceHeading}>
-            <span className={styles.citationNumber}>[{item.citationNumber}]</span>
-            <strong>{item.title}</strong>
-          </div>
-          <div className={styles.chipRow}>
-            {item.evidenceRole ? <span className={styles.chip}>{humanize(item.evidenceRole)}</span> : null}
-            {item.sourceKind ? <span className={styles.chip}>{humanize(item.sourceKind)}</span> : null}
-          </div>
-          {item.excerpt ? <p>{item.excerpt}</p> : null}
-          <div className={styles.evidenceLinks}>
-            {item.sourceUrl ? (
-              <a href={item.sourceUrl} rel="noreferrer" target="_blank">
-                Open original source <span aria-hidden="true">↗</span>
-              </a>
-            ) : null}
-            {item.applicationId ? (
-              <a href={`/admin/grants/${encodeURIComponent(item.applicationId)}`} target="_blank">
-                Open application <span aria-hidden="true">↗</span>
-              </a>
-            ) : null}
-          </div>
-        </li>
-      ))}
+      {evidence.map((item) => {
+        const changeClass = item.changeStatus === "changed"
+          ? styles.evidenceItemChanged
+          : item.changeStatus === "missing"
+            ? styles.evidenceItemMissing
+            : "";
+
+        return (
+          <li
+            className={`${styles.evidenceItem} ${changeClass}`}
+            id={`${anchorPrefix}-${item.citationNumber}`}
+            key={`${item.id}-${item.citationNumber}`}
+          >
+            <div className={styles.evidenceHeading}>
+              <span className={styles.citationNumber}>[{item.citationNumber}]</span>
+              <strong>{item.title}</strong>
+            </div>
+            <div className={styles.chipRow}>
+              {item.changeStatus === "changed" ? (
+                <span
+                  className={`${styles.chip} ${styles.evidenceChangedChip}`}
+                  title="The indexed source has changed since this briefing was generated."
+                >
+                  Changed since briefing
+                </span>
+              ) : null}
+              {item.changeStatus === "missing" ? (
+                <span
+                  className={`${styles.chip} ${styles.evidenceMissingChip}`}
+                  title="This evidence record is no longer available in the current index."
+                >
+                  No longer indexed
+                </span>
+              ) : null}
+              {item.evidenceRole ? (
+                <span className={styles.chip}>{humanize(item.evidenceRole)}</span>
+              ) : null}
+              {item.sourceKind ? (
+                <span className={styles.chip}>{humanize(item.sourceKind)}</span>
+              ) : null}
+            </div>
+            {item.excerpt ? <p>{item.excerpt}</p> : null}
+            <div className={styles.evidenceLinks}>
+              {item.sourceUrl ? (
+                <a href={item.sourceUrl} rel="noreferrer" target="_blank">
+                  Open original source <span aria-hidden="true">↗</span>
+                </a>
+              ) : null}
+              {item.applicationId ? (
+                <a href={`/admin/grants/${encodeURIComponent(item.applicationId)}`} target="_blank">
+                  Open application <span aria-hidden="true">↗</span>
+                </a>
+              ) : null}
+            </div>
+          </li>
+        );
+      })}
     </ol>
+  );
+}
+
+function EvidenceDisclosureSummary({ evidence }: { evidence: readonly GrantAnalysisEvidence[] }) {
+  const changedCount = evidence.filter(
+    (item) => item.changeStatus === "changed" || item.changeStatus === "missing"
+  ).length;
+
+  return (
+    <summary>
+      Evidence and citations <span>({evidence.length})</span>
+      {changedCount ? (
+        <span className={styles.evidenceChangeSummary}> · {changedCount} changed or unavailable</span>
+      ) : null}
+    </summary>
   );
 }
 
@@ -843,9 +899,7 @@ function ReportBody({ report, compact = false }: { report: GrantAnalysisReport; 
       ) : <p className={styles.muted}>The report completed without answer text.</p>}
       <EvidenceCoverage report={report} />
       <details className={styles.evidenceDisclosure}>
-        <summary>
-          Evidence and citations <span>({evidence.length})</span>
-        </summary>
+        <EvidenceDisclosureSummary evidence={evidence} />
         <EvidenceList evidence={evidence} reportId={report.id} />
       </details>
     </>
@@ -1627,9 +1681,7 @@ export function GrantAnalysisPanel({
             reportId={temporaryAnalysis.id}
           />
           <details className={styles.evidenceDisclosure}>
-            <summary>
-              Evidence and citations <span>({temporaryAnalysis.evidence.length})</span>
-            </summary>
+            <EvidenceDisclosureSummary evidence={temporaryAnalysis.evidence} />
             <EvidenceList evidence={temporaryAnalysis.evidence} reportId={temporaryAnalysis.id} />
           </details>
         </article>

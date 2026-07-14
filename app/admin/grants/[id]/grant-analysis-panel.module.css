@@ -702,6 +702,16 @@
   box-shadow: inset 3px 0 var(--blue, #2563eb);
 }
 
+.evidenceItemChanged {
+  background: #fffbeb;
+  box-shadow: inset 3px 0 #f59e0b;
+}
+
+.evidenceItemMissing {
+  background: #fff7ed;
+  box-shadow: inset 3px 0 #ea580c;
+}
+
 .evidenceHeading {
   align-items: flex-start;
   display: flex;
@@ -722,6 +732,24 @@
 
 .evidenceItem .chipRow {
   margin: 10px 0 0 34px;
+}
+
+.evidenceChangedChip {
+  background: #fff7ed;
+  border-color: #fed7aa;
+  color: #b45309;
+}
+
+.evidenceMissingChip {
+  background: #fff1f2;
+  border-color: #fecdd3;
+  color: #be123c;
+}
+
+.evidenceChangeSummary {
+  color: #b45309;
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .evidenceItem p {

@@ -178,6 +178,8 @@ Add a migration after `0012` with:
 The evidence fingerprint should hash the ordered document IDs/content hashes, application
 relationships, participant matches, prompt template version, retrieval configuration, and model
 configuration. Comparing the current fingerprint with the saved one drives the Fresh/Stale badge.
+For stale reports, each saved citation should also be compared with the current document bearing
+the same stable document key so the evidence list can identify records that changed or disappeared.
 
 ## Service and worker changes
 

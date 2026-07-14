@@ -78,7 +78,8 @@ export default async function CommitteeBriefingPage({
       applicationId: item.applicationId,
       knowledgeDocumentId: item.knowledgeDocumentId,
       evidenceRole: item.evidenceRole,
-      contentHash: item.contentHash
+      contentHash: item.contentHash,
+      changeStatus: item.changeStatus
     }))
   };
 
