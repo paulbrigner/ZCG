@@ -1023,7 +1023,7 @@ async function runGrantReconciliationForWorker(client: pg.Client, syncRunId: str
   let result;
 
   try {
-    result = await runGrantReconciliation();
+    result = await runGrantReconciliation({ syncRunId });
   } catch (error) {
     if (error instanceof ReconciliationBusyError) {
       return {

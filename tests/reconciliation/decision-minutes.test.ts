@@ -354,3 +354,87 @@ test("reviewed source decisions override inferred links without a mirrored sourc
   assert.equal(matched.matchMethod, "direct_source_url");
   assert.equal(matched.linkedSourceRecordId, null);
 });
+
+test("builds an exact, idempotent status assertion only from accepted key-takeaway decisions", () => {
+  const application = {
+    id: "00000000-0000-4000-8000-000000000021",
+    canonical_key: "github:ZcashCommunityGrants/zcashcommunitygrants#351",
+    title: "Example application",
+    normalized_status: "approved",
+    github_issue_number: "351",
+    github_issue_url: "https://github.com/ZcashCommunityGrants/zcashcommunitygrants/issues/351"
+  };
+  const mention = {
+    mentionKey: "meeting:example",
+    linkedSourceUrl: application.github_issue_url,
+    candidateTitle: application.title,
+    normalizedDecision: "approved_async",
+    decisionText: "Approved asynchronously",
+    rationaleText: null,
+    speakerNotes: [],
+    contentHash: "mention-content-hash",
+    metadata: { decisionSection: "key_takeaways" },
+    applicationId: application.id,
+    linkedSourceRecordId: null,
+    matchMethod: "direct_source_url",
+    confidence: 0.86,
+    reviewStatus: "accepted"
+  };
+  const source = {
+    sourceRecordId: "00000000-0000-4000-8000-000000000022",
+    forumTopicId: 123,
+    topicUrl: "https://forum.zcashcommunity.com/t/meeting/123",
+    title: "ZCG meeting",
+    meetingDate: "2026-07-14",
+    contentHash: "source-content-hash",
+    metadata: {}
+  };
+  const record = {
+    id: source.sourceRecordId,
+    source_kind: "forum_meeting_minutes",
+    source_id: source.topicUrl,
+    source_url: source.topicUrl,
+    checksum_sha256: "source-checksum",
+    title: source.title,
+    summary: null,
+    source_updated_at: "2026-07-14T18:00:00.000Z",
+    raw_payload: "{}",
+    metadata: "{}"
+  };
+  const assertion = hooks.exactDecisionStatusAssertion(
+    application as never,
+    mention as never,
+    "00000000-0000-4000-8000-000000000023",
+    source as never,
+    record as never
+  );
+
+  assert.ok(assertion);
+  assert.equal(assertion.toStatus, "approved");
+  assert.equal(assertion.effectiveDate, "2026-07-14");
+  assert.equal(
+    assertion.idempotencyKey,
+    "decision-mention:00000000-0000-4000-8000-000000000023:mention-content-hash"
+  );
+
+  assert.equal(
+    hooks.exactDecisionStatusAssertion(
+      application as never,
+      { ...mention, metadata: { decisionSection: "detailed_minutes" } } as never,
+      "00000000-0000-4000-8000-000000000023",
+      source as never,
+      record as never
+    ),
+    null
+  );
+  assert.equal(
+    hooks.exactDecisionStatusAssertion(
+      application as never,
+      { ...mention, confidence: 0.85 } as never,
+      "00000000-0000-4000-8000-000000000023",
+      source as never,
+      record as never
+    ),
+    null
+  );
+});

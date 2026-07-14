@@ -7,11 +7,13 @@ import {
   normalizeApplicationLabels,
   normalizeApplicationPage,
   normalizeApplicationSearch,
+  normalizeApplicationSort,
   normalizeApplicationStatus,
   normalizeGitHubIssueState,
   normalizeWorklistSortDirection,
   type ApplicationFilter,
-  type GrantApplicationRow,
+  type ApplicationSort,
+  type GrantApplicationListRow,
   type WorklistSortDirection
 } from "@/lib/admin/dashboard";
 import { isPublicPrototypePrincipal, requirePermission } from "@/lib/authorization";
@@ -43,46 +45,6 @@ function moneyText(value: string | null) {
   return Number.isFinite(parsed)
     ? parsed.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 })
     : "-";
-}
-
-function percentText(value: string | null) {
-  const parsed = Number(value ?? 0);
-  return Number.isFinite(parsed) ? `${Math.round(parsed * 100)}%` : "0%";
-}
-
-function sourceProfileLabel(profile: GrantApplicationRow["source_profile"]) {
-  switch (profile) {
-    case "matched":
-      return "GitHub + Sheet";
-    case "github_only":
-      return "GitHub only";
-    case "sheet_github_linked":
-      return "Sheet + GitHub link";
-    case "sheet_only":
-      return "Sheet only";
-    default:
-      return "Unknown";
-  }
-}
-
-function matchText(application: GrantApplicationRow) {
-  if (application.source_profile === "github_only") {
-    return "No Sheet match";
-  }
-
-  if (application.source_profile === "sheet_only") {
-    return "No GitHub match";
-  }
-
-  if (application.source_profile === "sheet_github_linked") {
-    return application.github_issue_number ? `GitHub #${application.github_issue_number} linked` : "GitHub linked";
-  }
-
-  if (application.source_profile === "matched") {
-    return percentText(application.match_confidence);
-  }
-
-  return "Unclassified";
 }
 
 function dateText(value: string | null) {
@@ -123,23 +85,6 @@ function statusLabel(value: string) {
 
 function githubIssueStateLabel(value: string) {
   return value === "none" ? "No GitHub issue" : statusLabel(value);
-}
-
-function githubIssueStateText(application: GrantApplicationRow) {
-  if (!application.github_issue_number) {
-    return "No GitHub issue";
-  }
-
-  return application.github_state
-    ? `GitHub #${application.github_issue_number} ${statusLabel(application.github_state)}`
-    : `GitHub #${application.github_issue_number}`;
-}
-
-function forumLinkText(application: GrantApplicationRow) {
-  const primary = numberText(application.primary_forum_thread_count);
-  const supporting = numberText(application.supporting_forum_reference_count);
-
-  return { primary, supporting };
 }
 
 function parseGitHubLabels(value: string | null | undefined): GitHubLabelSummary[] {
@@ -191,6 +136,74 @@ function GitHubLabelChips({ labels, limit }: { labels: GitHubLabelSummary[]; lim
   );
 }
 
+function notableGitHubLabels(labels: GitHubLabelSummary[]) {
+  return labels.filter((label) => !["intake", "review"].includes(label.labelCategory));
+}
+
+function timelineDateText(value: string) {
+  const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  const parsed = dateOnly
+    ? new Date(Date.UTC(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3])))
+    : new Date(value);
+
+  if (Number.isNaN(parsed.getTime())) {
+    return "date unavailable";
+  }
+
+  return parsed.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    timeZone: dateOnly ? "UTC" : "America/New_York"
+  });
+}
+
+function applicationTimeline(application: GrantApplicationListRow) {
+  const status = statusLabel(application.normalized_status);
+  const statusDate = application.status_effective_at
+    ?? application.status_effective_date
+    ?? application.status_observed_at;
+  const submittedDate = application.submitted_at ? timelineDateText(application.submitted_at) : null;
+  const submittedText = submittedDate
+    ? application.submitted_basis === "record_added"
+      ? `Record added ${submittedDate}`
+      : application.submitted_basis === "status_event"
+        ? `Submitted ${submittedDate}`
+        : `Application opened ${submittedDate}`
+    : null;
+
+  if (!statusDate || !application.status_provenance) {
+    return {
+      primary: "Status timing not yet available",
+      secondary: submittedText,
+      title: "The source record establishes the current status, but not when that status began."
+    };
+  }
+
+  const formattedDate = timelineDateText(statusDate);
+  const continuousStatus = ["submitted", "under_review", "active"].includes(application.normalized_status);
+  const primary = application.status_provenance === "observed"
+    ? `${status} first observed ${formattedDate}`
+    : application.status_provenance === "inferred"
+      ? `${status} by ${formattedDate}`
+      : continuousStatus
+        ? `${status} since ${formattedDate}`
+        : `${status} ${formattedDate}`;
+  const provenanceDescription = application.status_provenance === "exact"
+    ? "The date is stated by the underlying evidence."
+    : application.status_provenance === "inferred"
+      ? "The date is inferred from related source evidence and may not be the exact transition date."
+      : "This is the first time the system observed the status, not necessarily the date the status changed.";
+
+  return {
+    primary,
+    secondary: submittedText && application.normalized_status !== "submitted"
+      ? submittedText
+      : null,
+    title: provenanceDescription
+  };
+}
+
 function adminHref(params: {
   applicationFilter?: ApplicationFilter;
   applicationSearch?: string;
@@ -199,6 +212,7 @@ function adminHref(params: {
   applicationLabels?: string[];
   excludedApplicationLabels?: string[];
   applicationPage?: number;
+  applicationSort?: ApplicationSort;
   worklistSortDirection?: WorklistSortDirection;
 }) {
   const searchParams = new URLSearchParams();
@@ -231,6 +245,10 @@ function adminHref(params: {
 
   if (params.applicationPage && params.applicationPage > 1) {
     searchParams.set("applicationPage", String(params.applicationPage));
+  }
+
+  if (params.applicationSort && params.applicationSort !== "oldest") {
+    searchParams.set("applicationSort", params.applicationSort);
   }
 
   if (params.worklistSortDirection === "desc") {
@@ -322,6 +340,7 @@ export default async function AdminPage({
     applicationLabels?: string | string[];
     excludedApplicationLabels?: string | string[];
     applicationPage?: string | string[];
+    applicationSort?: string | string[];
     worklistOrder?: string | string[];
     dashboardView?: string | string[];
   }>;
@@ -393,6 +412,7 @@ export default async function AdminPage({
   const activeApplicationLabels = normalizeApplicationLabels(resolvedSearchParams.applicationLabels);
   const activeExcludedApplicationLabels = normalizeApplicationLabels(resolvedSearchParams.excludedApplicationLabels);
   const activeApplicationPage = normalizeApplicationPage(resolvedSearchParams.applicationPage);
+  const activeApplicationSort = normalizeApplicationSort(resolvedSearchParams.applicationSort);
   const activeWorklistSortDirection = normalizeWorklistSortDirection(resolvedSearchParams.worklistOrder);
   const dashboard = await getAdminDashboard({
     applicationFilter: activeApplicationFilter,
@@ -402,6 +422,7 @@ export default async function AdminPage({
     applicationLabels: activeApplicationLabels,
     excludedApplicationLabels: activeExcludedApplicationLabels,
     applicationPage: activeApplicationPage,
+    applicationSort: activeApplicationSort,
     worklistSortDirection: activeWorklistSortDirection
   });
   const totals = dashboard.applicationTotals;
@@ -429,7 +450,9 @@ export default async function AdminPage({
     githubIssueState: pagination.githubIssueState,
     applicationLabels: pagination.labels,
     excludedApplicationLabels: pagination.excludedLabels,
-    applicationPage: pagination.page - 1
+    applicationPage: pagination.page - 1,
+    applicationSort: pagination.sort,
+    worklistSortDirection: activeWorklistSortDirection
   });
   const nextPageHref = adminHref({
     applicationFilter: activeApplicationFilter,
@@ -438,7 +461,9 @@ export default async function AdminPage({
     githubIssueState: pagination.githubIssueState,
     applicationLabels: pagination.labels,
     excludedApplicationLabels: pagination.excludedLabels,
-    applicationPage: pagination.page + 1
+    applicationPage: pagination.page + 1,
+    applicationSort: pagination.sort,
+    worklistSortDirection: activeWorklistSortDirection
   });
   const labelTextBySlug = new Map(dashboard.applicationLabelOptions.map((option) => [option.label_slug, option.label_name]));
   const activeLabelNames = pagination.labels.map((label) => labelTextBySlug.get(label) ?? statusLabel(label));
@@ -462,7 +487,8 @@ export default async function AdminPage({
     resolvedSearchParams.githubIssueState,
     resolvedSearchParams.applicationLabels,
     resolvedSearchParams.excludedApplicationLabels,
-    resolvedSearchParams.applicationPage
+    resolvedSearchParams.applicationPage,
+    resolvedSearchParams.applicationSort
   ].some((value) => value !== undefined);
 
   return (
@@ -681,7 +707,7 @@ export default async function AdminPage({
           <div className="under-review-heading-tools">
             <span className="under-review-count">{numberText(dashboard.underReviewApplications.length)}</span>
             <Link
-              aria-label={`Reverse days outstanding order to ${
+              aria-label={`Reverse application age order to ${
                 activeWorklistSortDirection === "asc" ? "most to least" : "least to most"
               }`}
               className="under-review-sort"
@@ -693,11 +719,12 @@ export default async function AdminPage({
                 applicationLabels: activeApplicationLabels,
                 excludedApplicationLabels: activeExcludedApplicationLabels,
                 applicationPage: activeApplicationPage,
+                applicationSort: activeApplicationSort,
                 worklistSortDirection: activeWorklistSortDirection === "asc" ? "desc" : "asc"
               })}
               title="Calendar days since the application was opened on GitHub; falls back to when it was first added to this system."
             >
-              <span>Days outstanding</span>
+              <span>Application age</span>
               <strong>{activeWorklistSortDirection === "asc" ? "Least to most ↑" : "Most to least ↓"}</strong>
             </Link>
           </div>
@@ -723,7 +750,7 @@ export default async function AdminPage({
                   <strong>
                     {numberText(application.days_outstanding)}
                     <span className="visually-hidden">
-                      {application.days_outstanding === 1 ? " day outstanding" : " days outstanding"}
+                      {application.days_outstanding === 1 ? " day old" : " days old"}
                     </span>
                   </strong>
                 </div>
@@ -777,29 +804,12 @@ export default async function AdminPage({
             </div>
             <MetricHelp body={metricHelp.filterCounts} label="Application filter counts" />
           </div>
-        <nav className="filter-tabs" aria-label="Application filters">
-          {applicationFilterOptions.map((option) => {
-            const active = option.key === activeApplicationFilter;
-            const href = adminHref({
-              applicationFilter: option.key,
-              applicationSearch: pagination.search,
-              applicationStatus: pagination.status,
-              githubIssueState: pagination.githubIssueState,
-              applicationLabels: pagination.labels,
-              excludedApplicationLabels: pagination.excludedLabels
-            });
-
-            return (
-              <Link aria-current={active ? "page" : undefined} className={`filter-tab ${active ? "active" : ""}`} href={href} key={option.key}>
-                <span>{option.label}</span>
-                <strong>{numberText(applicationFilterCounts[option.key])}</strong>
-              </Link>
-            );
-          })}
-        </nav>
         <form action="/dashboard" className="table-controls" method="get">
           {activeApplicationFilter !== "all" ? (
             <input name="applicationFilter" type="hidden" value={activeApplicationFilter} />
+          ) : null}
+          {activeWorklistSortDirection === "desc" ? (
+            <input name="worklistOrder" type="hidden" value={activeWorklistSortDirection} />
           ) : null}
           <label className="search-field">
             <span>Search</span>
@@ -823,127 +833,211 @@ export default async function AdminPage({
             </select>
           </label>
           <label className="search-field compact-field">
-            <span>GitHub issue</span>
-            <select defaultValue={pagination.githubIssueState} name="githubIssueState">
-              <option value="">Any</option>
-              {dashboard.githubIssueStateOptions.map((option) => (
-                <option key={option.github_issue_state} value={option.github_issue_state}>
-                  {githubIssueStateLabel(option.github_issue_state)} ({numberText(option.application_count)})
-                </option>
-              ))}
+            <span>Sort</span>
+            <select defaultValue={pagination.sort} name="applicationSort">
+              <option value="oldest">Oldest applications</option>
+              <option value="newest">Newest applications</option>
+              <option value="funding_desc">Funding: highest first</option>
+              <option value="funding_asc">Funding: lowest first</option>
+              <option value="title">Application title</option>
             </select>
           </label>
-          <div className="search-field label-filter-field">
-            <span>Labels</span>
-            <div className="label-filter-list">
-              {dashboard.applicationLabelOptions.map((option) => (
-                <div className="label-filter-row" key={option.label_slug}>
-                  <span className="label-filter-name">
-                    <span
-                      className={`github-label-chip ${option.label_category}`}
-                      style={githubLabelStyle({ labelColor: option.label_color })}
-                      title={option.label_status ?? option.label_category}
-                    >
-                      {option.label_name}
-                    </span>
-                    <small>{numberText(option.application_count)}</small>
-                  </span>
-                  <label className="label-filter-toggle include" title={`Require ${option.label_name}`}>
-                    <input
-                      aria-label={`Require ${option.label_name}`}
-                      defaultChecked={pagination.labels.includes(option.label_slug)}
-                      name="applicationLabels"
-                      type="checkbox"
-                      value={option.label_slug}
-                    />
-                    <span>+</span>
-                  </label>
-                  <label className="label-filter-toggle exclude" title={`Exclude ${option.label_name}`}>
-                    <input
-                      aria-label={`Exclude ${option.label_name}`}
-                      defaultChecked={pagination.excludedLabels.includes(option.label_slug)}
-                      name="excludedApplicationLabels"
-                      type="checkbox"
-                      value={option.label_slug}
-                    />
-                    <span>-</span>
-                  </label>
-                </div>
-              ))}
-            </div>
-          </div>
-          <button type="submit">Search</button>
-          {pagination.search || pagination.status || pagination.githubIssueState || pagination.labels.length || pagination.excludedLabels.length ? (
-            <Link className="ghost-link" href={adminHref({ applicationFilter: activeApplicationFilter })}>
+          <button type="submit">Apply</button>
+          {pagination.search
+          || pagination.status !== "under_review"
+          || pagination.githubIssueState
+          || pagination.labels.length
+          || pagination.excludedLabels.length
+          || pagination.sort !== "oldest"
+          || activeApplicationFilter !== "all" ? (
+            <Link className="ghost-link" href="/dashboard">
               Clear
             </Link>
           ) : null}
+          <details
+            className="application-advanced-filters"
+            open={Boolean(
+              pagination.githubIssueState
+              || pagination.labels.length
+              || pagination.excludedLabels.length
+              || activeApplicationFilter !== "all"
+            )}
+          >
+            <summary>Advanced filters</summary>
+            <div className="application-advanced-filter-grid">
+              {!publicViewer ? (
+                <div className="search-field application-source-filter">
+                  <span>Source reconciliation</span>
+                  <nav className="filter-tabs" aria-label="Application source filters">
+                    {applicationFilterOptions.map((option) => {
+                      const active = option.key === activeApplicationFilter;
+                      const href = adminHref({
+                        applicationFilter: option.key,
+                        applicationSearch: pagination.search,
+                        applicationStatus: pagination.status,
+                        githubIssueState: pagination.githubIssueState,
+                        applicationLabels: pagination.labels,
+                        excludedApplicationLabels: pagination.excludedLabels,
+                        applicationSort: pagination.sort,
+                        worklistSortDirection: activeWorklistSortDirection
+                      });
+
+                      return (
+                        <Link
+                          aria-current={active ? "page" : undefined}
+                          className={`filter-tab ${active ? "active" : ""}`}
+                          href={href}
+                          key={option.key}
+                        >
+                          <span>{option.label}</span>
+                          <strong>{numberText(applicationFilterCounts[option.key])}</strong>
+                        </Link>
+                      );
+                    })}
+                  </nav>
+                </div>
+              ) : null}
+              <label className="search-field compact-field">
+                <span>GitHub issue</span>
+                <select defaultValue={pagination.githubIssueState} name="githubIssueState">
+                  <option value="">Any</option>
+                  {dashboard.githubIssueStateOptions.map((option) => (
+                    <option key={option.github_issue_state} value={option.github_issue_state}>
+                      {githubIssueStateLabel(option.github_issue_state)} ({numberText(option.application_count)})
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="search-field label-filter-field">
+                <span>Workflow labels</span>
+                <div className="label-filter-list">
+                  {dashboard.applicationLabelOptions.map((option) => (
+                    <div className="label-filter-row" key={option.label_slug}>
+                      <span className="label-filter-name">
+                        <span
+                          className={`github-label-chip ${option.label_category}`}
+                          style={githubLabelStyle({ labelColor: option.label_color })}
+                          title={option.label_status ?? option.label_category}
+                        >
+                          {option.label_name}
+                        </span>
+                        <small>{numberText(option.application_count)}</small>
+                      </span>
+                      <label className="label-filter-toggle include" title={`Require ${option.label_name}`}>
+                        <input
+                          aria-label={`Require ${option.label_name}`}
+                          defaultChecked={pagination.labels.includes(option.label_slug)}
+                          name="applicationLabels"
+                          type="checkbox"
+                          value={option.label_slug}
+                        />
+                        <span>+</span>
+                      </label>
+                      <label className="label-filter-toggle exclude" title={`Exclude ${option.label_name}`}>
+                        <input
+                          aria-label={`Exclude ${option.label_name}`}
+                          defaultChecked={pagination.excludedLabels.includes(option.label_slug)}
+                          name="excludedApplicationLabels"
+                          type="checkbox"
+                          value={option.label_slug}
+                        />
+                        <span>-</span>
+                      </label>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </details>
         </form>
         <div className="table-wrap">
-          <table className="data-table">
+          <table className="data-table application-summary-table">
             <thead>
               <tr>
                 <th>Application</th>
-                <th>Source state</th>
                 <th>Status</th>
-                <th>Amount</th>
-                <th>GitHub-Sheet match</th>
-                <th>
-                  <span className="table-heading-with-help">
-                    Sources
-                    <MetricHelp body={metricHelp.tableSources} label="Application source count" />
-                  </span>
-                </th>
-                <th>
-                  <span className="table-heading-with-help">
-                    Forum
-                    <MetricHelp body={metricHelp.tableForum} label="Application forum count" />
-                  </span>
-                </th>
-                <th>
-                  <span className="table-heading-with-help">
-                    Issues
-                    <MetricHelp body={metricHelp.tableIssues} label="Application issue count" />
-                  </span>
-                </th>
+                <th>Funding</th>
+                <th>Timeline</th>
+                <th>Briefing</th>
               </tr>
             </thead>
             <tbody>
               {dashboard.applications.length ? (
                 dashboard.applications.map((application) => {
-                  const githubLabels = parseGitHubLabels(application.github_labels);
-                  const forumLinks = forumLinkText(application);
+                  const githubLabels = notableGitHubLabels(parseGitHubLabels(application.github_labels));
+                  const timeline = applicationTimeline(application);
 
                   return (
                     <tr key={application.id}>
-                      <td>
+                      <td className="application-summary-identity">
                         <Link className="table-link" href={`/admin/grants/${application.id}`}>
                           {application.title}
                         </Link>
                         <span className="subtle">{application.applicant_name ?? "Unknown applicant"}</span>
-                        <GitHubLabelChips labels={githubLabels} limit={5} />
+                        <span className="application-source-links">
+                          {application.github_issue_url ? (
+                            <a href={application.github_issue_url} rel="noreferrer" target="_blank">
+                              Application source ↗
+                            </a>
+                          ) : null}
+                          {application.primary_forum_url ? (
+                            <a href={application.primary_forum_url} rel="noreferrer" target="_blank">
+                              Forum discussion ↗
+                            </a>
+                          ) : null}
+                        </span>
+                        <GitHubLabelChips labels={githubLabels} limit={3} />
                       </td>
                       <td>
-                        <span className={`badge ${application.source_profile}`}>{sourceProfileLabel(application.source_profile)}</span>
-                        <span className="subtle">{githubIssueStateText(application)}</span>
+                        <span className={`badge ${application.normalized_status}`}>{statusLabel(application.normalized_status)}</span>
                       </td>
-                      <td>
-                        <span className={`badge ${application.normalized_status}`}>{application.normalized_status}</span>
+                      <td className="application-funding">
+                        {application.approved_amount_usd ? (
+                          <>
+                            <strong>{moneyText(application.approved_amount_usd)}</strong>
+                            <span className="subtle">Approved</span>
+                            {application.requested_amount_usd
+                            && application.requested_amount_usd !== application.approved_amount_usd ? (
+                              <span className="subtle">Requested {moneyText(application.requested_amount_usd)}</span>
+                            ) : null}
+                          </>
+                        ) : application.requested_amount_usd ? (
+                          <>
+                            <strong>{moneyText(application.requested_amount_usd)}</strong>
+                            <span className="subtle">Requested</span>
+                          </>
+                        ) : (
+                          <span className="under-review-unavailable">Not recorded</span>
+                        )}
                       </td>
-                      <td>{moneyText(application.requested_amount_usd)}</td>
-                      <td>{matchText(application)}</td>
-                      <td>{numberText(application.source_count)}</td>
-                      <td>
-                        <span>{forumLinks.primary} primary</span>
-                        <span className="subtle">{forumLinks.supporting} supporting</span>
+                      <td className="application-timeline">
+                        <span title={timeline.title}>{timeline.primary}</span>
+                        {timeline.secondary ? <span className="subtle">{timeline.secondary}</span> : null}
                       </td>
-                      <td>{numberText(application.open_issue_count)}</td>
+                      <td className="application-briefing">
+                        {application.latest_briefing_id ? (
+                          <>
+                            <Link className="under-review-link primary" href={`/briefings/${application.latest_briefing_id}`}>
+                              Open briefing
+                            </Link>
+                            <span className={`briefing-evidence-state ${application.latest_briefing_evidence_status ?? "unknown"}`}>
+                              {application.latest_briefing_evidence_status === "changed"
+                                ? "Evidence changed"
+                                : application.latest_briefing_evidence_status === "current"
+                                  ? "Evidence current"
+                                  : "Freshness unknown"}
+                            </span>
+                          </>
+                        ) : (
+                          <span className="under-review-unavailable">No briefing yet</span>
+                        )}
+                      </td>
                     </tr>
                   );
                 })
               ) : (
                 <tr>
-                  <td colSpan={8}>No application records match this filter.</td>
+                  <td colSpan={5}>No application records match this filter.</td>
                 </tr>
               )}
             </tbody>

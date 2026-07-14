@@ -13,6 +13,7 @@ type RawSourceRecord = {
   source_kind: string;
   source_id: string;
   source_url: string | null;
+  checksum_sha256: string | null;
   title: string | null;
   summary: string | null;
   source_updated_at: string | null;
@@ -82,6 +83,28 @@ type ApplicationInput = {
   requestedAmountUsd: number | null;
   matchConfidence: number;
   sourceSummary: Record<string, unknown>;
+  statusEvidence?: ApplicationStatusEvidence;
+};
+
+type ApplicationStatusEvidence = {
+  provenance: "exact" | "observed" | "inferred";
+  effectiveAt: string | null;
+  effectiveDate: string | null;
+  confidence: number;
+  sourceRecordId: string | null;
+  sourceKind: string;
+  sourceId: string | null;
+  sourceUrl: string | null;
+  sourceChecksumSha256: string | null;
+  sourceField: string;
+  evidenceLocator: string;
+  evidence: Record<string, unknown>;
+};
+
+type ReconciliationContext = {
+  reconciliationRunId: string;
+  syncRunId: string | null;
+  observedAt: string;
 };
 
 type GrantInput = {
@@ -895,6 +918,184 @@ function resolveCanonicalStatus(sheetStatus: string | null, githubStatus: string
   return sheetStatus;
 }
 
+const datedDecisionStatuses = new Set(["approved", "declined", "withdrawn", "cancelled", "filtered"]);
+
+function normalizedCalendarDate(value: unknown) {
+  const candidate = stringValue(value);
+
+  if (!candidate) {
+    return null;
+  }
+
+  const isoMatch = candidate.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  const usMatch = candidate.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  const parts = isoMatch
+    ? { year: Number(isoMatch[1]), month: Number(isoMatch[2]), day: Number(isoMatch[3]) }
+    : usMatch
+      ? { year: Number(usMatch[3]), month: Number(usMatch[1]), day: Number(usMatch[2]) }
+      : null;
+
+  if (!parts) {
+    return null;
+  }
+
+  const date = new Date(Date.UTC(parts.year, parts.month - 1, parts.day));
+
+  if (
+    date.getUTCFullYear() !== parts.year ||
+    date.getUTCMonth() !== parts.month - 1 ||
+    date.getUTCDate() !== parts.day
+  ) {
+    return null;
+  }
+
+  return `${String(parts.year).padStart(4, "0")}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}`;
+}
+
+function validTimestamp(value: unknown) {
+  const candidate = stringValue(value);
+
+  if (!candidate) {
+    return null;
+  }
+
+  const parsed = new Date(candidate);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+}
+
+function statusEvidenceForPlannedApplication(
+  planned: PlannedApplication,
+  sourceRecordsById: ReadonlyMap<string, RawSourceRecord>
+): ApplicationStatusEvidence {
+  const linkedSources = planned.links.flatMap((link) => {
+    const source = sourceRecordsById.get(link.sourceRecordId);
+    return source ? [{ source, confidence: link.confidence }] : [];
+  });
+  const githubSource = linkedSources.find(({ source }) => source.source_kind === "github_issue") ?? null;
+  const sheetSource = linkedSources.find(({ source }) => source.source_kind === "google_sheet_row") ?? null;
+  const summary = planned.application.sourceSummary;
+  const registryStatus = statusFromSheet(stringValue(summary.historicalRegistryStatus));
+  const githubStatus = githubSource
+    ? statusFromGitHub({
+        labels: Array.isArray(summary.githubLabels)
+          ? summary.githubLabels.filter((label): label is string => typeof label === "string")
+          : [],
+        state: planned.application.githubState
+      } as GitHubApplication)
+    : "unknown";
+  const sheetWon = Boolean(
+    sheetSource &&
+      registryStatus &&
+      registryStatus !== "unknown" &&
+      resolveCanonicalStatus(registryStatus, githubStatus) === planned.application.normalizedStatus &&
+      !(registryStatus === "under_review" && datedDecisionStatuses.has(githubStatus))
+  );
+  const selected = sheetWon ? sheetSource : githubSource ?? sheetSource ?? linkedSources[0] ?? null;
+  const selectedSource = selected?.source ?? null;
+  const decisionDate = normalizedCalendarDate(summary.historicalRegistryDecisionDate);
+  const reviewedForumDate = normalizedCalendarDate(summary.decisionDate);
+
+  if (
+    decisionDate &&
+    datedDecisionStatuses.has(planned.application.normalizedStatus) &&
+    registryStatus === planned.application.normalizedStatus
+  ) {
+    const decisionSource = sheetSource ?? selected;
+    const source = decisionSource?.source ?? null;
+
+    return {
+      provenance: "exact",
+      effectiveAt: null,
+      effectiveDate: decisionDate,
+      confidence: decisionSource?.confidence ?? planned.application.matchConfidence,
+      sourceRecordId: source?.id ?? null,
+      sourceKind: source?.source_kind ?? "google_sheet_row",
+      sourceId: source?.source_id ?? null,
+      sourceUrl: source?.source_url ?? null,
+      sourceChecksumSha256: source?.checksum_sha256 ?? null,
+      sourceField: "Date Committee Approved/ Rejected",
+      evidenceLocator: source ? `source-record:${source.id}:committee-decision-date` : `canonical:${planned.application.canonicalKey}:committee-decision-date`,
+      evidence: {
+        basis: "official_registry_decision_date",
+        decisionDate,
+        registryStatus: stringValue(summary.historicalRegistryStatus),
+        canonicalStatus: planned.application.normalizedStatus
+      }
+    };
+  }
+
+  if (
+    reviewedForumDate &&
+    summary.sourceType === "reviewed_forum_application" &&
+    datedDecisionStatuses.has(planned.application.normalizedStatus)
+  ) {
+    return {
+      provenance: "inferred",
+      effectiveAt: null,
+      effectiveDate: reviewedForumDate,
+      confidence: planned.application.matchConfidence,
+      sourceRecordId: null,
+      sourceKind: "reviewed_forum_application",
+      sourceId: planned.application.canonicalKey,
+      sourceUrl: stringValue(summary.forumUrl),
+      sourceChecksumSha256: null,
+      sourceField: "decisionDate",
+      evidenceLocator: `canonical:${planned.application.canonicalKey}:reviewed-forum-decision-date`,
+      evidence: {
+        basis: "curated_forum_decision",
+        decisionDate: reviewedForumDate,
+        decisionSummary: stringValue(summary.decisionSummary)
+      }
+    };
+  }
+
+  if (planned.application.normalizedStatus === "submitted" && githubSource) {
+    const githubCreatedAt = validTimestamp(parseJsonRecord(githubSource.source.raw_payload).created_at);
+
+    if (githubCreatedAt) {
+      return {
+        provenance: "inferred",
+        effectiveAt: githubCreatedAt,
+        effectiveDate: null,
+        confidence: githubSource.confidence,
+        sourceRecordId: githubSource.source.id,
+        sourceKind: githubSource.source.source_kind,
+        sourceId: githubSource.source.source_id,
+        sourceUrl: githubSource.source.source_url,
+        sourceChecksumSha256: githubSource.source.checksum_sha256,
+        sourceField: "created_at",
+        evidenceLocator: `source-record:${githubSource.source.id}:github-created-at`,
+        evidence: {
+          basis: "github_issue_created_at",
+          note: "Submission inferred from GitHub issue creation"
+        }
+      };
+    }
+  }
+
+  return {
+    provenance: "observed",
+    effectiveAt: null,
+    effectiveDate: null,
+    confidence: selected?.confidence ?? planned.application.matchConfidence,
+    sourceRecordId: selectedSource?.id ?? null,
+    sourceKind: selectedSource?.source_kind ?? "canonical_reconciliation",
+    sourceId: selectedSource?.source_id ?? planned.application.canonicalKey,
+    sourceUrl: selectedSource?.source_url ?? planned.application.githubIssueUrl,
+    sourceChecksumSha256: selectedSource?.checksum_sha256 ?? null,
+    sourceField: sheetWon ? "Grant Status" : githubSource ? "labels/state" : "normalized_status",
+    evidenceLocator: selectedSource
+      ? `source-record:${selectedSource.id}:status-observation`
+      : `canonical:${planned.application.canonicalKey}:status-observation`,
+    evidence: {
+      basis: "reconciliation_observation",
+      canonicalStatus: planned.application.normalizedStatus,
+      registryStatus: stringValue(summary.historicalRegistryStatus),
+      githubStatus
+    }
+  };
+}
+
 function extractMarkdownSection(body: string | null, heading: string) {
   if (!body) {
     return null;
@@ -1272,6 +1473,7 @@ async function fetchSourceRecords(sourceKind: "github_issue" | "github_issue_com
               source_kind,
               source_id,
               source_url,
+              checksum_sha256,
               title,
               summary,
               source_updated_at,
@@ -1296,7 +1498,10 @@ async function fetchSourceRecords(sourceKind: "github_issue" | "github_issue_com
   return records;
 }
 
-async function bulkUpsertApplications(applications: ApplicationInput[]) {
+async function bulkUpsertApplications(
+  applications: ApplicationInput[],
+  context: ReconciliationContext
+) {
   const idsByCanonicalKey = new Map<string, string>();
 
   for (const batch of chunkArray(applications, writeBatchSize)) {
@@ -1310,7 +1515,27 @@ async function bulkUpsertApplications(applications: ApplicationInput[]) {
       normalized_status: application.normalizedStatus,
       requested_amount_usd: application.requestedAmountUsd,
       match_confidence: application.matchConfidence,
-      source_summary: application.sourceSummary
+      source_summary: application.sourceSummary,
+      status_provenance: application.statusEvidence?.provenance ?? "observed",
+      status_effective_at: application.statusEvidence?.effectiveAt ?? null,
+      status_effective_date: application.statusEvidence?.effectiveDate ?? null,
+      status_confidence: application.statusEvidence?.confidence ?? application.matchConfidence,
+      status_source_record_id: application.statusEvidence?.sourceRecordId ?? null,
+      status_source_kind: application.statusEvidence?.sourceKind ?? "canonical_reconciliation",
+      status_source_id: application.statusEvidence?.sourceId ?? application.canonicalKey,
+      status_source_url: application.statusEvidence?.sourceUrl ?? application.githubIssueUrl,
+      status_source_checksum_sha256: application.statusEvidence?.sourceChecksumSha256 ?? null,
+      status_source_field: application.statusEvidence?.sourceField ?? "normalized_status",
+      status_evidence_locator:
+        application.statusEvidence?.evidenceLocator ??
+        `canonical:${application.canonicalKey}:status-observation`,
+      status_evidence: application.statusEvidence?.evidence ?? {
+        basis: "reconciliation_observation",
+        canonicalStatus: application.normalizedStatus
+      },
+      sync_run_id: context.syncRunId,
+      reconciliation_run_id: context.reconciliationRunId,
+      observed_at: context.observedAt
     }));
 
     const result = await query<{ canonical_key: string; id: string }>(
@@ -1326,8 +1551,30 @@ async function bulkUpsertApplications(applications: ApplicationInput[]) {
              normalized_status text,
              requested_amount_usd numeric,
              match_confidence numeric,
-             source_summary jsonb
+             source_summary jsonb,
+             status_provenance text,
+             status_effective_at timestamptz,
+             status_effective_date date,
+             status_confidence numeric,
+             status_source_record_id uuid,
+             status_source_kind text,
+             status_source_id text,
+             status_source_url text,
+             status_source_checksum_sha256 text,
+             status_source_field text,
+             status_evidence_locator text,
+             status_evidence jsonb,
+             sync_run_id uuid,
+             reconciliation_run_id uuid,
+             observed_at timestamptz
            )
+       ),
+       existing as materialized (
+         select ga.id,
+                ga.canonical_key,
+                ga.normalized_status
+           from grant_applications ga
+           join input on input.canonical_key = ga.canonical_key
        ),
        upserted as (
          insert into grant_applications (
@@ -1367,6 +1614,77 @@ async function bulkUpsertApplications(applications: ApplicationInput[]) {
                        source_summary = excluded.source_summary,
                        updated_at = now()
          returning canonical_key, id
+       ),
+       recorded_status_events as (
+         insert into grant_application_status_events (
+           application_id,
+           application_canonical_key,
+           event_type,
+           from_status,
+           to_status,
+           provenance,
+           effective_at,
+           effective_date,
+           observed_at,
+           confidence,
+           source_record_id,
+           source_kind,
+           source_id,
+           source_url,
+           source_checksum_sha256,
+           source_field,
+           sync_run_id,
+           reconciliation_run_id,
+           evidence_locator,
+           evidence_fingerprint,
+           idempotency_key,
+           evidence
+         )
+         select upserted.id,
+                input.canonical_key,
+                case when existing.id is null then 'initial_observation' else 'status_transition' end,
+                existing.normalized_status,
+                input.normalized_status,
+                input.status_provenance,
+                input.status_effective_at,
+                input.status_effective_date,
+                input.observed_at,
+                greatest(0, least(1, coalesce(input.status_confidence, 0))),
+                input.status_source_record_id,
+                input.status_source_kind,
+                input.status_source_id,
+                input.status_source_url,
+                input.status_source_checksum_sha256,
+                input.status_source_field,
+                input.sync_run_id,
+                input.reconciliation_run_id,
+                input.status_evidence_locator,
+                encode(
+                  digest(
+                    jsonb_build_object(
+                      'canonicalKey', input.canonical_key,
+                      'fromStatus', existing.normalized_status,
+                      'toStatus', input.normalized_status,
+                      'provenance', input.status_provenance,
+                      'effectiveAt', input.status_effective_at,
+                      'effectiveDate', input.status_effective_date,
+                      'sourceRecordId', input.status_source_record_id,
+                      'sourceChecksum', input.status_source_checksum_sha256,
+                      'evidence', coalesce(input.status_evidence, '{}'::jsonb)
+                    )::text,
+                    'sha256'
+                  ),
+                  'hex'
+                ),
+                'reconcile:v1:' || input.reconciliation_run_id::text || ':' || upserted.id::text,
+                coalesce(input.status_evidence, '{}'::jsonb)
+           from input
+           join upserted using (canonical_key)
+           left join existing using (canonical_key)
+          where existing.id is null
+             or existing.normalized_status is distinct from input.normalized_status
+         on conflict (idempotency_key) do nothing
+         returning application_id
        )
        select canonical_key, id from upserted`,
       [JSON.stringify(payload)]
@@ -1754,12 +2072,17 @@ async function deleteMatchedHistoricalRegistryApplications(matchedHistoricalKeys
   );
 }
 
-async function performGrantReconciliation(): Promise<ReconciliationRunResult> {
+async function performGrantReconciliation(
+  context: ReconciliationContext
+): Promise<ReconciliationRunResult> {
   const [githubRecords, githubCommentRecords, sheetRecords] = await Promise.all([
     fetchSourceRecords("github_issue"),
     fetchSourceRecords("github_issue_comment"),
     fetchSourceRecords("google_sheet_row")
   ]);
+  const sourceRecordsById = new Map(
+    [...githubRecords, ...githubCommentRecords, ...sheetRecords].map((record) => [record.id, record])
+  );
 
   const githubApplications = githubRecords
     .map(parseGitHubApplication)
@@ -2187,7 +2510,17 @@ async function performGrantReconciliation(): Promise<ReconciliationRunResult> {
     counts.applicationsCreatedOrUpdated += 1;
   }
 
-  const applicationIds = await bulkUpsertApplications(plannedApplications.map((planned) => planned.application));
+  for (const planned of plannedApplications) {
+    planned.application.statusEvidence = statusEvidenceForPlannedApplication(
+      planned,
+      sourceRecordsById
+    );
+  }
+
+  const applicationIds = await bulkUpsertApplications(
+    plannedApplications.map((planned) => planned.application),
+    context
+  );
   const forumSourceIds = await bulkUpsertForumSourceRecords(
     plannedApplications.flatMap((planned) => planned.forumLinks)
   );
@@ -2249,7 +2582,7 @@ async function performGrantReconciliation(): Promise<ReconciliationRunResult> {
   counts.linksCreated = await bulkLinkSources(links);
   counts.issuesCreated = await bulkCreateIssues(issues);
   await applyManualSourceLinkDecisions();
-  const decisionMinutesResult = await reconcileGrantDecisionMinutes();
+  const decisionMinutesResult = await reconcileGrantDecisionMinutes(context);
   counts.decisionSourcesParsed = decisionMinutesResult.sourcesParsed;
   counts.decisionMentionsLinked = decisionMinutesResult.mentionsLinked;
   counts.decisionMentionsNeedingReview = decisionMinutesResult.mentionsNeedingReview;
@@ -2272,8 +2605,19 @@ async function performGrantReconciliation(): Promise<ReconciliationRunResult> {
   return counts;
 }
 
-export async function runGrantReconciliation(): Promise<ReconciliationRunResult> {
-  return withGrantReconciliationLease(performGrantReconciliation);
+export async function runGrantReconciliation(
+  options: { syncRunId?: string | null } = {}
+): Promise<ReconciliationRunResult> {
+  const reconciliationRunId = randomUUID();
+  const context: ReconciliationContext = {
+    reconciliationRunId,
+    syncRunId: options.syncRunId ?? null,
+    observedAt: new Date().toISOString()
+  };
+
+  return withGrantReconciliationLease(() => performGrantReconciliation(context), {
+    ownerId: reconciliationRunId
+  });
 }
 
 export const grantReconciliationTestHooks = {
@@ -2283,7 +2627,9 @@ export const grantReconciliationTestHooks = {
   grantReconciliationLeaseMinutes,
   grantReconciliationLeaseScope,
   releaseGrantReconciliationLease,
+  normalizedCalendarDate,
   resolveCanonicalStatus,
+  statusEvidenceForPlannedApplication,
   statusFromGitHub,
   statusFromSheet,
   withGrantReconciliationLease

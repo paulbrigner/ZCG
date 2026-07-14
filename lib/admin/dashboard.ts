@@ -2,11 +2,13 @@ import { query } from "@/lib/db";
 
 export const applicationFilters = ["all", "matched", "github_only", "sheet_only", "needs_review"] as const;
 export const githubIssueStates = ["open", "closed", "none"] as const;
+export const applicationSorts = ["oldest", "newest", "funding_desc", "funding_asc", "title"] as const;
 export const worklistSortDirections = ["asc", "desc"] as const;
 const applicationPageSize = 20;
 
 export type ApplicationFilter = (typeof applicationFilters)[number];
 export type GitHubIssueStateFilter = (typeof githubIssueStates)[number];
+export type ApplicationSort = (typeof applicationSorts)[number];
 export type WorklistSortDirection = (typeof worklistSortDirections)[number];
 
 export type SyncRunRow = {
@@ -58,6 +60,7 @@ export type ApplicationPagination = {
   githubIssueState: string;
   labels: string[];
   excludedLabels: string[];
+  sort: ApplicationSort;
 };
 
 export type ApplicationStatusOptionRow = {
@@ -99,6 +102,31 @@ export type GrantApplicationRow = {
   github_labels: string;
   open_issue_count: string;
   updated_at: string;
+};
+
+export type GrantApplicationListRow = {
+  id: string;
+  title: string;
+  applicant_name: string | null;
+  normalized_status: string;
+  requested_amount_usd: string | null;
+  approved_amount_usd: string | null;
+  github_issue_number: string | null;
+  github_issue_url: string | null;
+  primary_forum_url: string | null;
+  github_labels: string;
+  submitted_at: string | null;
+  submitted_basis: "status_event" | "github_created" | "record_added" | null;
+  submitted_provenance: "exact" | "observed" | "inferred" | null;
+  status_effective_at: string | null;
+  status_effective_date: string | null;
+  status_observed_at: string | null;
+  status_provenance: "exact" | "observed" | "inferred" | null;
+  status_source_kind: string | null;
+  status_event_type: string | null;
+  latest_briefing_id: string | null;
+  latest_briefing_title: string | null;
+  latest_briefing_evidence_status: "current" | "changed" | "unknown" | null;
 };
 
 export type UnderReviewApplicationRow = {
@@ -252,6 +280,11 @@ export function normalizeApplicationPage(value: string | string[] | undefined) {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : 1;
 }
 
+export function normalizeApplicationSort(value: string | string[] | undefined): ApplicationSort {
+  const candidate = Array.isArray(value) ? value[0] : value;
+  return applicationSorts.includes(candidate as ApplicationSort) ? (candidate as ApplicationSort) : "oldest";
+}
+
 export function normalizeWorklistSortDirection(
   value: string | string[] | undefined
 ): WorklistSortDirection {
@@ -381,6 +414,7 @@ export async function getAdminDashboard({
   githubIssueState = "",
   applicationLabels = [],
   excludedApplicationLabels = [],
+  applicationSort = "oldest",
   worklistSortDirection = "asc"
 }: {
   applicationFilter?: ApplicationFilter;
@@ -390,6 +424,7 @@ export async function getAdminDashboard({
   githubIssueState?: string;
   applicationLabels?: string[];
   excludedApplicationLabels?: string[];
+  applicationSort?: ApplicationSort;
   worklistSortDirection?: WorklistSortDirection;
 } = {}) {
   const whereClause = applicationFilterWhere[applicationFilter];
@@ -398,6 +433,14 @@ export async function getAdminDashboard({
   const issueState = normalizeGitHubIssueState(githubIssueState);
   const excludedLabels = normalizeApplicationLabels(excludedApplicationLabels);
   const labels = normalizeApplicationLabels(applicationLabels).filter((label) => !excludedLabels.includes(label));
+  const sort = normalizeApplicationSort(applicationSort);
+  const applicationOrderSql: Record<ApplicationSort, string> = {
+    oldest: "coalesce(submission_event.submitted_at, github_issue_source.created_at, ga.created_at) asc, ga.title, ga.id",
+    newest: "coalesce(submission_event.submitted_at, github_issue_source.created_at, ga.created_at) desc, ga.title, ga.id",
+    funding_desc: "coalesce(g.approved_amount_usd, ga.requested_amount_usd, 0) desc, ga.title, ga.id",
+    funding_asc: "coalesce(g.approved_amount_usd, ga.requested_amount_usd, 0) asc, ga.title, ga.id",
+    title: "lower(ga.title) asc, ga.id"
+  };
   const worklistOrder = normalizeWorklistSortDirection(worklistSortDirection);
   const worklistOrderSql = worklistOrder === "desc"
     ? "days_outstanding desc, coalesce(github_issue_source.created_at, ga.created_at) asc, ga.title"
@@ -562,7 +605,15 @@ export async function getAdminDashboard({
               latest_briefing.title as latest_briefing_title
          from grant_applications ga
          left join lateral (
-           select min(nullif(sr_created.raw_payload->>'created_at', '')::timestamptz) as created_at
+           select min(
+                    case
+                      when pg_input_is_valid(
+                        nullif(sr_created.raw_payload->>'created_at', ''),
+                        'timestamp with time zone'
+                      ) then nullif(sr_created.raw_payload->>'created_at', '')::timestamptz
+                      else null
+                    end
+                  ) as created_at
              from source_links sl_created
              join source_records sr_created on sr_created.id = sl_created.source_record_id
             where sl_created.canonical_type = 'grant_application'
@@ -597,38 +648,16 @@ export async function getAdminDashboard({
   const boundedPage = Math.min(page, totalPages);
   const offset = (boundedPage - 1) * applicationPageSize;
   const applicationQueryValues = [...applicationWhereValues, applicationPageSize, offset];
-  const applications = await query<GrantApplicationRow>(
+  const applications = await query<GrantApplicationListRow>(
     `select ga.id::text,
             ga.title,
             ga.applicant_name,
             ga.normalized_status,
             ga.requested_amount_usd::text,
-            ga.match_confidence::text,
-            ${sourceProfileSql()} as source_profile,
+            g.approved_amount_usd::text,
             ga.github_issue_number::text,
             ga.github_issue_url,
-            ga.github_state,
-            count(distinct sl.source_record_id)::text as source_count,
-            count(distinct sl.source_record_id) filter (where sr.source_kind = 'forum_link')::text as forum_link_count,
-            count(distinct sl.source_record_id) filter (
-              where sr.source_kind = 'forum_link'
-                and sl.relationship_role = 'primary_forum_thread'
-            )::text as primary_forum_thread_count,
-            count(distinct sl.source_record_id) filter (
-              where sr.source_kind = 'forum_link'
-                and coalesce(sl.relationship_role, 'source_evidence') <> 'primary_forum_thread'
-            )::text as supporting_forum_reference_count,
-            (
-              select count(*)::text
-                from grant_decision_mentions gdm_count
-               where gdm_count.application_id = ga.id
-                 and gdm_count.review_status = 'accepted'
-            ) as decision_mention_count,
-            (
-              select count(*)::text
-                from grant_application_github_labels gal_count
-               where gal_count.application_id = ga.id
-            ) as github_label_count,
+            primary_forum.source_url as primary_forum_url,
             (
               select coalesce(
                 jsonb_agg(
@@ -649,17 +678,139 @@ export async function getAdminDashboard({
                 from grant_application_github_labels gal
                where gal.application_id = ga.id
             ) as github_labels,
-            count(distinct ri.id) filter (where ri.status = 'open')::text as open_issue_count,
-            ga.updated_at::text
+            coalesce(submission_event.submitted_at, github_issue_source.created_at, ga.created_at)::text as submitted_at,
+            case
+              when submission_event.submitted_at is not null then 'status_event'
+              when github_issue_source.created_at is not null then 'github_created'
+              when ga.created_at is not null then 'record_added'
+              else null
+            end as submitted_basis,
+            case
+              when submission_event.submitted_at is not null then submission_event.provenance
+              when github_issue_source.created_at is not null then 'inferred'
+              else 'observed'
+            end as submitted_provenance,
+            current_status_event.effective_at::text as status_effective_at,
+            current_status_event.effective_date::text as status_effective_date,
+            current_status_event.observed_at::text as status_observed_at,
+            current_status_event.provenance as status_provenance,
+            current_status_event.source_kind as status_source_kind,
+            current_status_event.event_type as status_event_type,
+            latest_briefing.id as latest_briefing_id,
+            latest_briefing.title as latest_briefing_title,
+            case
+              when latest_briefing.id is null then null
+              when not exists (
+                select 1
+                  from grant_analysis_report_evidence evidence_snapshot
+                 where evidence_snapshot.report_id = latest_briefing.id
+              ) then 'unknown'
+              when exists (
+                select 1
+                  from grant_analysis_report_evidence evidence_snapshot
+                  left join grant_knowledge_documents current_document
+                    on current_document.document_key = evidence_snapshot.document_key
+                 where evidence_snapshot.report_id = latest_briefing.id
+                   and (
+                     current_document.document_key is null
+                     or current_document.content_hash is distinct from evidence_snapshot.content_hash
+                   )
+              ) then 'changed'
+              else 'current'
+            end as latest_briefing_evidence_status
        from grant_applications ga
-       left join source_links sl on sl.canonical_type = 'grant_application'
-                                and sl.canonical_id = ga.id
-       left join source_records sr on sr.id = sl.source_record_id
-       left join reconciliation_issues ri on ri.canonical_type = 'grant_application'
-                                         and ri.canonical_id = ga.id
+       left join grants g on g.application_id = ga.id
+       left join lateral (
+         select coalesce(
+                  status_event.effective_at,
+                  status_event.effective_date::timestamp at time zone 'America/New_York',
+                  status_event.observed_at
+                ) as submitted_at,
+                status_event.provenance
+           from grant_application_status_events status_event
+          where status_event.application_id = ga.id
+            and status_event.to_status = 'submitted'
+            and status_event.event_type <> 'retraction'
+            and not exists (
+              select 1
+                from grant_application_status_events correction
+               where correction.corrects_event_id = status_event.id
+            )
+          order by case status_event.provenance
+                     when 'exact' then 10
+                     when 'inferred' then 20
+                     else 30
+                   end,
+                   coalesce(
+                     status_event.effective_at,
+                     status_event.effective_date::timestamp at time zone 'America/New_York',
+                     status_event.observed_at
+                   ) asc,
+                   status_event.created_at asc,
+                   status_event.id
+          limit 1
+       ) submission_event on true
+       left join lateral (
+         select min(
+                  case
+                    when pg_input_is_valid(
+                      nullif(github_source.raw_payload->>'created_at', ''),
+                      'timestamp with time zone'
+                    ) then nullif(github_source.raw_payload->>'created_at', '')::timestamptz
+                    else null
+                  end
+                ) as created_at
+           from source_links github_link
+           join source_records github_source on github_source.id = github_link.source_record_id
+          where github_link.canonical_type = 'grant_application'
+            and github_link.canonical_id = ga.id
+            and github_source.source_kind = 'github_issue'
+       ) github_issue_source on true
+       left join lateral (
+         select status_event.effective_at,
+                status_event.effective_date,
+                status_event.observed_at,
+                status_event.provenance,
+                status_event.source_kind,
+                status_event.event_type
+           from grant_application_status_events status_event
+          where status_event.application_id = ga.id
+            and status_event.to_status = ga.normalized_status
+            and status_event.event_type <> 'retraction'
+            and not exists (
+              select 1
+                from grant_application_status_events correction
+               where correction.corrects_event_id = status_event.id
+            )
+          order by status_event.created_at desc, status_event.id desc
+          limit 1
+       ) current_status_event on true
+       left join lateral (
+         select forum_source.source_url
+           from source_links forum_link
+           join source_records forum_source on forum_source.id = forum_link.source_record_id
+          where forum_link.canonical_type = 'grant_application'
+            and forum_link.canonical_id = ga.id
+            and forum_source.source_kind = 'forum_link'
+            and forum_link.relationship_role = 'primary_forum_thread'
+          order by forum_link.confidence desc, forum_link.created_at asc
+          limit 1
+       ) primary_forum on true
+       left join lateral (
+         select report.id,
+                report.title
+           from grant_analysis_reports report
+          where report.application_id = ga.id
+            and report.report_type = 'committee_briefing'
+            and report.visibility = 'shared'
+            and report.status = 'succeeded'
+            and nullif(trim(report.answer_text), '') is not null
+          order by report.created_at desc,
+                   report.version_number desc
+          limit 1
+       ) latest_briefing on true
       where ${applicationWhereClause}
-      group by ga.id
-      order by ga.updated_at desc
+      order by ${applicationOrderSql[sort]}
       limit $${applicationLimitParam} offset $${applicationOffsetParam}`,
     applicationQueryValues
   );
@@ -684,7 +835,8 @@ export async function getAdminDashboard({
       status,
       githubIssueState: issueState,
       labels,
-      excludedLabels
+      excludedLabels,
+      sort
     } satisfies ApplicationPagination,
     applications: applications.rows
   };

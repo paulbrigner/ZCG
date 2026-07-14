@@ -11,6 +11,7 @@ type RawSourceRecord = {
   source_kind: string;
   source_id: string;
   source_url: string | null;
+  checksum_sha256?: string | null;
   title: string | null;
   summary: string | null;
   source_updated_at: string | null;
@@ -91,6 +92,12 @@ export type GrantDecisionMinutesResult = {
   mentionsLinked: number;
   mentionsNeedingReview: number;
   issuesCreated: number;
+};
+
+export type GrantDecisionMinutesContext = {
+  syncRunId?: string | null;
+  reconciliationRunId?: string | null;
+  observedAt?: string | null;
 };
 
 function parseJsonRecord(value: string | null): Record<string, unknown> {
@@ -745,6 +752,7 @@ async function fetchDecisionMinuteRecords() {
               source_kind,
               source_id,
               source_url,
+              checksum_sha256,
               title,
               summary,
               source_updated_at::text,
@@ -1201,6 +1209,131 @@ async function linkDecisionSourceToApplication(sourceRecordId: string, applicati
   );
 }
 
+function normalizedTerminalStatus(decision: string) {
+  if (decision === "approved_async") {
+    return "approved";
+  }
+
+  return isTerminalDecision(decision) ? decision : null;
+}
+
+function exactDecisionStatusAssertion(
+  application: GrantApplicationIndexRow,
+  mention: MatchedDecisionMention,
+  mentionId: string,
+  source: DecisionSourceInput,
+  record: RawSourceRecord
+) {
+  const toStatus = normalizedTerminalStatus(mention.normalizedDecision);
+
+  if (
+    !toStatus ||
+    !source.meetingDate ||
+    mention.reviewStatus !== "accepted" ||
+    mention.confidence < 0.86 ||
+    !isHighConfidenceDecisionMention(mention)
+  ) {
+    return null;
+  }
+
+  return {
+    applicationId: application.id,
+    applicationCanonicalKey: application.canonical_key,
+    toStatus,
+    effectiveDate: source.meetingDate,
+    observedAt: null as string | null,
+    confidence: mention.confidence,
+    sourceRecordId: record.id,
+    sourceKind: record.source_kind,
+    sourceId: record.source_id,
+    sourceUrl: source.topicUrl,
+    sourceChecksumSha256: record.checksum_sha256 ?? null,
+    evidenceLocator: `decision-mention:${mentionId}:meeting-date`,
+    evidenceFingerprint: mention.contentHash,
+    idempotencyKey: `decision-mention:${mentionId}:${mention.contentHash}`,
+    evidence: {
+      basis: "accepted_decision_minutes",
+      mentionId,
+      mentionKey: mention.mentionKey,
+      normalizedDecision: mention.normalizedDecision,
+      decisionText: mention.decisionText,
+      meetingDate: source.meetingDate,
+      meetingTitle: source.title,
+      matchMethod: mention.matchMethod,
+      reviewStatus: mention.reviewStatus,
+      parserVersion,
+      sourceRecordId: record.id,
+      sourceChecksumSha256: record.checksum_sha256 ?? null
+    }
+  };
+}
+
+async function recordExactDecisionStatusAssertion(
+  application: GrantApplicationIndexRow,
+  mention: MatchedDecisionMention,
+  mentionId: string,
+  source: DecisionSourceInput,
+  record: RawSourceRecord,
+  context: GrantDecisionMinutesContext
+) {
+  const assertion = exactDecisionStatusAssertion(application, mention, mentionId, source, record);
+
+  if (!assertion) {
+    return;
+  }
+
+  await query(
+    `insert into grant_application_status_events (
+       application_id,
+       application_canonical_key,
+       event_type,
+       to_status,
+       provenance,
+       effective_date,
+       observed_at,
+       confidence,
+       source_record_id,
+       source_kind,
+       source_id,
+       source_url,
+       source_checksum_sha256,
+       source_field,
+       sync_run_id,
+       reconciliation_run_id,
+       evidence_locator,
+       evidence_fingerprint,
+       idempotency_key,
+       evidence
+     )
+     values (
+       $1, $2, 'historical_assertion', $3, 'exact', $4::date,
+       coalesce($5::timestamptz, clock_timestamp()), $6,
+       $7, $8, $9, $10, $11, 'meeting_date',
+       $12::uuid, $13::uuid, $14, $15, $16, $17::jsonb
+     )
+     on conflict (idempotency_key) do nothing`,
+    [
+      assertion.applicationId,
+      assertion.applicationCanonicalKey,
+      assertion.toStatus,
+      assertion.effectiveDate,
+      context.observedAt ?? assertion.observedAt,
+      assertion.confidence,
+      assertion.sourceRecordId,
+      assertion.sourceKind,
+      assertion.sourceId,
+      assertion.sourceUrl,
+      assertion.sourceChecksumSha256,
+      context.syncRunId ?? null,
+      context.reconciliationRunId ?? null,
+      assertion.evidenceLocator,
+      assertion.evidenceFingerprint,
+      assertion.idempotencyKey,
+      JSON.stringify(assertion.evidence)
+    ]
+  );
+}
+
 function terminalDecisionConflict(decision: string, applicationStatus: string | null | undefined) {
   const status = applicationStatus ?? "unknown";
 
@@ -1308,7 +1441,9 @@ async function createIssue(input: {
   );
 }
 
-export async function reconcileGrantDecisionMinutes(): Promise<GrantDecisionMinutesResult> {
+export async function reconcileGrantDecisionMinutes(
+  context: GrantDecisionMinutesContext = {}
+): Promise<GrantDecisionMinutesResult> {
   const records = await fetchDecisionMinuteRecords();
   const applications = await fetchApplications();
   const [sourceLinks, manualSourceLinks] = await Promise.all([
@@ -1362,6 +1497,17 @@ export async function reconcileGrantDecisionMinutes(): Promise<GrantDecisionMinu
         result.mentionsLinked += 1;
 
         const application = applicationsById.get(matched.applicationId);
+
+        if (application && mentionId) {
+          await recordExactDecisionStatusAssertion(
+            application,
+            matched,
+            mentionId,
+            source,
+            record,
+            context
+          );
+        }
 
         if (application && mentionId && isHighConfidenceDecisionMention(matched)) {
           linkedMentionsForReview.push({
@@ -1517,6 +1663,7 @@ export const decisionMinutesTestHooks = {
   buildDirectMatchIndexes,
   decisionMentionsFromRecord,
   discourseTopicId,
+  exactDecisionStatusAssertion,
   extractDecision,
   extractMeetingDate,
   isHighConfidenceDecisionMention,

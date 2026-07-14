@@ -924,6 +924,45 @@ button:disabled {
   margin-bottom: 14px;
 }
 
+.application-advanced-filters {
+  background: #f8fafc;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  flex: 1 0 100%;
+  margin-top: 2px;
+  overflow: hidden;
+}
+
+.application-advanced-filters > summary {
+  color: #273244;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 800;
+  list-style-position: inside;
+  padding: 10px 12px;
+}
+
+.application-advanced-filters[open] > summary {
+  border-bottom: 1px solid var(--line);
+}
+
+.application-advanced-filter-grid {
+  align-items: end;
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(220px, auto) minmax(320px, 1fr);
+  padding: 14px;
+}
+
+.application-source-filter,
+.application-advanced-filter-grid .label-filter-field {
+  grid-column: 1 / -1;
+}
+
+.application-source-filter .filter-tabs {
+  margin: 0;
+}
+
 .dashboard-operations {
   order: 3;
 }
@@ -1381,6 +1420,94 @@ button:disabled {
   font-size: 12px;
   font-weight: 800;
   text-transform: uppercase;
+}
+
+.application-summary-table {
+  min-width: 940px;
+}
+
+.application-summary-table th:first-child {
+  width: 32%;
+}
+
+.application-summary-table th:nth-child(2) {
+  width: 12%;
+}
+
+.application-summary-table th:nth-child(3) {
+  width: 13%;
+}
+
+.application-summary-table th:nth-child(4) {
+  width: 25%;
+}
+
+.application-summary-table th:nth-child(5) {
+  width: 18%;
+}
+
+.application-summary-table td {
+  padding-bottom: 15px;
+  padding-top: 15px;
+}
+
+.application-summary-identity .table-link {
+  display: inline-block;
+  line-height: 1.35;
+}
+
+.application-source-links {
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 12px;
+  gap: 5px 12px;
+  margin-top: 7px;
+}
+
+.application-source-links a {
+  color: #1d4ed8;
+  font-weight: 700;
+}
+
+.application-funding strong {
+  display: block;
+  font-size: 15px;
+  white-space: nowrap;
+}
+
+.application-timeline {
+  color: #273244;
+  line-height: 1.45;
+}
+
+.application-briefing {
+  display: grid;
+  gap: 7px;
+  justify-items: start;
+}
+
+.briefing-evidence-state {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  display: inline-flex;
+  font-size: 10px;
+  font-weight: 850;
+  line-height: 1;
+  padding: 5px 7px;
+  text-transform: uppercase;
+}
+
+.briefing-evidence-state.current {
+  background: #ecfdf5;
+  border-color: #a7f3d0;
+  color: var(--green);
+}
+
+.briefing-evidence-state.changed {
+  background: #fff7ed;
+  border-color: #fed7aa;
+  color: #b45309;
 }
 
 .table-link {
@@ -2033,7 +2160,8 @@ button:disabled {
   .home-coverage-grid,
   .home-explore,
   .reconciliation-decision-form,
-  .reconciliation-facts {
+  .reconciliation-facts,
+  .application-advanced-filter-grid {
     grid-template-columns: 1fr;
   }
 

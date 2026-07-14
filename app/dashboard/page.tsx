@@ -8,6 +8,8 @@ type DashboardSearchParams = {
   applicationLabels?: string | string[];
   excludedApplicationLabels?: string | string[];
   applicationPage?: string | string[];
+  applicationSort?: string | string[];
+  worklistOrder?: string | string[];
 };
 
 export default async function DashboardPage({

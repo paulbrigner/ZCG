@@ -25,6 +25,155 @@ test("Reference Flow fixture resolves stale Sheet review status to GitHub declin
   assert.equal(hooks.resolveCanonicalStatus(sheetStatus, githubStatus), "declined");
 });
 
+test("normalizes only unambiguous ISO and US calendar dates", () => {
+  assert.equal(hooks.normalizedCalendarDate("2026-07-14"), "2026-07-14");
+  assert.equal(hooks.normalizedCalendarDate("7/14/2026"), "2026-07-14");
+  assert.equal(hooks.normalizedCalendarDate("2026-02-30"), null);
+  assert.equal(hooks.normalizedCalendarDate("July 14, 2026"), null);
+});
+
+test("uses an official registry decision date as exact status evidence", () => {
+  const github = {
+    id: "00000000-0000-0000-0000-000000000011",
+    source_kind: "github_issue",
+    source_id: "ZcashCommunityGrants/zcashcommunitygrants#351",
+    source_url: "https://github.com/ZcashCommunityGrants/zcashcommunitygrants/issues/351",
+    checksum_sha256: "github-checksum",
+    source_updated_at: "2026-07-14T12:00:00.000Z",
+    raw_payload: JSON.stringify({ created_at: "2026-07-01T12:00:00.000Z" }),
+    metadata: "{}",
+    title: "Example",
+    summary: null
+  };
+  const sheet = {
+    ...github,
+    id: "00000000-0000-0000-0000-000000000012",
+    source_kind: "google_sheet_row",
+    source_id: "sheet:1164534734:row:1",
+    checksum_sha256: "sheet-checksum"
+  };
+  const evidence = hooks.statusEvidenceForPlannedApplication(
+    {
+      application: {
+        canonicalKey: "github:ZcashCommunityGrants/zcashcommunitygrants#351",
+        title: "Example",
+        applicantName: "Example Applicant",
+        githubIssueNumber: 351,
+        githubIssueUrl: github.source_url,
+        githubState: "closed",
+        normalizedStatus: "approved",
+        requestedAmountUsd: 10_000,
+        matchConfidence: 1,
+        sourceSummary: {
+          githubLabels: ["Grant Approved"],
+          historicalRegistryStatus: "Approved",
+          historicalRegistryDecisionDate: "7/14/2026"
+        }
+      },
+      links: [
+        { sourceRecordId: github.id, confidence: 1 },
+        { sourceRecordId: sheet.id, confidence: 1 }
+      ],
+      githubLabels: [],
+      forumLinks: [],
+      grant: null,
+      issues: []
+    } as never,
+    new Map([
+      [github.id, github],
+      [sheet.id, sheet]
+    ]) as never
+  );
+
+  assert.equal(evidence.provenance, "exact");
+  assert.equal(evidence.effectiveDate, "2026-07-14");
+  assert.equal(evidence.effectiveAt, null);
+  assert.equal(evidence.sourceRecordId, sheet.id);
+  assert.equal(evidence.sourceField, "Date Committee Approved/ Rejected");
+
+  const conflicting = hooks.statusEvidenceForPlannedApplication(
+    {
+      application: {
+        canonicalKey: "github:ZcashCommunityGrants/zcashcommunitygrants#351",
+        title: "Example",
+        applicantName: "Example Applicant",
+        githubIssueNumber: 351,
+        githubIssueUrl: github.source_url,
+        githubState: "closed",
+        normalizedStatus: "declined",
+        requestedAmountUsd: 10_000,
+        matchConfidence: 1,
+        sourceSummary: {
+          githubLabels: ["Grant Declined"],
+          historicalRegistryStatus: "Approved",
+          historicalRegistryDecisionDate: "7/14/2026"
+        }
+      },
+      links: [
+        { sourceRecordId: github.id, confidence: 1 },
+        { sourceRecordId: sheet.id, confidence: 1 }
+      ],
+      githubLabels: [],
+      forumLinks: [],
+      grant: null,
+      issues: []
+    } as never,
+    new Map([
+      [github.id, github],
+      [sheet.id, sheet]
+    ]) as never
+  );
+
+  assert.equal(conflicting.provenance, "observed");
+  assert.equal(conflicting.effectiveDate, null);
+});
+
+test("infers submission from GitHub creation without treating updates or closure as decisions", () => {
+  const github = {
+    id: "00000000-0000-0000-0000-000000000013",
+    source_kind: "github_issue",
+    source_id: "ZcashCommunityGrants/zcashcommunitygrants#352",
+    source_url: "https://github.com/ZcashCommunityGrants/zcashcommunitygrants/issues/352",
+    checksum_sha256: "github-checksum",
+    source_updated_at: "2026-07-14T18:00:00.000Z",
+    raw_payload: JSON.stringify({
+      created_at: "2026-07-02T13:14:15.000Z",
+      updated_at: "2026-07-14T18:00:00.000Z",
+      closed_at: "2026-07-13T17:00:00.000Z"
+    }),
+    metadata: "{}",
+    title: "Submitted example",
+    summary: null
+  };
+  const evidence = hooks.statusEvidenceForPlannedApplication(
+    {
+      application: {
+        canonicalKey: "github:ZcashCommunityGrants/zcashcommunitygrants#352",
+        title: "Submitted example",
+        applicantName: null,
+        githubIssueNumber: 352,
+        githubIssueUrl: github.source_url,
+        githubState: "open",
+        normalizedStatus: "submitted",
+        requestedAmountUsd: null,
+        matchConfidence: 1,
+        sourceSummary: { githubLabels: [] }
+      },
+      links: [{ sourceRecordId: github.id, confidence: 1 }],
+      githubLabels: [],
+      forumLinks: [],
+      grant: null,
+      issues: []
+    } as never,
+    new Map([[github.id, github]]) as never
+  );
+
+  assert.equal(evidence.provenance, "inferred");
+  assert.equal(evidence.effectiveAt, "2026-07-02T13:14:15.000Z");
+  assert.equal(evidence.effectiveDate, null);
+  assert.equal(evidence.sourceField, "created_at");
+});
+
 test("removes existing grant rows only for processed applications that are no longer funded", async () => {
   const calls: Array<{ text: string; values: readonly unknown[] }> = [];
   const deleted = await hooks.deleteGrantsForUnfundedProcessedApplications(
