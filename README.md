@@ -23,7 +23,7 @@ ZCG to replace its current tools first.
 | Source mirroring | GitHub issues and comments, two public ZCG Google Sheet tabs, linked Zcash Community Forum topics, and the Forum's Community Grants Updates category |
 | Source refresh | Signed GitHub and Discourse callbacks feed a buffered, deduplicated targeted-refresh queue; a lightweight public-Sheet checksum check runs every 15 minutes; the existing Admin action and daily full refresh remain the verification and recovery path |
 | Evidence preservation | Checksum-tracked source records in PostgreSQL and optional aggregate JSON snapshots in private S3 |
-| Reconciliation | Canonical applications, funded-status grant records, stale-grant cleanup when an application leaves a funded status, GitHub label normalization, source links, confidence scores, generated issues, and durable reviewer decisions |
+| Reconciliation | Canonical applications, funded-status grant records, normalized FPF milestone/disbursement ledger rows, stale-grant cleanup when an application leaves a funded status, GitHub label normalization, source links, confidence scores, generated issues, and durable reviewer decisions |
 | Decision history | Meeting-minute topics parsed into decision sources and grant mentions with rationale, speaker notes, provenance, and review status |
 | Knowledge retrieval | PostgreSQL full-text search, pgvector embeddings, hybrid retrieval, citation-grounded answers, and application-scoped evidence packs |
 | Committee decision support | Versioned, publicly viewable shared briefings plus temporary, private, or shared custom analyses with durable citation snapshots, freshness checks, and audit history |
@@ -31,9 +31,12 @@ ZCG to replace its current tools first.
 | Access and audit | Better Auth sign-in emails containing both a secure link and one-time code, application-owned roles and permissions, server-side authorization, and audit events |
 | Deployment | Next.js on AWS Amplify SSR, Aurora PostgreSQL through the RDS Data API, and CDK-managed workers, snapshots, secrets, logs, and optional alarms |
 
-Not yet implemented as first-class workflow data: milestones, progress updates,
-payment requests and disbursements, RFPs, KYC, agreements, attachments, an
-applicant portal, or controlled writeback to the current public systems.
+Milestones and explicitly recorded disbursements from the mirrored FPF Sheet
+are now normalized as read-only, provenance-linked ledger evidence. They do
+not by themselves prove that a progress update was accepted, a payment request
+was approved, or a transaction settled on-chain. Progress updates, payment
+requests/approvals, RFPs, KYC, agreements, attachments, an applicant portal,
+and controlled writeback are not yet implemented as first-class workflows.
 
 ### Last-observed prototype corpus
 
@@ -122,6 +125,7 @@ flowchart LR
 
     subgraph canonicalStore ["Canonical and review storage"]
         applications[("grant_applications and grants")]
+        milestoneLedger[("grant_milestones and grant_disbursements")]
         applicationLabels[("grant_application_github_labels")]
         sourceLinks[("source_links")]
         reconciliationIssues[("reconciliation_issues")]
@@ -152,6 +156,7 @@ flowchart LR
     reviewer --> manualDecisions
     manualDecisions --> reconcile
     reconcile --> applications
+    reconcile --> milestoneLedger
     reconcile --> applicationLabels
     reconcile --> sourceLinks
     reconcile --> reconciliationIssues
@@ -181,7 +186,7 @@ explicit rather than silently treated as complete coverage.
 | --- | --- | --- |
 | GitHub issues | `source_records` as `github_issue` | `grant_applications`; normalized `grant_application_github_labels`; `source_links`; possible `grants` and `reconciliation_issues` |
 | GitHub comments | `source_records` as `github_issue_comment` | Parent-application evidence; discovered Forum URLs can produce linked Forum records |
-| ZCG Google Sheet | `google_sheet_tab` and `google_sheet_row` records for the configured All Grants Tracking and ZCG Grants/milestone-detail tabs | Historical applications, funded-status grants, source links, and reconciliation issues |
+| ZCG Google Sheet | `google_sheet_tab` and `google_sheet_row` records for the configured All Grants Tracking and ZCG Grants/milestone-detail tabs | Historical applications, funded-status grants, conservatively matched `grant_milestones` and `grant_disbursements`, source links, and reconciliation issues |
 | Forum topics discovered in GitHub or Sheet data | `source_records` as `forum_link`, including topic metadata, posts, plain text, and rendered post HTML | Primary-thread or supporting-reference `source_links`; knowledge documents |
 | Forum Community Grants Updates category | `forum_meeting_minutes` or `forum_update_topic` source records | Meeting minutes become `grant_decision_sources`, `grant_decision_mentions`, decision links, and review issues; generic update topics currently remain raw evidence |
 | Reviewer judgments | Reconciliation UI/API or portable JSON import into `reconciliation_decisions` | Link/unlink decisions, application relationships, and issue resolutions are replayed after generated reconciliation; field-override decisions are persisted but not yet applied |
@@ -202,8 +207,16 @@ Important boundaries:
   Reconciliation also deletes an existing grant row if its processed
   application later becomes declined, withdrawn, cancelled, or otherwise
   leaves those funded statuses.
-- Milestone and payment detail is still source evidence and coarse summary data,
-  not normalized milestone or payment objects.
+- Matched rows from the `ZCG Grants` milestone-detail tab are normalized into
+  read-only milestone and disbursement records while retaining the original
+  Sheet row, URL, match confidence, and linkage method. Automatic projections
+  require a strong reconciliation match; reviewer-confirmed links are also
+  eligible. Ambiguous rows remain reconciliation issues rather than being
+  silently attached.
+- The Sheet's `Amount (USD)` row value is not treated as a disbursement. A disbursement row
+  is created only when the Sheet explicitly records a paid date, ZEC amount, or
+  USD-disbursed amount. No payment-request, approval, progress-update, or
+  on-chain-settlement state is inferred from those fields.
 - Linked application Forum topics can mirror up to 1,000 posts by default;
   Community Grants Updates topics default to 20 posts per topic.
 - S3 snapshots are optional. When no snapshot bucket is configured, raw payloads
@@ -214,7 +227,7 @@ Important boundaries:
 | Route | Purpose | Access |
 | --- | --- | --- |
 | `/dashboard` | Clean committee worklist for applications under review, direct grant and briefing links, and a full application registry that is collapsed by default | Public read-only mode; authenticated operations depend on role permissions |
-| `/admin/grants/:id` | Application details, labels, linked evidence, decision history, and committee/custom grounded analysis | Core evidence and published shared briefings are public; reconciliation details and private reports require authentication and permissions |
+| `/admin/grants/:id` | Application details, FPF milestone/disbursement ledger, labels, linked evidence, decision history, and committee/custom grounded analysis | Core evidence and published shared briefings are public; reconciliation details and private reports require authentication and permissions |
 | `/briefings/:id` | Dedicated, citation-grounded committee briefing with links back to its grant and the dashboard | Public when the shared briefing completed successfully and has content |
 | `/admin/knowledge` | Keyword, semantic, hybrid, and grounded evidence search with an explanation of the selected retrieval and answer modes | Public evidence summaries can use all retrieval modes; anonymous semantic and hybrid searches have usage controls and keyword fallback; AI-composed answers require permissions |
 | `/admin/telemetry` | Source, reconciliation, corpus, index, embedding, provider, and aggregate anonymous-search status | Authenticated operational roles |
@@ -483,17 +496,21 @@ files and account-specific CDK context are ignored.
 
 ## Proposed Next Work
 
-1. Normalize milestones, progress updates, payment requests, disbursements, and
-   status timelines from the mirrored corpus.
+1. Add durable progress-update, payment-request, and approval objects once the
+   authoritative source fields and identifiers are agreed; do not infer those
+   workflow states from the FPF disbursement ledger.
 2. Add reviewer-assisted status normalization and richer decision-link review.
 3. Decide whether and how to mirror Jotform, website content, and approved
    private operational records.
-4. Promote stable public grant URLs and exports from explicit projections; the
+4. Enrich normalized milestones with durable cross-source grant/milestone IDs
+   and, where publishable, payment-request or transaction references supplied
+   by the authoritative systems.
+5. Promote stable public grant URLs and exports from explicit projections; the
    current public grant details still live under the prototype's `/admin/grants`
    route structure.
-5. Add applicant and FPF/ZCG workflow surfaces only after source confidence and
+6. Add applicant and FPF/ZCG workflow surfaces only after source confidence and
    privacy boundaries are agreed.
-6. Complete post-deploy cutover observation for the administrator-configured
+7. Complete post-deploy cutover observation for the administrator-configured
    GitHub and Discourse callbacks, monitor the 15-minute public Sheet poll and
    3:00 AM verification run, and treat a Google Drive watch as an optional future
    experiment. Define future writeback, archive, and rollback policies

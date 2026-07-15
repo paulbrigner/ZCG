@@ -22,7 +22,7 @@ const capabilities = [
   },
   {
     title: "Reconcile grant history",
-    body: "Related records become canonical applications, funded-grant records, normalized labels, decision history, confidence scores, and explicit review issues."
+    body: "Related records become canonical applications, funded-grant records, normalized FPF milestone/disbursement ledger rows, labels, decision history, confidence scores, and explicit review issues."
   },
   {
     title: "Keep reviewer judgment durable",
@@ -243,16 +243,16 @@ export default async function HomePage() {
             <h2>Current source coverage</h2>
             <ul className="home-list">
               <li>GitHub grant issues, labels, and comments</li>
-              <li>ZCG All Grants and milestone/payment-detail Sheet tabs</li>
+              <li>ZCG All Grants plus normalized FPF milestone and recorded-disbursement ledger rows</li>
               <li>Forum topics discovered from applications and registry records</li>
               <li>Community Grants Updates and meeting-decision history</li>
             </ul>
           </article>
           <article className="panel">
             <p className="eyebrow">Explicit boundary</p>
-            <h2>Not yet normalized</h2>
+            <h2>Not yet first-class workflows</h2>
             <ul className="home-list">
-              <li>Milestones, progress updates, payment requests, and disbursements</li>
+              <li>Progress updates, payment requests, approvals, and settlement verification</li>
               <li>Jotform RFP intake and website content</li>
               <li>KYC, agreements, attachments, and private operations</li>
               <li>Applicant workflows and controlled writeback to current systems</li>

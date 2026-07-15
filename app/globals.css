@@ -684,6 +684,169 @@ button:disabled {
   margin-top: 6px;
 }
 
+.grant-ledger-panel {
+  display: grid;
+  gap: 16px;
+}
+
+.grant-ledger-heading {
+  align-items: flex-start;
+  display: flex;
+  gap: 20px;
+  justify-content: space-between;
+}
+
+.grant-ledger-heading h2 {
+  margin: 4px 0 6px;
+}
+
+.grant-ledger-heading p,
+.grant-ledger-caveat {
+  margin: 0;
+}
+
+.grant-ledger-heading .section-count {
+  flex: 0 0 auto;
+  margin-top: 4px;
+}
+
+.grant-ledger-caveat {
+  background: #f8fafc;
+  border-left: 3px solid #94a3b8;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 10px 12px;
+}
+
+.grant-ledger-list {
+  display: grid;
+  gap: 12px;
+}
+
+.grant-ledger-row {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+}
+
+.grant-ledger-row-heading {
+  align-items: flex-start;
+  display: flex;
+  gap: 20px;
+  justify-content: space-between;
+}
+
+.grant-ledger-row-heading h3 {
+  font-size: 18px;
+  margin: 3px 0 0;
+}
+
+.grant-ledger-row-context {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  margin: 0;
+  text-transform: uppercase;
+}
+
+.grant-ledger-allocation {
+  display: grid;
+  flex: 0 0 auto;
+  gap: 3px;
+  justify-items: end;
+}
+
+.grant-ledger-allocation span,
+.grant-ledger-facts dt {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 850;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.grant-ledger-allocation strong {
+  font-size: 17px;
+}
+
+.grant-ledger-facts {
+  background: var(--line);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  display: grid;
+  gap: 1px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0;
+  overflow: hidden;
+}
+
+.grant-ledger-facts > div {
+  background: #ffffff;
+  min-width: 0;
+  padding: 10px 12px;
+}
+
+.grant-ledger-facts dd {
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 750;
+  line-height: 1.4;
+  margin: 5px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.grant-ledger-facts small {
+  color: var(--muted);
+  display: block;
+  font-size: 11px;
+  margin-top: 4px;
+}
+
+.grant-ledger-footer,
+.grant-ledger-source-links {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.grant-ledger-footer {
+  justify-content: space-between;
+}
+
+.grant-ledger-source-links {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.grant-ledger-provenance {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.grant-ledger-provenance summary {
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.grant-ledger-provenance p {
+  margin: 6px 0 0;
+}
+
+.grant-ledger-empty {
+  background: #f8fafc;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+  padding: 16px;
+}
+
 .application-review-signals {
   display: grid;
   gap: 14px;
@@ -2224,6 +2387,7 @@ button:disabled {
 
   .application-evaluation-facts,
   .application-review-signals,
+  .grant-ledger-facts,
   .application-operational-metrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -2263,8 +2427,19 @@ button:disabled {
 
   .application-evaluation-facts,
   .application-review-signals,
+  .grant-ledger-facts,
   .application-operational-metrics {
     grid-template-columns: 1fr;
+  }
+
+  .grant-ledger-heading,
+  .grant-ledger-row-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .grant-ledger-allocation {
+    justify-items: start;
   }
 
   .application-evaluation-facts > div {

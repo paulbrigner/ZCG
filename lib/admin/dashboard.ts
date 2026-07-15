@@ -212,6 +212,31 @@ export type ReconciliationIssueRow = {
   created_at: string;
 };
 
+export type GrantMilestoneLedgerRow = {
+  id: string;
+  application_id: string;
+  source_record_id: string;
+  milestone_label: string;
+  milestone_number: string | null;
+  milestone_type: "startup_funding" | "numbered" | "named";
+  reporting_frequency: string | null;
+  category: string | null;
+  grantee_name: string | null;
+  amount_usd: string | null;
+  estimate_text: string | null;
+  estimated_at: string | null;
+  grant_status: string | null;
+  match_confidence: string;
+  linkage_method: "exact" | "reviewer_confirmed" | "similarity";
+  source_url: string | null;
+  source_row_number: string | null;
+  paid_at: string | null;
+  zec_amount: string | null;
+  disbursement_usd_amount: string | null;
+  exchange_rate_usd_per_zec: string | null;
+  disbursement_source_url: string | null;
+};
+
 const sheetCanonicalWhere = "(ga.canonical_key like 'sheet:%' or ga.canonical_key like 'sheet-all-grants:%')";
 const matchedApplicationWhere = `(
   (ga.canonical_key like 'github:%' and ga.match_confidence > 0)
@@ -868,7 +893,7 @@ export async function getGrantApplicationHeading(id: string) {
 }
 
 export async function getGrantApplicationDetail(id: string) {
-  const [application, githubLabels, forumLinks, decisionMentions, sources, issues] = await Promise.all([
+  const [application, githubLabels, forumLinks, decisionMentions, sources, issues, milestones] = await Promise.all([
     query<GrantApplicationRow>(
       `select ga.id::text,
               ga.title,
@@ -1021,6 +1046,42 @@ export async function getGrantApplicationDetail(id: string) {
           and canonical_id = $1
         order by status, severity desc, created_at desc`,
       [id]
+    ),
+    query<GrantMilestoneLedgerRow>(
+      `select gm.id::text,
+              gm.application_id::text,
+              gm.source_record_id::text,
+              gm.milestone_label,
+              gm.milestone_number::text,
+              gm.milestone_type,
+              gm.reporting_frequency,
+              gm.category,
+              gm.grantee_name,
+              gm.amount_usd::text,
+              gm.estimate_text,
+              gm.estimated_at::text,
+              gm.grant_status,
+              gm.match_confidence::text,
+              gm.linkage_method,
+              gm.source_url,
+              gm.source_row_number::text,
+              gd.paid_at::text,
+              gd.zec_amount::text,
+              gd.usd_amount::text as disbursement_usd_amount,
+              gd.exchange_rate_usd_per_zec::text,
+              gd.source_url as disbursement_source_url
+         from grant_milestones gm
+         left join grant_disbursements gd on gd.milestone_id = gm.id
+        where gm.application_id = $1
+        order by case
+                   when gm.milestone_type = 'startup_funding' then 0
+                   when gm.milestone_type = 'numbered' then 1
+                   else 2
+                 end,
+                 gm.milestone_number nulls last,
+                 lower(gm.milestone_label),
+                 gd.paid_at nulls last`,
+      [id]
     )
   ]);
 
@@ -1030,6 +1091,7 @@ export async function getGrantApplicationDetail(id: string) {
     forumLinks: forumLinks.rows,
     decisionMentions: decisionMentions.rows,
     sources: sources.rows,
-    issues: issues.rows
+    issues: issues.rows,
+    milestones: milestones.rows
   };
 }

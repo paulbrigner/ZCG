@@ -63,6 +63,33 @@ The current adapter maps:
 - `Date Committee Approved/ Rejected`, `Decision Turnaround Days`, `Country`,
   and `Organization or Individual` -> source summary metadata.
 
+## Normalized FPF milestone and disbursement ledger
+
+As of 2026-07-15, strongly matched rows from the `milestone_details` tab are
+also projected into two read-only canonical tables:
+
+- `grant_milestones` stores the milestone label and number/type, grantee,
+  category, reporting frequency, the Sheet's `Amount (USD)` row value, estimate text and any
+  safely parsed estimate date, FPF grant status, source row, match confidence,
+  and linkage method.
+- `grant_disbursements` stores only payment evidence explicitly present in the
+  row: paid date, ZEC disbursed, USD disbursed, and ZEC/USD rate. The milestone
+  row amount is never copied into the disbursed amount.
+
+The projection is deliberately conservative. An automatically generated
+source link must meet the strong match threshold, while an active reviewer
+`link_source` decision can admit a lower-scoring but confirmed match. Rows that
+remain ambiguous continue to produce reconciliation issues and are not shown
+as belonging to a grant. Projection updates run after both complete and
+targeted grant reconciliation, and obsolete projections are removed within
+the reconciled scope.
+
+These records are FPF Sheet ledger evidence, not a complete payment workflow.
+The current Sheet fields do not establish that a progress update was accepted,
+a payment request was submitted or approved, or an on-chain transaction
+settled. Those states remain separate until an authoritative source and durable
+cross-source identifiers are available.
+
 ## ZCG meeting minutes and decision evidence
 
 As of 2026-07-09, reconciliation treats ZCG meeting minutes as decision
@@ -280,8 +307,10 @@ Against a disposable local Postgres database with the non-vector migrations:
 
 - Continue adding known Google Sheet tab gids with stable names where they
   represent distinct evidence classes.
-- Normalize milestone, payment, and status-history evidence that is currently
-  preserved only as source rows or coarse summaries.
+- Add durable cross-source grant and milestone identifiers when the source
+  systems expose them, and define separate authoritative progress-update,
+  payment-request, approval, and settlement records rather than inferring them
+  from milestone ledger fields.
 - Monitor provider callbacks, the 15-minute Sheet poll, the event dead-letter
   queue, and daily verification results through several cutover cycles.
 - Continue expanding reviewer tools for missing Forum links, unmatched Sheet

@@ -12,6 +12,7 @@ import {
   manualSourceLinkKey
 } from "./decisions";
 import { reconcileGrantDecisionMinutes } from "./decision-minutes";
+import { syncGrantMilestoneProjections } from "./milestones";
 
 type RawSourceRecord = {
   id: string;
@@ -3156,6 +3157,7 @@ async function performGrantReconciliation(
   counts.linksCreated = await bulkLinkSources(links);
   counts.issuesCreated = await bulkCreateIssues(issues);
   await applyManualSourceLinkDecisions();
+  await syncGrantMilestoneProjections();
   const decisionMinutesResult = await reconcileGrantDecisionMinutes(context);
   counts.decisionSourcesParsed = decisionMinutesResult.sourcesParsed;
   counts.decisionMentionsLinked = decisionMinutesResult.mentionsLinked;
@@ -3194,6 +3196,7 @@ async function retireTargetedGitHubApplication(
 
   if (retired.applicationIds.length) {
     await applyManualSourceLinkDecisions();
+    await syncGrantMilestoneProjections({ applicationIds: retired.applicationIds });
 
     for (const applicationId of retired.applicationIds) {
       await query(
@@ -3313,6 +3316,7 @@ async function performTargetedGitHubReconciliation(
     }))
   );
   await applyManualSourceLinkDecisions();
+  await syncGrantMilestoneProjections({ applicationIds: [applicationId] });
 
   const discoveredForumUrls = [...new Set(planned.forumLinks.map((link) => link.url))].sort();
   const applicationIds = [applicationId];

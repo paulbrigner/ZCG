@@ -38,6 +38,53 @@ function moneyText(value: string | null) {
     : "-";
 }
 
+function ledgerMoneyText(value: string | null) {
+  if (!value) {
+    return "Not recorded";
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed)
+    ? parsed.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 })
+    : "Not recorded";
+}
+
+function ledgerNumberText(value: string | null, maximumFractionDigits: number) {
+  if (!value) {
+    return "Not recorded";
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed)
+    ? parsed.toLocaleString("en-US", { maximumFractionDigits })
+    : "Not recorded";
+}
+
+function ledgerExchangeRateText(value: string | null) {
+  if (!value) {
+    return "Not recorded";
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed)
+    ? `${parsed.toLocaleString("en-US", {
+        style: "currency",
+        currency: "USD",
+        maximumFractionDigits: 6
+      })} / ZEC`
+    : "Not recorded";
+}
+
+function ledgerDateText(value: string | null) {
+  const match = value?.match(/^(\d{4})-(\d{2})-(\d{2})/);
+
+  if (!match) {
+    return "Not recorded";
+  }
+
+  return `${Number(match[2])}/${Number(match[3])}/${match[1]}`;
+}
+
 function percentText(value: string | null) {
   const parsed = Number(value ?? 0);
   return Number.isFinite(parsed) ? `${Math.round(parsed * 100)}%` : "0%";
@@ -375,6 +422,130 @@ export default async function GrantApplicationPage({
             </dd>
           </div>
         </dl>
+      </section>
+
+      <section aria-labelledby="grant-ledger-heading" className="panel grant-ledger-panel">
+        <div className="grant-ledger-heading">
+          <div>
+            <p className="eyebrow">FPF source evidence</p>
+            <h2 id="grant-ledger-heading">Milestone and disbursement ledger</h2>
+            <p>Read-only milestone and disbursement fields normalized from the FPF grants ledger.</p>
+          </div>
+          {detail.milestones.length ? (
+            <span className="section-count">
+              {numberText(detail.milestones.length)} ledger row{detail.milestones.length === 1 ? "" : "s"}
+            </span>
+          ) : null}
+        </div>
+
+        <p className="grant-ledger-caveat">
+          These ledger rows are FPF source evidence. They do not by themselves prove that a progress update was
+          accepted, a payment request was approved, or an on-chain settlement was completed. Named rows can also
+          describe reimbursements, returned funds, or other ledger adjustments.
+        </p>
+
+        {detail.milestones.length ? (
+          <div className="grant-ledger-list">
+            {detail.milestones.map((milestone, index) => {
+              const hasDistinctDisbursementSource = Boolean(
+                milestone.disbursement_source_url && milestone.disbursement_source_url !== milestone.source_url
+              );
+
+              return (
+                <article className="grant-ledger-row" key={`${milestone.id}:${milestone.paid_at ?? "unpaid"}:${index}`}>
+                  <div className="grant-ledger-row-heading">
+                    <div>
+                      <p className="grant-ledger-row-context">
+                        {[milestone.category, milestone.reporting_frequency].filter(Boolean).join(" · ") || "Milestone record"}
+                      </p>
+                      <h3>{milestone.milestone_label}</h3>
+                    </div>
+                    <div className="grant-ledger-allocation">
+                      <span>Recorded row amount</span>
+                      <strong>{ledgerMoneyText(milestone.amount_usd)}</strong>
+                    </div>
+                  </div>
+
+                  <dl className="grant-ledger-facts">
+                    <div>
+                      <dt>Estimate</dt>
+                      <dd>
+                        {milestone.estimate_text?.trim() || "Not recorded"}
+                        {milestone.estimated_at ? <small>Dated {ledgerDateText(milestone.estimated_at)}</small> : null}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>FPF “Paid Out” date</dt>
+                      <dd>{ledgerDateText(milestone.paid_at)}</dd>
+                    </div>
+                    <div>
+                      <dt>FPF “ZEC Disbursed”</dt>
+                      <dd>
+                        {milestone.zec_amount
+                          ? `${ledgerNumberText(milestone.zec_amount, 8)} ZEC`
+                          : "Not recorded"}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>FPF “USD Disbursed”</dt>
+                      <dd>{ledgerMoneyText(milestone.disbursement_usd_amount)}</dd>
+                    </div>
+                    <div>
+                      <dt>FPF “ZEC/USD” rate</dt>
+                      <dd>{ledgerExchangeRateText(milestone.exchange_rate_usd_per_zec)}</dd>
+                    </div>
+                    <div>
+                      <dt>FPF ledger status</dt>
+                      <dd>
+                        {milestone.grant_status
+                          ? <span className="badge neutral">{statusLabel(milestone.grant_status)}</span>
+                          : "Not recorded"}
+                      </dd>
+                    </div>
+                  </dl>
+
+                  <div className="grant-ledger-footer">
+                    <div className="grant-ledger-source-links">
+                      {milestone.source_url ? (
+                        <a className="table-link" href={milestone.source_url} rel="noreferrer" target="_blank">
+                          Open FPF source
+                        </a>
+                      ) : <span>Source link not recorded</span>}
+                      {hasDistinctDisbursementSource ? (
+                        <a
+                          className="table-link"
+                          href={milestone.disbursement_source_url ?? undefined}
+                          rel="noreferrer"
+                          target="_blank"
+                        >
+                          Open disbursement source
+                        </a>
+                      ) : null}
+                    </div>
+
+                    <details className="grant-ledger-provenance">
+                      <summary>Linkage details</summary>
+                      <p>
+                        {milestone.linkage_method
+                          ? `Linked by ${statusLabel(milestone.linkage_method)}`
+                          : "Linkage method not recorded"}
+                        {milestone.match_confidence
+                          ? ` at ${percentText(milestone.match_confidence)} confidence`
+                          : ""}
+                        {milestone.source_row_number ? ` · source row ${milestone.source_row_number}` : ""}
+                      </p>
+                    </details>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="grant-ledger-empty">
+            No normalized FPF milestone or disbursement rows are linked to this application yet. The application and
+            its other source evidence remain available below.
+          </div>
+        )}
       </section>
 
       <GrantAnalysisPanel
