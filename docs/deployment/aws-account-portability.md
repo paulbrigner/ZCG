@@ -143,12 +143,13 @@ In local development without `SES_FROM_EMAIL`, auth codes are logged by the serv
 
 ## First corpus-refresh check
 
-The source-refresh schedule is enabled when workers are enabled. It starts a
-Step Functions pipeline every morning at 3:00 AM in the `America/New_York`
-timezone. GitHub issues and Forum topics are processed in bounded batches before
-reconciliation and a synchronous knowledge-index rebuild. The pipeline uses a
-finite database lease so duplicate schedule delivery or repeated Admin requests
-cannot overlap.
+The full source-refresh schedule is enabled when workers are enabled. It starts
+a Standard Step Functions pipeline every morning at 3:00 AM in the
+`America/New_York` timezone. GitHub issues and Forum topics are processed in
+bounded batches around a complete Google Sheet mirror before reconciliation and
+a synchronous knowledge-index rebuild. The Admin **Refresh corpus** action
+starts this same workflow. A shared finite database lease serializes full,
+changed-Sheet, and targeted event mutations.
 Set the CDK context `enableSourceSyncSchedule=false` when a deployment must remain
 manual. Start the pipeline once after migrations to verify the path immediately:
 
@@ -164,12 +165,36 @@ Expected output includes an execution ARN. The execution should finish in
 `SUCCEEDED`, with a completed `phase1-all` parent run and bounded child runs on
 the Telemetry page.
 
-The stack also deploys a dormant hybrid refresh path by default. It does not
-receive source events until administrators register the generated callback URLs
-and secrets with GitHub, Discourse, or Google Drive. The existing Admin and
-3:00 AM full refresh paths stay enabled during that transition. See the
+When workers are enabled, the stack also enables a lightweight Google Sheet
+checksum schedule every 15 minutes by default. Its non-VPC poll Lambda reads the
+configured public CSV exports and one S3 success marker. An unchanged result
+does not wake Aurora; a changed result starts the Sheet-only workflow. On a new
+deployment the marker is absent, so the first poll intentionally runs one
+Sheet-only bootstrap refresh. Verify that it succeeds and that the following
+unchanged execution stops after the checksum comparison.
+
+The signed GitHub and Discourse callback receiver, encrypted event queue,
+dead-letter queue, and single-concurrency targeted worker are also deployed by
+default, but remain idle until source administrators register the callback URL
+and matching Secrets Manager values. The Google Drive callback is retained but
+dormant; normal operation does not require a Drive watch or Google service-
+account key. The existing Admin and 3:00 AM full refresh paths stay enabled
+during transition and rollback.
+
+Relevant portability controls are:
+
+- `enableHybridCorpusRefresh` for the callback receiver, queue, and targeted
+  worker;
+- `enableGoogleSheetPollSchedule` and `googleSheetPollMinutes` for the public
+  Sheet check (15 minutes by default, 5 minutes minimum); and
+- `enableSourceSyncSchedule` for the 3:00 AM full safety net.
+
+Relevant outputs include `CorpusWebhookUrl`, the event queue and dead-letter
+queue URLs, the callback and event-worker function names,
+`GoogleSheetRefreshStateMachineArn`, `GoogleSheetPollWorkerFunctionName`, and the
+GitHub/Discourse secret ARNs. See the
 [hybrid corpus refresh runbook](hybrid-corpus-refresh.md) for activation,
-verification, access requirements, and rollback.
+source-of-truth label gating, monitoring, access requirements, and rollback.
 
 ## Required follow-up before stakeholder use
 

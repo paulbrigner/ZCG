@@ -2,7 +2,11 @@
 
 Date: 2026-06-29
 
-Phase 1 begins the sync-first plan by importing read-only evidence from current public ZCG source systems. This phase deliberately does not normalize grants, replace intake, or write back to any existing system.
+Phase 1 began the sync-first plan by importing read-only evidence from current
+public ZCG source systems. The source boundary remains read-only: the prototype
+does not replace intake or write back to any existing system. A separate,
+implemented reconciliation layer now derives canonical applications, grants,
+links, issues, decision history, and knowledge documents from that evidence.
 
 ## Implemented sources
 
@@ -31,7 +35,9 @@ Each Phase 1 run creates:
 - `source_records` rows for each mirrored source object;
 - `audit_events` rows for sync completion or failure.
 
-The first pass preserves source-specific raw payloads. Canonical grant normalization and reconciliation are intentionally next, not hidden inside the importer.
+The mirror preserves source-specific raw payloads. Canonical normalization and
+reconciliation run as explicit later workflow steps rather than being hidden
+inside the importer.
 
 ## Historical registry refinement
 
@@ -154,6 +160,36 @@ aws lambda invoke \
   /tmp/zcg-forum-sync.json
 ```
 
+## Deployed refresh orchestration
+
+Direct Lambda invocation remains useful for diagnosis, but normal deployed
+operation uses the hybrid orchestration:
+
+| Trigger | Behavior |
+| --- | --- |
+| GitHub `issues` or `issue_comment` webhook | Signature-verified, queued, and deduplicated update of the configured issue, comments, linked Forum evidence, affected reconciliation, and knowledge documents |
+| Discourse topic or post webhook | Signature-verified and queued update only when the topic is already linked to a known grant or mirrored as grant evidence |
+| Google Sheet schedule | Every 15 minutes by default, compare deterministic checksums of the configured public CSV tabs; stop without database work when unchanged, or run the Sheet-only workflow when changed |
+| Daily schedule | At 3:00 AM `America/New_York`, run the complete bounded GitHub → Sheet → linked Forum → Forum Updates → reconciliation → index workflow |
+| Admin **Refresh corpus** | Start the same complete workflow as the daily schedule |
+
+Every mutation path shares one durable corpus lease. Provider deliveries are
+buffered in encrypted SQS with a dead-letter queue, and delivery IDs provide
+idempotency across provider retries. The changed-Sheet workflow commits its S3
+success marker only after mirroring, authoritative pruning, reconciliation,
+newly discovered Forum mirroring, and indexing succeed. The first scheduled
+Sheet check intentionally bootstraps this marker. Google Drive notifications are
+not required and remain dormant.
+
+FPF assignment controls committee-review eligibility. Reconciliation produces
+`under_review` from GitHub only when both `Grant Application` and
+`Ready For ZCG Review` are present. A Sheet “review” value remains evidence and
+creates a warning when those labels are absent; it cannot promote the proposal
+into the committee worklist or make it eligible for briefing generation.
+
+See [Hybrid corpus refresh](deployment/hybrid-corpus-refresh.md) for callback
+activation, CDK controls, monitoring, cutover, and rollback.
+
 ## Configuration
 
 Environment variables and matching CDK context:
@@ -171,6 +207,15 @@ Environment variables and matching CDK context:
 - `ZCG_FORUM_FETCH_DELAY_MS`
 - `ZCG_FORUM_TOPIC_URLS`
 - `ZCG_FORUM_UPDATES_CATEGORY_URL`
+
+Refresh-orchestration CDK contexts:
+
+- `enableHybridCorpusRefresh` (defaults to the `enableWorkers` value)
+- `enableGoogleSheetPollSchedule` (defaults to the `enableWorkers` value)
+- `googleSheetPollMinutes` (15 by default; minimum 5)
+- `enableSourceSyncSchedule` (defaults to the `enableWorkers` value)
+- `githubWebhookSecretId`, `discourseWebhookSecretId`, and the dormant
+  `googleDriveChannelTokenSecretId`
 
 `GITHUB_TOKEN`, `ZCG_GITHUB_TOKEN`, or a Secrets Manager secret referenced by
 `ZCG_GITHUB_TOKEN_SECRET_ID` should be supplied for reliable GitHub comment
@@ -198,6 +243,11 @@ Mirrored records can be read from the protected endpoint:
 ```
 
 That endpoint requires `source:mirror:read`.
+
+Administrators can start a complete deployed refresh from **Admin → Source
+corpus → Refresh corpus**. **Rebuild index** is narrower and does not fetch any
+source system. Operational `sync_runs`, counts, and failures are available on
+`/admin/telemetry`.
 
 ## Local verification on 2026-06-29
 
@@ -230,7 +280,9 @@ Against a disposable local Postgres database with the non-vector migrations:
 
 - Continue adding known Google Sheet tab gids with stable names where they
   represent distinct evidence classes.
-- Add a Discourse topic/post mirror.
-- Add reconciliation issue generation for missing forum links, unmatched Sheet rows, stale statuses, and label/status conflicts.
-- Add an admin source-mirror UI instead of API-only inspection.
-- Continue expanding the canonical grant/application projection from mirrored GitHub issues, comments, and Sheet rows.
+- Normalize milestone, payment, and status-history evidence that is currently
+  preserved only as source rows or coarse summaries.
+- Monitor provider callbacks, the 15-minute Sheet poll, the event dead-letter
+  queue, and daily verification results through several cutover cycles.
+- Continue expanding reviewer tools for missing Forum links, unmatched Sheet
+  rows, stale statuses, and label/status conflicts.

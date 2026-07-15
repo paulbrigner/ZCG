@@ -511,6 +511,22 @@ export default async function AdminPage({
         </div>
       </section>
 
+      <aside aria-labelledby="dashboard-freshness-heading" className="dashboard-freshness-note">
+        <div>
+          <h2 id="dashboard-freshness-heading">Source and briefing updates</h2>
+          <p>
+            GitHub and Forum changes normally reach the system within a few minutes of publication. The public FPF
+            Sheet is checked every 15 minutes, and a full verification of all sources starts daily at 3:00 AM Eastern.
+          </p>
+        </div>
+        <p>
+          Open a Committee Briefing and expand <strong>Evidence and citations</strong> to inspect the exact source
+          records it used. Changed or missing records are marked there. Because generating a new briefing has an AI
+          processing cost, an existing report may remain until the evidence change is substantial enough to warrant
+          regeneration.
+        </p>
+      </aside>
+
       <details className="operations-disclosure dashboard-operations" hidden>
         <summary>
           <span>Operational telemetry</span>

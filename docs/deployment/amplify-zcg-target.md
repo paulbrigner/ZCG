@@ -62,11 +62,29 @@ Secrets should live in Secrets Manager or service-managed secrets. Avoid copying
    - `BETTER_AUTH_URL=https://zcg.pgpz.org`
    - `BETTER_AUTH_SECRET=<Secrets Manager-backed or generated strong secret>`
    - `BOOTSTRAP_ADMIN_EMAILS=<initial admin emails>`
-10. Verify `/api/health/db`, Better Auth sign-in, `/dashboard`, `/api/admin/source-records`, and an Administrator-triggered **Refresh corpus** run.
-11. Create and associate a CloudFront-scope WAF web ACL before wider stakeholder access if public exposure increases.
+10. Verify `/api/health/db`, Better Auth sign-in, `/dashboard`,
+    `/api/admin/source-records`, and an Administrator-triggered **Refresh corpus**
+    run. That Admin action starts the same full Standard Step Functions workflow
+    used by the daily 3:00 AM Eastern schedule.
+11. Read the CDK `CorpusWebhookUrl`, queue/DLQ, webhook-secret,
+    `GoogleSheetRefreshStateMachineArn`, and `GoogleSheetPollWorkerFunctionName`
+    outputs. Monitor the intentional first Sheet-only bootstrap run, then verify
+    an unchanged 15-minute Sheet check stops before database work. Register the
+    signed GitHub and Discourse callbacks only after this backend path is healthy;
+    no Google Drive watch or service-account key is required.
+12. Verify `/admin/telemetry` shows the full and incremental `sync_runs`, and
+    confirm the event dead-letter queue is empty before cutover.
+13. Create and associate a CloudFront-scope WAF web ACL before wider stakeholder
+    access if public exposure increases.
 
 ## Phase 1 implication
 
-Phase 1 source mirroring should be backend-first and read-only. Workers can safely import GitHub and Google Sheet data into private Aurora/S3 regardless of whether the public web tier is later hosted on Amplify, ECS, or a hybrid.
+Phase 1 source mirroring is backend-first and read-only at the source boundary.
+Signed GitHub and Discourse events update only affected evidence, the public
+Google Sheet exports are checksum-polled every 15 minutes, and the daily/Admin
+full workflow remains the cross-source verification path. Those workers can
+safely import evidence into private Aurora/S3 regardless of whether the public
+web tier is later hosted on Amplify, ECS, or a hybrid. See the
+[hybrid corpus refresh runbook](hybrid-corpus-refresh.md).
 
 The backend connection spike selected RDS Data API as the Amplify-to-private-Aurora bridge. See [Backend connection spike](backend-connection-spike.md).

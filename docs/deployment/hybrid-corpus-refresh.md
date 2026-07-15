@@ -17,9 +17,11 @@ flowchart LR
     checksum -->|"yes"| sheetRefresh["Mirror Sheet, new Forum links, reconcile, and index"]
     ingress["Webhook ingress Lambda"] --> queue["Encrypted SQS queue"]
     queue --> worker["Single-concurrency corpus event worker"]
-    worker --> mirror["Mirror affected source object"]
-    mirror --> reconcile["Reconcile affected application"]
-    reconcile --> index["Rebuild affected knowledge documents"]
+    worker --> githubMirror["GitHub: mirror issue and comments"]
+    githubMirror --> reconcile["Reconcile affected application"]
+    reconcile --> index["Refresh affected knowledge documents"]
+    worker --> forumMirror["Discourse: mirror known topic"]
+    forumMirror --> index
     full["3:00 AM full verification refresh"] --> mirrorAll["Mirror, reconcile, and index all configured sources"]
 ```
 
@@ -29,6 +31,16 @@ The event path is additive. It does not remove or replace:
 - the daily 3:00 AM `America/New_York` Step Functions workflow;
 - the durable full-refresh and reconciliation leases; or
 - the hourly embedding catch-up worker.
+
+The resulting refresh matrix is:
+
+| Trigger | Normal scope | Mutation path | Recovery path |
+| --- | --- | --- | --- |
+| GitHub webhook | One configured-repository issue and its comments, including label changes | Encrypted SQS queue → targeted mirror → affected-application reconciliation and knowledge refresh | Delivery retry/DLQ, then the next full refresh |
+| Discourse webhook | One already-known or linked grant topic/post | Encrypted SQS queue → targeted Forum mirror → affected-application knowledge refresh | Delivery retry/DLQ, then the next full refresh |
+| Google Sheet schedule | Read-only checksum of every configured public CSV tab | Stop when unchanged; changed-Sheet Step Functions workflow when different | Later poll and the nightly full refresh |
+| Daily schedule | All configured GitHub, Sheet, linked Forum, and Forum Updates sources | Full Standard Step Functions workflow at 3:00 AM Eastern | Operator rerun from Admin or Step Functions |
+| Admin **Refresh corpus** | Same scope as the daily run | The same full Standard Step Functions workflow | Operator inspection and rerun |
 
 The Sheet checker runs outside the VPC. It downloads the same two public CSV
 exports used by the existing mirror and compares a deterministic content hash
@@ -48,13 +60,22 @@ Sheet-only path and the full refresh. The marker therefore advances only after
 mirroring, authoritative pruning, reconciliation, knowledge indexing, and
 workflow completion all succeed.
 
-All mutation paths use the same durable corpus lease. Events wait and retry when a full
-refresh owns it; a full refresh that encounters a short targeted update waits a
-minute and retries rather than skipping its verification run. Delivery IDs are
-recorded in `idempotency_keys`, so source-system retries do not apply the same
-change twice. A standard SQS queue buffers bursts, a 60-second batching window
-coalesces nearby notifications, and a dead-letter queue retains events that
-repeatedly fail.
+All mutation paths use the same durable corpus lease. Targeted events use a
+30-minute lease by default and return the SQS delivery for retry when a full or
+Sheet refresh owns it. Changed-Sheet runs use a 75-minute lease and a one-hour
+state-machine timeout; they wait in 60-second increments for a targeted event,
+but stop cleanly when a full or another Sheet refresh already owns the lease so
+a later poll can retry. Full runs use a five-hour lease and a 255-minute
+state-machine timeout. They wait in 60-second increments for targeted or Sheet
+work, preserving the original three-hour work budget after a possible
+75-minute wait, and stop cleanly only when another full run is already active.
+Expired leases are reclaimable and any abandoned parent `sync_runs` record is
+marked failed.
+
+Delivery IDs are recorded in `idempotency_keys`, so source-system retries do not
+apply the same change twice. A standard SQS queue buffers bursts, a 60-second
+batching window coalesces nearby notifications, the event worker has reserved
+concurrency of one, and a dead-letter queue retains events that repeatedly fail.
 
 ## Deployment and callback URLs
 
@@ -129,6 +150,10 @@ unresolvable issue retires any funded projection without deleting its canonical
 history and is flagged for full verification rather than assigned a guessed
 outcome. Events for another repository and pull-request comments are ignored.
 
+Issue-label edits are normal `issues` events and therefore use this same path.
+That matters because the committee-review gate is derived from the current
+GitHub labels rather than from a separate local promotion action.
+
 ## Zcash Discourse Forum activation
 
 This step requires administrator access to the Zcash Community Forum. Ask a
@@ -148,6 +173,27 @@ The event worker refreshes only topics already linked to a known grant or
 previously mirrored as grant evidence. A signed event for an unknown topic is
 acknowledged and ignored without expanding the corpus.
 
+## Official committee-review gate
+
+FPF assignment remains the source of truth for whether a proposal has entered
+ZCG committee review. Reconciliation sets a GitHub application to
+`under_review` only when the issue has both canonical labels:
+
+- `Grant Application`; and
+- `Ready For ZCG Review`.
+
+The comparison is case-insensitive and ignores label emoji and punctuation, but
+requires both complete canonical names; look-alike or partial labels do not
+qualify. A Sheet value such as “review” or “discuss” remains evidence, but it
+cannot promote the application by itself and instead produces a reconciliation
+warning when the GitHub assignment labels are missing. Explicit terminal states
+such as approved, declined, withdrawn, cancelled, filtered, and completed retain
+their normal source precedence.
+
+Committee-briefing generation is allowed only for an officially assigned
+`under_review` application. This gate does not revoke public access to a shared,
+successfully generated briefing that already exists.
+
 ## Google Sheet polling
 
 No Google identity, service-account key, Drive API access, or FPF security-policy
@@ -157,7 +203,8 @@ workflow every 15 minutes by default.
 
 Configure the path with CDK context when needed:
 
-- `enableGoogleSheetPollSchedule` enables or disables the schedule;
+- `enableGoogleSheetPollSchedule` enables or disables the schedule and defaults
+  to the `enableWorkers` value;
 - `googleSheetPollMinutes` changes the cadence and must be at least 5; and
 - `googleSheetId` and `googleSheetTabs` retain their existing meanings.
 
@@ -200,7 +247,10 @@ and cross-source verification path.
 4. **Verify Sheet polling.** Confirm the bootstrap or a known Sheet edit produces
    a `google-sheet-refresh` sync run, that its successful completion writes the
    marker, and that the next unchanged execution stops after the checksum check.
-5. **Reassess cadence only after evidence.** Do not reduce the daily full
+5. **Verify the assignment gate.** Confirm a draft or Sheet-only review status
+   stays out of the committee worklist, then confirm adding both official GitHub
+   labels promotes the application after the targeted event is processed.
+6. **Reassess cadence only after evidence.** Do not reduce the daily full
    verification schedule until several complete cycles show no missed changes.
 
 ## Verification and rollback
@@ -216,18 +266,34 @@ AWS_PROFILE=zodldashboard AWS_REGION=us-east-1 \
 ```
 
 Inspect queue depth and the dead-letter queue from the AWS console or with
-CloudWatch metrics. Targeted and changed-Sheet executions also create
-`sync_runs` and audit events, so the Telemetry page remains the primary
-application-level view.
+CloudWatch metrics. The stack creates queue-age and dead-letter alarms even in
+low-cost mode. Inspect the two Standard Step Functions state machines and the
+poll Lambda logs for workflow-level failures. Targeted and changed-Sheet
+executions also create `sync_runs` and audit events, so `/admin/telemetry`
+remains the primary application-level view.
+
+Cutover is healthy when:
+
+- valid GitHub and Discourse test deliveries receive `202`, while invalid
+  signatures receive `401` or `403`;
+- queue age returns to zero and the dead-letter queue stays empty;
+- a source edit appears as a targeted `sync_runs` entry without a full refresh;
+- unchanged Sheet checks stop before database work, while a changed check
+  completes and advances the S3 marker; and
+- the following 3:00 AM full run succeeds without unexplained reconciliation or
+  index drift.
 
 Rollback is deliberately simple:
 
-1. disable the provider webhook at the source or set
-   `enableGoogleSheetPollSchedule=false` for Sheet polling;
+1. disable the provider webhook at the source, redeploy with
+   `-c enableHybridCorpusRefresh=false` to remove the receiver/consumer path, or
+   set `-c enableGoogleSheetPollSchedule=false` independently for Sheet polling;
 2. leave the existing full refresh enabled;
 3. investigate or redrive the dead-letter queue; and
-4. redeploy with `-c enableHybridCorpusRefresh=false` only if the receiver and
-   queue resources themselves must be removed.
+4. use Admin **Refresh corpus** to run an immediate full verification if needed.
 
-Disabling the hybrid path does not disable the current Admin or scheduled full
-refresh workflow.
+`enableHybridCorpusRefresh` controls the signed callback receiver, queue, and
+targeted event worker; it does not control the independent Sheet polling
+schedule. Disabling either incremental path does not disable the Admin or
+scheduled full refresh workflow. Set `enableSourceSyncSchedule=false` only when
+the daily safety-net schedule itself must be disabled.

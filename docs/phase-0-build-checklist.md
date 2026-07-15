@@ -52,10 +52,19 @@ This checklist turns the prototype development plan into implementation-facing w
 - [x] Add S3 snapshot writer scaffold.
 - [x] Add scheduled sync worker Lambda scaffold.
 - [x] Run the daily 3:00 AM Eastern source refresh through bounded source batches, reconciliation, and knowledge indexing.
+- [x] Add signature-verified GitHub and Discourse callbacks, encrypted SQS
+  buffering, idempotent targeted updates, and a dead-letter queue.
+- [x] Add the 15-minute public Google Sheet checksum poll, changed-Sheet
+  workflow, completion-bound S3 marker, and first-run bootstrap behavior.
+- [x] Coordinate full, changed-Sheet, and targeted mutations with one durable
+  corpus lease while keeping Admin **Refresh corpus** as the on-demand full path.
+- [x] Require both official FPF GitHub assignment labels before normalizing a
+  proposal to `under_review` or allowing committee-briefing generation.
 - [x] Add worker-side Secrets Manager database credential loading.
 - [x] Verify migration-runner handler applies/skips migrations against local Postgres.
 - [x] Verify sync-worker handler records a completed DB-side sync run and audit event locally.
-- [ ] Invoke the worker once in the target AWS account and verify a `sync_runs` row plus S3 snapshot.
+- [ ] Verify a full, targeted, and changed-Sheet execution in the target AWS
+  account; confirm `sync_runs`, the Sheet success marker, and an empty event DLQ.
 
 ## Deployment packaging
 

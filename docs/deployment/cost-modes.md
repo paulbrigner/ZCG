@@ -36,6 +36,8 @@ The current ZCG prototype is split across:
 - Lambda migration runner and sync worker in the VPC.
 - Signature-verifying webhook ingress, encrypted source-event queue and
   dead-letter queue, and a targeted corpus-event worker.
+- Non-VPC Google Sheet checksum Lambda plus a changed-Sheet Standard Step
+  Functions workflow.
 - Optional ECS/Fargate web tier and optional public ALB.
 - VPC with private database subnets and NAT egress when deployed workers need
   public internet access.
@@ -62,8 +64,14 @@ Default behavior:
 - Nonessential alarms are disabled.
 - Lambda workers remain deployed.
 - The hybrid refresh receiver and event queue remain deployed; they are idle and
-  request-authenticated until source callbacks are registered.
-- The low-volume Step Functions pipeline for the daily 3:00 AM Eastern source refresh and the hourly embedding catch-up remain enabled.
+  signature-verified until GitHub or Discourse callbacks are registered. Queue-
+  age and dead-letter alarms remain enabled to protect durable delivery.
+- The public Google Sheet checksum workflow runs every 15 minutes by default.
+  Its 30-second, 256 MB poll Lambda stays outside the VPC and an unchanged check
+  reads no database, uses no NAT egress, and invokes no source/index worker. Only
+  changed content enters the normal VPC-backed Sheet refresh path.
+- The Standard Step Functions pipeline for the daily 3:00 AM Eastern full source
+  verification and the hourly embedding catch-up remain enabled.
 - One NAT gateway remains deployed because the current sync worker needs public
   internet egress for GitHub and Google Sheet mirroring.
 
@@ -87,6 +95,13 @@ AWS_PROFILE=zodldashboard AWS_REGION=us-east-1 npm run infra:deploy -- \
 
 This is the safest low-cost default because it avoids always-on web compute and
 ALB charges while preserving the deployed sync-first worker path.
+
+The incremental controls are independent. Set
+`enableGoogleSheetPollSchedule=false` to pause only Sheet polling,
+`enableHybridCorpusRefresh=false` to remove the provider callback path, or
+`enableSourceSyncSchedule=false` to pause only the daily full schedule. Keep the
+daily full schedule enabled during normal transition and rollback. See
+[Hybrid corpus refresh](hybrid-corpus-refresh.md) for operational details.
 
 ## Optional ECS web tier in prototype mode
 

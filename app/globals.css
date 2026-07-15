@@ -520,6 +520,34 @@ button:disabled {
   line-height: 1.02;
 }
 
+.dashboard-freshness-note {
+  align-items: start;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 10px;
+  color: var(--muted);
+  display: grid;
+  font-size: 13px;
+  gap: 16px;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+  line-height: 1.55;
+  padding: 14px 16px;
+}
+
+.dashboard-freshness-note h2 {
+  color: #1e3a5f;
+  font-size: 14px;
+  margin: 0 0 4px;
+}
+
+.dashboard-freshness-note p {
+  margin: 0;
+}
+
+.dashboard-freshness-note strong {
+  color: #273244;
+}
+
 .grant-detail-header {
   padding-bottom: 0;
 }
@@ -2159,6 +2187,7 @@ button:disabled {
   .home-principle-list,
   .home-coverage-grid,
   .home-explore,
+  .dashboard-freshness-note,
   .reconciliation-decision-form,
   .reconciliation-facts,
   .application-advanced-filter-grid {

@@ -21,7 +21,7 @@ ZCG to replace its current tools first.
 | Area | Current state |
 | --- | --- |
 | Source mirroring | GitHub issues and comments, two public ZCG Google Sheet tabs, linked Zcash Community Forum topics, and the Forum's Community Grants Updates category |
-| Source refresh | Signed GitHub and Discourse callbacks feed a buffered, deduplicated targeted-refresh queue; the existing Admin action and daily full refresh remain the verification and recovery path |
+| Source refresh | Signed GitHub and Discourse callbacks feed a buffered, deduplicated targeted-refresh queue; a lightweight public-Sheet checksum check runs every 15 minutes; the existing Admin action and daily full refresh remain the verification and recovery path |
 | Evidence preservation | Checksum-tracked source records in PostgreSQL and optional aggregate JSON snapshots in private S3 |
 | Reconciliation | Canonical applications, funded-status grant records, stale-grant cleanup when an application leaves a funded status, GitHub label normalization, source links, confidence scores, generated issues, and durable reviewer decisions |
 | Decision history | Meeting-minute topics parsed into decision sources and grant mentions with rationale, speaker notes, provenance, and review status |
@@ -39,8 +39,9 @@ applicant portal, or controlled writeback to the current public systems.
 
 These are reconciliation outputs, not authoritative ZCG production totals.
 They were observed on the live prototype on **July 14, 2026** after the latest
-grant reconciliation completed. Source ingestion now runs daily and
-administrators can also start an on-demand refresh.
+grant reconciliation completed. The deployed refresh design combines targeted
+GitHub and Forum callbacks, 15-minute Google Sheet change checks, a daily full
+verification, and an Administrator-started full refresh.
 
 | Metric | Count |
 | --- | ---: |
@@ -231,6 +232,23 @@ across each UTC day, fall back to keyword retrieval when a limit is reached,
 and produce only aggregate usage telemetry without query text or network
 addresses.
 
+### How briefing evidence freshness works
+
+Each completed committee briefing saves the exact cited knowledge records and
+their content hashes. When the briefing is viewed, the system compares only
+those saved records with the current knowledge index; unrelated corpus changes
+do not make the briefing stale. A cited record whose hash changed is marked
+**Changed since briefing**, while a saved record that is absent from the current
+index is marked **No longer indexed** under **Evidence and citations**. Template
+or model changes are reported separately as a briefing update being available.
+
+Source synchronization and knowledge indexing never rewrite or automatically
+regenerate an existing briefing. An authorized reviewer decides whether the
+identified changes are material enough to regenerate. Regeneration invokes the
+configured AI provider, which can incur provider cost, and creates a new
+version while preserving the prior briefing and its citation snapshot in
+history.
+
 ## Runtime Architecture
 
 - **Web:** Next.js 15, React 19, and TypeScript. The live web tier runs on AWS
@@ -248,15 +266,19 @@ addresses.
 - **Authentication:** Better Auth sends a single sign-in email containing both
   a secure magic link and a one-time code through SES in deployed environments.
   When SES is unset locally, the link and code are logged to the server console.
-- **Scheduling:** a Step Functions pipeline runs every morning at 3:00 AM
+- **Scheduling:** a Standard Step Functions pipeline runs every morning at 3:00 AM
   `America/New_York`. It mirrors configured public sources in bounded GitHub and
   Forum batches, reconciles canonical applications, and waits for a knowledge-
-  index rebuild. A durable lease prevents overlapping full refreshes, and the
-  embedding worker catches up new or changed documents on its hourly schedule.
+  index rebuild. The Admin **Refresh corpus** control starts this same full
+  workflow. A shared durable lease serializes every source-mutation path; a full
+  run waits for a targeted or Sheet update but skips when another full run already
+  owns the lease. The embedding worker catches up new or changed documents on its
+  hourly schedule.
 - **Incremental refresh:** a public-but-signature-verified callback Lambda accepts
   GitHub and Discourse events, buffers them in encrypted SQS, and runs targeted
-  source mirroring, reconciliation, and knowledge-document updates at single
-  concurrency. A separate non-VPC workflow checks the two public Google Sheet
+  source mirroring, GitHub-application reconciliation, and affected knowledge-
+  document updates at single concurrency. A separate non-VPC workflow checks the
+  two public Google Sheet
   CSV exports every 15 minutes and enters the shared refresh pipeline only when
   their deterministic content checksum changes. Its S3 checksum marker advances
   only after mirroring, authoritative Sheet-row pruning, reconciliation, newly
@@ -409,6 +431,8 @@ The current public deployment combines:
   grounded answer jobs;
 - an authenticated webhook ingress, encrypted SQS event queue, dead-letter
   queue, and single-concurrency targeted corpus worker;
+- a non-VPC Google Sheet checksum worker and changed-Sheet Step Functions
+  workflow, scheduled every 15 minutes by default;
 - Secrets Manager, IAM roles, CloudWatch logs, and optional alarms; and
 - an optional ECS/Fargate and load-balancer web path for production-style
   deployments.
@@ -469,10 +493,11 @@ files and account-specific CDK context are ignored.
    route structure.
 5. Add applicant and FPF/ZCG workflow surfaces only after source confidence and
    privacy boundaries are agreed.
-6. Register and observe the implemented GitHub and Discourse incremental-refresh
-   callbacks with source-system administrators; monitor the 15-minute public
-   Sheet poll, and treat a Google Drive watch as an optional future experiment.
-   Define future writeback, cutover, archive, and rollback policies separately.
+6. Complete post-deploy cutover observation for the administrator-configured
+   GitHub and Discourse callbacks, monitor the 15-minute public Sheet poll and
+   3:00 AM verification run, and treat a Google Drive watch as an optional future
+   experiment. Define future writeback, archive, and rollback policies
+   separately.
 
 The [architectural assessment](docs/zcg-architectural-assessment-refined.md)
 contains the fuller target-system argument and proposed architecture.
