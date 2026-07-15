@@ -634,6 +634,18 @@ export async function getAdminDashboard({
             limit 1
          ) latest_briefing on true
         where ga.normalized_status = 'under_review'
+          and exists (
+            select 1
+              from grant_application_github_labels official_application_label
+             where official_application_label.application_id = ga.id
+               and official_application_label.label_status = 'grant_application'
+          )
+          and exists (
+            select 1
+              from grant_application_github_labels official_review_label
+             where official_review_label.application_id = ga.id
+               and official_review_label.label_status = 'ready_for_zcg_review'
+          )
         order by ${worklistOrderSql}`
     ),
     query<{ total_results: string }>(

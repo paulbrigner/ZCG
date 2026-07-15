@@ -389,16 +389,19 @@ async function acquireCorpusEventPipelineLease(
 
     if (
       existing.rows[0]?.reclaimable === true &&
-      previousResult.ownerKind === "full_refresh" &&
+      (previousResult.ownerKind === "full_refresh" || previousResult.ownerKind === "sheet_refresh") &&
       typeof previousParentSyncRunId === "string" &&
       previousParentSyncRunId
     ) {
+      const expiredRefreshName = previousResult.ownerKind === "sheet_refresh"
+        ? "Google Sheet refresh"
+        : "full corpus refresh";
       await client.query(
         `update sync_runs
             set status = 'failed',
                 error_summary = coalesce(
                   error_summary,
-                  'The full corpus refresh lease expired before the workflow finalized.'
+                  $3::text
                 ),
                 metadata = coalesce(metadata, '{}'::jsonb) || jsonb_build_object(
                   'staleLeaseRecoveredBy', 'corpus_event',
@@ -408,7 +411,11 @@ async function acquireCorpusEventPipelineLease(
                 completed_at = coalesce(completed_at, now())
           where id = $1
             and status = 'running'`,
-        [previousParentSyncRunId, params.owner]
+        [
+          previousParentSyncRunId,
+          params.owner,
+          `The ${expiredRefreshName} lease expired before the workflow finalized.`
+        ]
       );
     }
 

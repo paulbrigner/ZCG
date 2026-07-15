@@ -191,6 +191,11 @@ Important boundaries:
 
 - The operational Google Sheet has 24 documented tabs; only two are mirrored by
   default.
+- FPF assignment is authoritative for the committee-review stage. An application
+  is normalized to `under_review` only when its GitHub issue has both the
+  `Grant Application` and `Ready For ZCG Review` labels. A Sheet review value is
+  retained as evidence and produces a reconciliation warning, but cannot promote
+  an application into the committee worklist by itself.
 - A `grant_application` represents a proposal broadly. A `grant` is created only
   for applications normalized to `approved`, `active`, or `completed`.
   Reconciliation also deletes an existing grant row if its processed
@@ -251,10 +256,14 @@ addresses.
 - **Incremental refresh:** a public-but-signature-verified callback Lambda accepts
   GitHub and Discourse events, buffers them in encrypted SQS, and runs targeted
   source mirroring, reconciliation, and knowledge-document updates at single
-  concurrency. Google Drive notifications are accepted as verification signals
-  because they do not identify changed Sheet rows. Provider callbacks are
-  activated separately, so deploying the path does not interrupt the current
-  full-refresh workflow.
+  concurrency. A separate non-VPC workflow checks the two public Google Sheet
+  CSV exports every 15 minutes and enters the shared refresh pipeline only when
+  their deterministic content checksum changes. Its S3 checksum marker advances
+  only after mirroring, authoritative Sheet-row pruning, reconciliation, newly
+  discovered Forum mirroring, and indexing succeed. Google Drive notifications
+  remain supported but dormant; no Drive watch or Google service-account key is
+  required. All incremental paths retain the Admin and daily full-refresh safety
+  nets.
 
 ### Repository map
 
@@ -348,9 +357,11 @@ pipeline instead of the compatibility command so growth in GitHub issues or
 Forum topics cannot exceed one Lambda invocation's runtime limit.
 
 The deployed hybrid path can also process signed GitHub and Discourse callbacks
-for only the affected issue, topic, application, and knowledge documents. It is
+for only the affected issue, topic, application, and knowledge documents. The
+deployed Sheet poll checks public exports without waking Aurora when content is
+unchanged and runs a Sheet-only refresh when it changes. These paths are
 additive: the full Admin and scheduled workflows remain available while source
-callbacks are registered and proven. See the
+callbacks and polling are proven. See the
 [hybrid corpus refresh runbook](docs/deployment/hybrid-corpus-refresh.md).
 
 The embedding command requires a configured embedding API key. Keyword search
@@ -459,8 +470,9 @@ files and account-specific CDK context are ignored.
 5. Add applicant and FPF/ZCG workflow surfaces only after source confidence and
    privacy boundaries are agreed.
 6. Register and observe the implemented GitHub and Discourse incremental-refresh
-   callbacks with source-system administrators; add a renewable Google Drive
-   watch and define future writeback, cutover, archive, and rollback policies.
+   callbacks with source-system administrators; monitor the 15-minute public
+   Sheet poll, and treat a Google Drive watch as an optional future experiment.
+   Define future writeback, cutover, archive, and rollback policies separately.
 
 The [architectural assessment](docs/zcg-architectural-assessment-refined.md)
 contains the fuller target-system argument and proposed architecture.

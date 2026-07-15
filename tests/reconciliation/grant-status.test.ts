@@ -2,15 +2,77 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { grantReconciliationTestHooks as hooks } from "../../lib/reconciliation/grants";
 
-test("an explicit GitHub decision supersedes only a provisional Sheet status", () => {
+test("a Sheet review status cannot promote an application without official GitHub assignment", () => {
   assert.equal(hooks.resolveCanonicalStatus("under_review", "declined"), "declined");
   assert.equal(hooks.resolveCanonicalStatus("under_review", "approved"), "approved");
-  assert.equal(hooks.resolveCanonicalStatus("under_review", "submitted"), "under_review");
+  assert.equal(hooks.resolveCanonicalStatus("under_review", "under_review"), "under_review");
+  assert.equal(hooks.resolveCanonicalStatus("under_review", "submitted"), "submitted");
+  assert.equal(hooks.resolveCanonicalStatus("under_review", "unknown"), "submitted");
   assert.equal(hooks.resolveCanonicalStatus("approved", "declined"), "approved");
   assert.equal(hooks.resolveCanonicalStatus("declined", "approved"), "declined");
   assert.equal(hooks.resolveCanonicalStatus("completed", "approved"), "completed");
   assert.equal(hooks.resolveCanonicalStatus("unknown", "declined"), "declined");
   assert.equal(hooks.resolveCanonicalStatus(null, "submitted"), "submitted");
+});
+
+test("GitHub review status requires both exact workflow labels", () => {
+  assert.equal(hooks.statusFromGitHub({
+    labels: ["📋 Grant Application", "👀 Ready For ZCG Review"],
+    state: "open"
+  } as never), "under_review");
+  assert.equal(hooks.statusFromGitHub({
+    labels: ["👀 Ready For ZCG Review"],
+    state: "open"
+  } as never), "submitted");
+  assert.equal(hooks.statusFromGitHub({
+    labels: ["📋 Grant Application", "Ready"],
+    state: "open"
+  } as never), "submitted");
+  assert.equal(hooks.statusFromGitHub({
+    labels: ["📋 Grant Application draft", "👀 Ready For ZCG Review"],
+    state: "open"
+  } as never), "submitted");
+});
+
+test("terminal GitHub and Sheet decisions remain authoritative", () => {
+  assert.equal(hooks.statusFromGitHub({
+    labels: ["Changes Approved"],
+    state: "closed"
+  } as never), "closed");
+  assert.equal(hooks.statusFromGitHub({
+    labels: ["✅ Grant Approved"],
+    state: "closed"
+  } as never), "approved");
+  assert.equal(hooks.statusFromGitHub({
+    labels: ["❌ Grant Declined"],
+    state: "closed"
+  } as never), "declined");
+  assert.equal(hooks.statusFromSheetWithoutOfficialAssignment("ZCG to discuss"), "submitted");
+  assert.equal(hooks.statusFromSheetWithoutOfficialAssignment("Approved"), "approved");
+});
+
+test("records a warning when the Sheet claims review before official GitHub assignment", () => {
+  const warning = hooks.sheetReviewAssignmentConflictIssue({
+    sourceRecord: {
+      id: "00000000-0000-4000-8000-000000000351"
+    },
+    title: "Grant Application - Example",
+    displayTitle: "Example",
+    labels: ["👀 Ready For ZCG Review"],
+    issueNumber: 351,
+    issueUrl: "https://github.com/ZcashCommunityGrants/zcashcommunitygrants/issues/351"
+  } as never, "under_review", "ZCG to discuss");
+
+  assert.equal(warning?.issueType, "sheet_review_without_official_github_assignment");
+  assert.equal(warning?.severity, "warning");
+  assert.deepEqual(warning?.details.missingGitHubLabelSlugs, ["grant_application"]);
+
+  assert.equal(hooks.sheetReviewAssignmentConflictIssue({
+    sourceRecord: { id: "00000000-0000-4000-8000-000000000351" },
+    title: "Grant Application - Example",
+    displayTitle: "Example",
+    labels: ["📋 Grant Application", "👀 Ready For ZCG Review"]
+  } as never, "under_review", "ZCG to discuss"), null);
 });
 
 test("Reference Flow fixture resolves stale Sheet review status to GitHub declined", () => {

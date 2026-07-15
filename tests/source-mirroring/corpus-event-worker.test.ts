@@ -464,7 +464,63 @@ test("reclaiming an expired full-refresh lease fails its abandoned parent run", 
   assert.match(abandonedRun.text, /staleLeaseRecoveredBy/);
   assert.deepEqual(abandonedRun.values, [
     "00000000-0000-4000-8000-000000000099",
-    "event-recovery-owner"
+    "event-recovery-owner",
+    "The full corpus refresh lease expired before the workflow finalized."
+  ]);
+});
+
+test("reclaiming an expired Sheet-refresh lease fails its abandoned parent run", async () => {
+  const queries: Query[] = [];
+  const client = {
+    async query(text: string, values: readonly unknown[] = []) {
+      queries.push({ text, values });
+
+      if (text === "begin" || text === "commit") {
+        return { rows: [], rowCount: null };
+      }
+
+      if (text.includes("from idempotency_keys") && text.includes("for update")) {
+        return {
+          rows: [{
+            result: {
+              owner: "expired-sheet-refresh",
+              ownerKind: "sheet_refresh",
+              parentSyncRunId: "00000000-0000-4000-8000-000000000098"
+            },
+            reclaimable: true
+          }],
+          rowCount: 1
+        };
+      }
+
+      if (text.startsWith("insert into idempotency_keys")) {
+        return {
+          rows: [{ locked_until: "2026-07-15T14:30:00.000Z", result: {} }],
+          rowCount: 1
+        };
+      }
+
+      if (text.includes("update sync_runs")) {
+        return { rows: [], rowCount: 1 };
+      }
+
+      throw new Error(`Unexpected query: ${text}`);
+    },
+    async end() {}
+  } as unknown as pg.Client;
+
+  const result = await corpusEventWorkerTestHooks.acquireCorpusEventPipelineLease(client, {
+    owner: "event-sheet-recovery-owner",
+    sourceKey: "discourse:1234",
+    acquiredAt: now
+  });
+
+  assert.equal(result.acquired, true);
+  const abandonedRun = queries.find((query) => query.text.includes("update sync_runs"));
+  assert.deepEqual(abandonedRun?.values, [
+    "00000000-0000-4000-8000-000000000098",
+    "event-sheet-recovery-owner",
+    "The Google Sheet refresh lease expired before the workflow finalized."
   ]);
 });
 

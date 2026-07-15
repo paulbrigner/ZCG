@@ -1,6 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { query } from "../db";
 import {
+  canonicalGitHubWorkflowLabel,
+  hasOfficialZcgAssignmentLabels,
+  missingOfficialZcgAssignmentLabels
+} from "../grants/official-assignment";
+import {
   applyManualReconciliationDecisions,
   applyManualSourceLinkDecisions,
   getActiveManualSourceLinkKeys,
@@ -708,15 +713,12 @@ function chunkArray<T>(items: T[], size: number) {
 }
 
 function labelSlug(value: string) {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "")
-    .slice(0, 120);
+  return canonicalGitHubWorkflowLabel(value);
 }
 
 function classifyGitHubLabel(labelName: string) {
   const normalized = labelName.toLowerCase();
+  const workflowLabel = canonicalGitHubWorkflowLabel(labelName);
   const milestone = normalized.match(/milestone\s+(\d+)\s+complete/);
 
   if (milestone) {
@@ -737,7 +739,7 @@ function classifyGitHubLabel(labelName: string) {
     };
   }
 
-  if (normalized.includes("grant application")) {
+  if (workflowLabel === "grant_application") {
     return {
       labelCategory: "intake",
       labelStatus: "grant_application",
@@ -746,7 +748,7 @@ function classifyGitHubLabel(labelName: string) {
     };
   }
 
-  if (normalized.includes("ready for zcg review")) {
+  if (workflowLabel === "ready_for_zcg_review") {
     return {
       labelCategory: "review",
       labelStatus: "ready_for_zcg_review",
@@ -885,25 +887,33 @@ function githubLabelsFromApplication(app: GitHubApplication): GitHubLabelInput[]
 }
 
 function statusFromGitHub(app: GitHubApplication) {
-  const labelText = app.labels.join(" ").toLowerCase();
+  const labelStatuses = app.labels.map((label) => classifyGitHubLabel(label).labelStatus);
 
-  if (labelText.includes("approved")) {
+  if (labelStatuses.includes("approved")) {
     return "approved";
   }
 
-  if (labelText.includes("rejected") || labelText.includes("declined")) {
+  if (labelStatuses.includes("declined") || labelStatuses.includes("does_not_meet_criteria")) {
     return "declined";
   }
 
-  if (labelText.includes("ready")) {
+  if (labelStatuses.includes("withdrawn_by_submitter")) {
+    return "withdrawn";
+  }
+
+  if (labelStatuses.includes("cancelled_before_completion")) {
+    return "cancelled";
+  }
+
+  if (labelStatuses.includes("grant_complete")) {
+    return "completed";
+  }
+
+  if (hasOfficialZcgAssignmentLabels(app.labels)) {
     return "under_review";
   }
 
-  if (app.state === "closed") {
-    return "closed";
-  }
-
-  return "submitted";
+  return app.state === "closed" ? "closed" : "submitted";
 }
 
 function statusFromSheet(status: string | null) {
@@ -949,14 +959,42 @@ function resolveCanonicalStatus(sheetStatus: string | null, githubStatus: string
     return githubStatus;
   }
 
-  if (
-    sheetStatus === "under_review" &&
-    (githubStatus === "approved" || githubStatus === "declined")
-  ) {
-    return githubStatus;
+  if (sheetStatus === "under_review") {
+    return githubStatus === "unknown" ? "submitted" : githubStatus;
   }
 
   return sheetStatus;
+}
+
+function statusFromSheetWithoutOfficialAssignment(status: string | null) {
+  const normalizedStatus = statusFromSheet(status);
+  return normalizedStatus === "under_review" ? "submitted" : normalizedStatus;
+}
+
+function sheetReviewAssignmentConflictIssue(
+  app: GitHubApplication,
+  sheetStatus: string | null,
+  sourceStatus: string | null
+): Omit<ReconciliationIssueInput, "canonicalId"> | null {
+  if (sheetStatus !== "under_review" || hasOfficialZcgAssignmentLabels(app.labels)) {
+    return null;
+  }
+
+  return {
+    issueType: "sheet_review_without_official_github_assignment",
+    severity: "warning",
+    sourceRecordId: app.sourceRecord.id,
+    summary: `Sheet marks ${app.displayTitle} for review without both official GitHub assignment labels`,
+    details: {
+      githubTitle: app.title,
+      issueNumber: app.issueNumber,
+      issueUrl: app.issueUrl,
+      sheetStatus: sourceStatus,
+      presentGitHubLabels: app.labels,
+      missingGitHubLabelSlugs: missingOfficialZcgAssignmentLabels(app.labels),
+      requiredGitHubLabelSlugs: ["grant_application", "ready_for_zcg_review"]
+    }
+  };
 }
 
 const datedDecisionStatuses = new Set(["approved", "declined", "withdrawn", "cancelled", "filtered"]);
@@ -1028,8 +1066,8 @@ function statusEvidenceForPlannedApplication(
     sheetSource &&
       registryStatus &&
       registryStatus !== "unknown" &&
-      resolveCanonicalStatus(registryStatus, githubStatus) === planned.application.normalizedStatus &&
-      !(registryStatus === "under_review" && datedDecisionStatuses.has(githubStatus))
+      registryStatus !== "under_review" &&
+      resolveCanonicalStatus(registryStatus, githubStatus) === planned.application.normalizedStatus
   );
   const selected = sheetWon ? sheetSource : githubSource ?? sheetSource ?? linkedSources[0] ?? null;
   const selectedSource = selected?.source ?? null;
@@ -2436,6 +2474,11 @@ function planGitHubApplication(params: {
     issues: []
   };
   let unmatchedGitHubApplications = 0;
+  const assignmentConflict = sheetReviewAssignmentConflictIssue(app, sheetStatus, sourceStatus);
+
+  if (assignmentConflict) {
+    planned.issues.push(assignmentConflict);
+  }
 
   if (historicalMatch) {
     for (const row of historicalMatch.group.rows) {
@@ -2688,6 +2731,11 @@ async function performGrantReconciliation(
     };
 
     counts.applicationsCreatedOrUpdated += 1;
+    const assignmentConflict = sheetReviewAssignmentConflictIssue(app, sheetStatus, sourceStatus);
+
+    if (assignmentConflict) {
+      planned.issues.push(assignmentConflict);
+    }
 
     if (historicalMatch) {
       matchedHistoricalKeys.add(historicalMatch.group.key);
@@ -2809,7 +2857,8 @@ async function performGrantReconciliation(
     }
 
     const paymentMatch = bestPaymentDetailMatchForHistoricalApplication(group, paymentDetailGroups);
-    const normalizedStatus = statusFromSheet(group.status);
+    const sheetStatus = statusFromSheet(group.status);
+    const normalizedStatus = statusFromSheetWithoutOfficialAssignment(group.status);
     const sourceRows = [...group.rows, ...(paymentMatch?.group.rows ?? [])];
 
     if (paymentMatch) {
@@ -2861,6 +2910,23 @@ async function performGrantReconciliation(
       issues: []
     };
 
+    if (sheetStatus === "under_review") {
+      planned.issues.push({
+        issueType: "sheet_review_without_official_github_assignment",
+        severity: "warning",
+        sourceRecordId: group.rows[0]?.id,
+        summary: `Sheet marks ${group.title} for review without a verified GitHub assignment`,
+        details: {
+          historicalRegistryTitle: group.title,
+          githubIssueNumber: group.githubIssueNumber,
+          githubIssueUrl: group.githubIssueUrl,
+          sheetStatus: group.status,
+          missingGitHubLabelSlugs: ["grant_application", "ready_for_zcg_review"],
+          requiredGitHubLabelSlugs: ["grant_application", "ready_for_zcg_review"]
+        }
+      });
+    }
+
     const manualGitHubIssueSourceLink =
       group.githubIssueNumber !== null &&
       manualSourceLinkKeys.has(
@@ -2895,7 +2961,8 @@ async function performGrantReconciliation(
         continue;
       }
 
-      const normalizedStatus = statusFromSheet(group.status);
+      const sheetStatus = statusFromSheet(group.status);
+      const normalizedStatus = statusFromSheetWithoutOfficialAssignment(group.status);
       const planned: PlannedApplication = {
         application: {
           canonicalKey: `sheet:${group.key}`,
@@ -2927,6 +2994,18 @@ async function performGrantReconciliation(
             }
           : null,
         issues: [
+          ...(sheetStatus === "under_review" ? [{
+            issueType: "sheet_review_without_official_github_assignment",
+            severity: "warning" as const,
+            sourceRecordId: group.rows[0]?.id,
+            summary: `Sheet marks ${group.project} for review without a verified GitHub assignment`,
+            details: {
+              sheetProject: group.project,
+              sheetStatus: group.status,
+              missingGitHubLabelSlugs: ["grant_application", "ready_for_zcg_review"],
+              requiredGitHubLabelSlugs: ["grant_application", "ready_for_zcg_review"]
+            }
+          }] : []),
           {
             issueType: "missing_github_match",
             severity: "info",
@@ -3309,8 +3388,10 @@ export const grantReconciliationTestHooks = {
   retirementApplicationInput,
   normalizedCalendarDate,
   resolveCanonicalStatus,
+  sheetReviewAssignmentConflictIssue,
   statusEvidenceForPlannedApplication,
   statusFromGitHub,
   statusFromSheet,
+  statusFromSheetWithoutOfficialAssignment,
   withGrantReconciliationLease
 };

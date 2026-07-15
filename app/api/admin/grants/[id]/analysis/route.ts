@@ -40,6 +40,8 @@ const reportTitleMaxChars = 160;
 type ApplicationRow = {
   id: string;
   title: string;
+  normalized_status: string;
+  officially_assigned: boolean;
 };
 
 function validApplicationId(value: unknown): value is string {
@@ -94,9 +96,22 @@ async function serializeReport(report: GrantAnalysisReport) {
 
 async function getApplication(applicationId: string) {
   const result = await query<ApplicationRow>(
-    `select id::text, title
-       from grant_applications
-      where id = $1
+    `select ga.id::text,
+            ga.title,
+            ga.normalized_status,
+            exists (
+              select 1
+                from grant_application_github_labels application_label
+               where application_label.application_id = ga.id
+                 and application_label.label_status = 'grant_application'
+            ) and exists (
+              select 1
+                from grant_application_github_labels review_label
+               where review_label.application_id = ga.id
+                 and review_label.label_status = 'ready_for_zcg_review'
+            ) as officially_assigned
+       from grant_applications ga
+      where ga.id = $1
       limit 1`,
     [applicationId]
   );
@@ -196,6 +211,19 @@ export async function POST(
 
   if (!application) {
     return NextResponse.json({ error: "Grant application not found." }, { status: 404 });
+  }
+
+  if (
+    reportType === "committee_briefing" &&
+    (application.normalized_status !== "under_review" || !application.officially_assigned)
+  ) {
+    return NextResponse.json(
+      {
+        error:
+          "Committee briefings can be generated only after FPF assigns the proposal with both the Grant Application and Ready For ZCG Review GitHub labels."
+      },
+      { status: 409 }
+    );
   }
 
   const permissions = await permissionsFor(principal.id);

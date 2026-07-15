@@ -8,6 +8,7 @@ import {
   principalHasRole,
   requirePermission
 } from "@/lib/authorization";
+import { isOfficialZcgCommitteeReview } from "@/lib/grants/official-assignment";
 import {
   COMMITTEE_BRIEFING_TEMPLATE_KEY,
   COMMITTEE_BRIEFING_TEMPLATE_VERSION,
@@ -227,6 +228,10 @@ export default async function GrantApplicationPage({
   );
   const latestDecision = detail.decisionMentions[0] ?? null;
   const reviewLabels = detail.githubLabels.slice(0, 5);
+  const committeeBriefingEligible = isOfficialZcgCommitteeReview({
+    normalizedStatus: application.normalized_status,
+    labels: detail.githubLabels.map((label) => label.label_name)
+  });
   let canReadAnalysis = false;
   let canGenerateAnalysis = false;
   let canPublishAnalysis = false;
@@ -375,6 +380,7 @@ export default async function GrantApplicationPage({
       <GrantAnalysisPanel
         applicationId={id}
         canGenerate={canGenerateAnalysis}
+        committeeBriefingEligible={committeeBriefingEligible}
         canPublish={canPublishAnalysis}
         canRead={canReadAnalysis}
         initialReports={initialAnalysisReports}

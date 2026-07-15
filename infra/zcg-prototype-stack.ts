@@ -126,6 +126,7 @@ export class ZcgPrototypeStack extends Stack {
     const enableWorkers = contextBoolean(this, "enableWorkers", true);
     const enableHybridCorpusRefresh = contextBoolean(this, "enableHybridCorpusRefresh", enableWorkers);
     const enableSourceSyncSchedule = contextBoolean(this, "enableSourceSyncSchedule", enableWorkers);
+    const enableGoogleSheetPollSchedule = contextBoolean(this, "enableGoogleSheetPollSchedule", enableWorkers);
     const enableKnowledgeEmbeddingSchedule = contextBoolean(this, "enableKnowledgeEmbeddingSchedule", enableWorkers);
     const enableAlarms = contextBoolean(this, "enableAlarms", !isPrototypeLowCost);
     const enableContainerInsights = contextBoolean(this, "containerInsights", !isPrototypeLowCost);
@@ -136,6 +137,7 @@ export class ZcgPrototypeStack extends Stack {
     const logRetentionDays = contextNumber(this, "logRetentionDays", isPrototypeLowCost ? 7 : 30);
     const knowledgeEmbeddingMaxDocuments = contextNumber(this, "knowledgeEmbeddingMaxDocuments", 200);
     const knowledgeEmbeddingScheduleMinutes = contextNumber(this, "knowledgeEmbeddingScheduleMinutes", 60);
+    const googleSheetPollMinutes = contextNumber(this, "googleSheetPollMinutes", 15);
     const knowledgeEmbeddingBatchSize = contextNumber(this, "knowledgeEmbeddingBatchSize", 2);
     const knowledgeEmbeddingTimeoutMs = contextNumber(this, "knowledgeEmbeddingTimeoutMs", 60000);
     const knowledgeCommitteeBriefingModel =
@@ -169,6 +171,14 @@ export class ZcgPrototypeStack extends Stack {
 
     if (enableHybridCorpusRefresh && !enableWorkers) {
       throw new Error("enableHybridCorpusRefresh=true requires enableWorkers=true.");
+    }
+
+    if (enableGoogleSheetPollSchedule && !enableWorkers) {
+      throw new Error("enableGoogleSheetPollSchedule=true requires enableWorkers=true.");
+    }
+
+    if (googleSheetPollMinutes < 5) {
+      throw new Error("Context value googleSheetPollMinutes must be at least 5.");
     }
 
     cdk.Tags.of(this).add("Project", "ZCG");
@@ -507,12 +517,24 @@ export class ZcgPrototypeStack extends Stack {
       removalPolicy
     });
 
+    const googleSheetRefreshStateMachineLogGroup = new logs.LogGroup(this, "GoogleSheetRefreshStateMachineLogGroup", {
+      retention: logRetention,
+      removalPolicy
+    });
+
+    const googleSheetPollWorkerLogGroup = new logs.LogGroup(this, "GoogleSheetPollWorkerLogGroup", {
+      retention: logRetention,
+      removalPolicy
+    });
+
     let syncWorkerFunctionName = "disabled";
     let migrationRunnerFunctionName = "disabled";
     let knowledgeIndexWorkerFunctionName = "disabled";
     let knowledgeEmbeddingWorkerFunctionName = "disabled";
     let knowledgeAnswerWorkerFunctionName = "disabled";
     let corpusRefreshStateMachineArn = "disabled";
+    let googleSheetRefreshStateMachineArn = "disabled";
+    let googleSheetPollWorkerFunctionName = "disabled";
     let corpusWebhookUrl = "disabled";
     let corpusEventQueueUrl = "disabled";
     let corpusEventDeadLetterQueueUrl = "disabled";
@@ -544,7 +566,10 @@ export class ZcgPrototypeStack extends Stack {
           subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS
         },
         securityGroups: [workerSecurityGroup],
-        environment: syncWorkerEnvironment,
+        environment: {
+          ...syncWorkerEnvironment,
+          GOOGLE_SHEET_POLL_STATE_KEY: "source-mirrors/google-sheet-poll/last-success.json"
+        },
         logGroup: syncWorkerLogGroup,
         bundling: {
           externalModules: []
@@ -647,6 +672,27 @@ export class ZcgPrototypeStack extends Stack {
             : {})
         },
         logGroup: knowledgeAnswerWorkerLogGroup,
+        bundling: {
+          externalModules: []
+        }
+      });
+
+      // This checker intentionally stays outside the VPC. An unchanged poll
+      // downloads only the two public CSV exports and reads one small S3 marker,
+      // so it does not wake Aurora or traverse the NAT gateway.
+      const googleSheetPollWorker = new lambdaNodejs.NodejsFunction(this, "GoogleSheetPollWorker", {
+        entry: path.join(__dirname, "..", "workers", "google-sheet-poll-worker.ts"),
+        handler: "handler",
+        runtime: lambda.Runtime.NODEJS_24_X,
+        timeout: Duration.seconds(30),
+        memorySize: 256,
+        environment: {
+          SNAPSHOT_BUCKET_NAME: snapshotBucket.bucketName,
+          GOOGLE_SHEET_POLL_STATE_KEY: "source-mirrors/google-sheet-poll/last-success.json",
+          ZCG_GOOGLE_SHEET_ID: workerEnvironment.ZCG_GOOGLE_SHEET_ID,
+          ZCG_GOOGLE_SHEET_TABS: workerEnvironment.ZCG_GOOGLE_SHEET_TABS
+        },
+        logGroup: googleSheetPollWorkerLogGroup,
         bundling: {
           externalModules: []
         }
@@ -816,8 +862,13 @@ export class ZcgPrototypeStack extends Stack {
       knowledgeIndexWorkerFunctionName = knowledgeIndexWorker.functionName;
       knowledgeEmbeddingWorkerFunctionName = knowledgeEmbeddingWorker.functionName;
       knowledgeAnswerWorkerFunctionName = knowledgeAnswerWorker.functionName;
+      googleSheetPollWorkerFunctionName = googleSheetPollWorker.functionName;
       snapshotBucket.grantReadWrite(syncWorker);
       snapshotBucket.grantReadWrite(migrationRunner);
+      snapshotBucket.grantRead(
+        googleSheetPollWorker,
+        "source-mirrors/google-sheet-poll/last-success.json"
+      );
       database.secret!.grantRead(syncWorker);
       database.secret!.grantRead(migrationRunner);
       database.secret!.grantRead(knowledgeIndexWorker);
@@ -1099,13 +1150,16 @@ export class ZcgPrototypeStack extends Stack {
       });
       const waitForTargetedCorpusEvent = new sfn.Wait(this, "WaitForTargetedCorpusEvent", {
         time: sfn.WaitTime.duration(Duration.seconds(60)),
-        comment: "A short targeted source update owns the shared corpus lease; retry the full refresh after it finishes."
+        comment: "A short targeted or Sheet update owns the shared corpus lease; retry the full refresh after it finishes."
       });
       waitForTargetedCorpusEvent.next(acquireCorpusRefresh);
       const corpusRefreshLeaseAcquired = new sfn.Choice(this, "CorpusRefreshLeaseAcquired")
         .when(sfn.Condition.booleanEquals("$.lease.acquired", true), corpusRefreshWork)
         .when(
-          sfn.Condition.stringEquals("$.lease.busyOwnerKind", "corpus_event"),
+          sfn.Condition.or(
+            sfn.Condition.stringEquals("$.lease.busyOwnerKind", "corpus_event"),
+            sfn.Condition.stringEquals("$.lease.busyOwnerKind", "sheet_refresh")
+          ),
           waitForTargetedCorpusEvent
         )
         .otherwise(skipConcurrentCorpusRefresh);
@@ -1115,7 +1169,9 @@ export class ZcgPrototypeStack extends Stack {
           prepareCorpusRefresh.next(acquireCorpusRefresh).next(corpusRefreshLeaseAcquired)
         ),
         stateMachineType: sfn.StateMachineType.STANDARD,
-        timeout: Duration.hours(3),
+        // Preserve the original three-hour work budget even when this daily
+        // verification must first wait out a 75-minute orphaned Sheet lease.
+        timeout: Duration.minutes(255),
         logs: {
           destination: corpusRefreshStateMachineLogGroup,
           level: sfn.LogLevel.ERROR,
@@ -1147,6 +1203,218 @@ export class ZcgPrototypeStack extends Stack {
         );
       }
 
+      const checkGoogleSheetChecksum = new sfnTasks.LambdaInvoke(this, "CheckGoogleSheetChecksum", {
+        lambdaFunction: googleSheetPollWorker,
+        payloadResponseOnly: true,
+        payload: sfn.TaskInput.fromObject({ action: "check" }),
+        resultPath: "$.sheetCheck"
+      });
+      const prepareGoogleSheetRefresh = new sfn.Pass(this, "PrepareGoogleSheetRefresh", {
+        parameters: {
+          "checksum.$": "$.sheetCheck.checksum",
+          "requestedAt.$": "$.sheetCheck.checkedAt",
+          requestedByPrincipalId: null,
+          trigger: "schedule",
+          refreshKind: "google-sheet",
+          "refreshId.$": "$$.Execution.Name"
+        }
+      });
+      const acquireGoogleSheetRefresh = new sfnTasks.LambdaInvoke(this, "AcquireGoogleSheetRefreshLease", {
+        lambdaFunction: syncWorker,
+        payloadResponseOnly: true,
+        payload: sfn.TaskInput.fromObject({
+          source: "corpus-refresh-acquire",
+          refreshId: sfn.JsonPath.stringAt("$.refreshId"),
+          refreshKind: "google-sheet",
+          trigger: "schedule",
+          requestedAt: sfn.JsonPath.stringAt("$.requestedAt"),
+          requestedByPrincipalId: null
+        }),
+        resultPath: "$.lease"
+      });
+      const mirrorChangedGoogleSheet = new sfnTasks.LambdaInvoke(this, "MirrorChangedGoogleSheet", {
+        lambdaFunction: syncWorker,
+        payloadResponseOnly: true,
+        payload: sfn.TaskInput.fromObject({
+          source: "google-sheet",
+          refreshId: sfn.JsonPath.stringAt("$.refreshId"),
+          parentSyncRunId: sfn.JsonPath.stringAt("$.lease.parentSyncRunId"),
+          expectedGoogleSheetChecksum: sfn.JsonPath.stringAt("$.checksum")
+        }),
+        resultPath: "$.googleSheet"
+      });
+      const planNewSheetForumTopics = new sfnTasks.LambdaInvoke(this, "PlanNewSheetForumTopicBatches", {
+        lambdaFunction: syncWorker,
+        payloadResponseOnly: true,
+        payload: sfn.TaskInput.fromObject({
+          source: "forum-url-plan",
+          refreshId: sfn.JsonPath.stringAt("$.refreshId"),
+          parentSyncRunId: sfn.JsonPath.stringAt("$.lease.parentSyncRunId"),
+          batchSize: forumTopicBatchSize,
+          onlyUnmirroredForumUrls: true
+        }),
+        resultPath: "$.forumPlan"
+      });
+      const mirrorNewSheetForumBatch = new sfnTasks.LambdaInvoke(this, "MirrorNewSheetForumTopicBatch", {
+        lambdaFunction: syncWorker,
+        payloadResponseOnly: true,
+        payload: sfn.TaskInput.fromObject({
+          source: "forum-topics-batch",
+          refreshId: sfn.JsonPath.stringAt("$.refreshId"),
+          parentSyncRunId: sfn.JsonPath.stringAt("$.parentSyncRunId"),
+          batchIndex: sfn.JsonPath.numberAt("$.batchIndex"),
+          batchSize: forumTopicBatchSize
+        }),
+        resultPath: sfn.JsonPath.DISCARD
+      });
+      const newSheetForumMap = new sfn.Map(this, "MirrorNewSheetForumTopicBatches", {
+        itemsPath: "$.forumPlan.batchIndexes",
+        maxConcurrency: 1,
+        resultPath: sfn.JsonPath.DISCARD,
+        itemSelector: {
+          "batchIndex.$": "$$.Map.Item.Value",
+          "refreshId.$": "$.refreshId",
+          "parentSyncRunId.$": "$.lease.parentSyncRunId"
+        }
+      });
+      newSheetForumMap.itemProcessor(mirrorNewSheetForumBatch);
+      const reconcileChangedGoogleSheet = new sfnTasks.LambdaInvoke(this, "ReconcileChangedGoogleSheet", {
+        lambdaFunction: syncWorker,
+        payloadResponseOnly: true,
+        payload: sfn.TaskInput.fromObject({
+          source: "reconcile-grants",
+          refreshId: sfn.JsonPath.stringAt("$.refreshId"),
+          parentSyncRunId: sfn.JsonPath.stringAt("$.lease.parentSyncRunId")
+        }),
+        resultPath: "$.reconciliation"
+      });
+      const rebuildChangedGoogleSheetIndex = new sfnTasks.LambdaInvoke(this, "RebuildChangedGoogleSheetIndex", {
+        lambdaFunction: knowledgeIndexWorker,
+        payloadResponseOnly: true,
+        payload: sfn.TaskInput.fromObject({
+          refreshId: sfn.JsonPath.stringAt("$.refreshId"),
+          requestedAt: sfn.JsonPath.stringAt("$.requestedAt"),
+          requestedByPrincipalId: null
+        }),
+        resultPath: "$.knowledgeIndex"
+      });
+      const sheetReconciliationBusy = new sfn.Fail(this, "GoogleSheetReconciliationBusy", {
+        error: "GoogleSheetRefresh.ReconciliationBusy",
+        cause: "Grant reconciliation was already running."
+      });
+      const sheetReconciliationReady = new sfn.Choice(this, "GoogleSheetReconciliationCompleted")
+        .when(
+          sfn.Condition.and(
+            sfn.Condition.isPresent("$.reconciliation.busy"),
+            sfn.Condition.booleanEquals("$.reconciliation.busy", true)
+          ),
+          sheetReconciliationBusy
+        )
+        .otherwise(rebuildChangedGoogleSheetIndex);
+      mirrorChangedGoogleSheet
+        .next(planNewSheetForumTopics)
+        .next(newSheetForumMap)
+        .next(reconcileChangedGoogleSheet)
+        .next(sheetReconciliationReady);
+      const googleSheetRefreshWork = new sfn.Parallel(this, "RunChangedGoogleSheetRefresh", {
+        resultPath: sfn.JsonPath.DISCARD
+      });
+      googleSheetRefreshWork.branch(mirrorChangedGoogleSheet);
+      const completeGoogleSheetRefresh = new sfnTasks.LambdaInvoke(this, "CompleteGoogleSheetRefresh", {
+        lambdaFunction: syncWorker,
+        payloadResponseOnly: true,
+        payload: sfn.TaskInput.fromObject({
+          source: "corpus-refresh-complete",
+          refreshId: sfn.JsonPath.stringAt("$.refreshId"),
+          parentSyncRunId: sfn.JsonPath.stringAt("$.lease.parentSyncRunId"),
+          refreshKind: "google-sheet",
+          trigger: "schedule",
+          requestedAt: sfn.JsonPath.stringAt("$.requestedAt"),
+          requestedByPrincipalId: null
+        }),
+        resultPath: "$.completion"
+      });
+      const failGoogleSheetRefresh = new sfnTasks.LambdaInvoke(this, "FailGoogleSheetRefresh", {
+        lambdaFunction: syncWorker,
+        payloadResponseOnly: true,
+        payload: sfn.TaskInput.fromObject({
+          source: "corpus-refresh-fail",
+          refreshId: sfn.JsonPath.stringAt("$.refreshId"),
+          parentSyncRunId: sfn.JsonPath.stringAt("$.lease.parentSyncRunId"),
+          refreshKind: "google-sheet",
+          trigger: "schedule",
+          requestedAt: sfn.JsonPath.stringAt("$.requestedAt"),
+          requestedByPrincipalId: null,
+          errorSummary: sfn.JsonPath.stringAt("$.pipelineError.Cause")
+        }),
+        resultPath: sfn.JsonPath.DISCARD
+      });
+      for (const task of [
+        checkGoogleSheetChecksum,
+        acquireGoogleSheetRefresh,
+        mirrorChangedGoogleSheet,
+        planNewSheetForumTopics,
+        mirrorNewSheetForumBatch,
+        reconcileChangedGoogleSheet,
+        rebuildChangedGoogleSheetIndex,
+        completeGoogleSheetRefresh,
+        failGoogleSheetRefresh
+      ]) {
+        task.addRetry({
+          errors: ["States.TaskFailed", "States.Timeout"],
+          interval: Duration.seconds(20),
+          backoffRate: 2,
+          maxAttempts: 2
+        });
+      }
+      const googleSheetRefreshFailed = new sfn.Fail(this, "GoogleSheetRefreshFailed", {
+        error: "GoogleSheetRefresh.PipelineFailed",
+        cause: "The changed Google Sheet refresh failed."
+      });
+      failGoogleSheetRefresh.next(googleSheetRefreshFailed);
+      googleSheetRefreshWork.addCatch(failGoogleSheetRefresh, { resultPath: "$.pipelineError" });
+      completeGoogleSheetRefresh.addCatch(failGoogleSheetRefresh, { resultPath: "$.pipelineError" });
+      googleSheetRefreshWork.next(completeGoogleSheetRefresh);
+
+      const skipConcurrentGoogleSheetRefresh = new sfn.Succeed(this, "SkipConcurrentGoogleSheetRefresh", {
+        comment: "Another corpus pipeline owns the shared lease; a later poll will compare the checksum again."
+      });
+      const waitForTargetedEventBeforeSheetRefresh = new sfn.Wait(this, "WaitForTargetedEventBeforeSheetRefresh", {
+        time: sfn.WaitTime.duration(Duration.seconds(60)),
+        comment: "A short targeted update owns the shared corpus lease; retry the changed Sheet refresh."
+      });
+      waitForTargetedEventBeforeSheetRefresh.next(acquireGoogleSheetRefresh);
+      const googleSheetRefreshLeaseAcquired = new sfn.Choice(this, "GoogleSheetRefreshLeaseAcquired")
+        .when(sfn.Condition.booleanEquals("$.lease.acquired", true), googleSheetRefreshWork)
+        .when(
+          sfn.Condition.stringEquals("$.lease.busyOwnerKind", "corpus_event"),
+          waitForTargetedEventBeforeSheetRefresh
+        )
+        .otherwise(skipConcurrentGoogleSheetRefresh);
+      const changedGoogleSheetPipeline = prepareGoogleSheetRefresh
+        .next(acquireGoogleSheetRefresh)
+        .next(googleSheetRefreshLeaseAcquired);
+      const googleSheetUnchanged = new sfn.Succeed(this, "GoogleSheetUnchanged", {
+        comment: "The public Sheet exports match the last successfully processed checksum."
+      });
+      const googleSheetChanged = new sfn.Choice(this, "GoogleSheetContentChanged")
+        .when(sfn.Condition.booleanEquals("$.sheetCheck.changed", true), changedGoogleSheetPipeline)
+        .otherwise(googleSheetUnchanged);
+      const googleSheetRefreshStateMachine = new sfn.StateMachine(this, "GoogleSheetRefreshStateMachine", {
+        definitionBody: sfn.DefinitionBody.fromChainable(
+          checkGoogleSheetChecksum.next(googleSheetChanged)
+        ),
+        stateMachineType: sfn.StateMachineType.STANDARD,
+        timeout: Duration.hours(1),
+        logs: {
+          destination: googleSheetRefreshStateMachineLogGroup,
+          level: sfn.LogLevel.ERROR,
+          includeExecutionData: true
+        },
+        tracingEnabled: true
+      });
+      googleSheetRefreshStateMachineArn = googleSheetRefreshStateMachine.stateMachineArn;
+
       new scheduler.Schedule(this, "DailySourceSyncSchedule", {
         enabled: enableSourceSyncSchedule,
         description: "Refresh the full ZCG source corpus every morning at 3:00 AM Eastern time.",
@@ -1163,6 +1431,17 @@ export class ZcgPrototypeStack extends Stack {
             requestedAt: null,
             requestedByPrincipalId: null
           })
+        })
+      });
+
+      new scheduler.Schedule(this, "GoogleSheetPollSchedule", {
+        enabled: enableGoogleSheetPollSchedule,
+        description: "Check the public ZCG Sheet exports and process them only when their content changes.",
+        schedule: scheduler.ScheduleExpression.rate(Duration.minutes(googleSheetPollMinutes)),
+        target: new schedulerTargets.StepFunctionsStartExecution(googleSheetRefreshStateMachine, {
+          maxEventAge: Duration.minutes(googleSheetPollMinutes),
+          retryAttempts: 2,
+          input: scheduler.ScheduleTargetInput.fromObject({})
         })
       });
 
@@ -1207,6 +1486,13 @@ export class ZcgPrototypeStack extends Stack {
           comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD
         });
 
+        googleSheetPollWorker.metricErrors().createAlarm(this, "GoogleSheetPollWorkerErrorsAlarm", {
+          alarmName: `${appName}-${environmentName}-google-sheet-poll-worker-errors`,
+          threshold: 1,
+          evaluationPeriods: 1,
+          comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD
+        });
+
         corpusRefreshStateMachine.metricFailed().createAlarm(this, "CorpusRefreshFailedAlarm", {
           alarmName: `${appName}-${environmentName}-corpus-refresh-failed`,
           threshold: 1,
@@ -1216,6 +1502,20 @@ export class ZcgPrototypeStack extends Stack {
 
         corpusRefreshStateMachine.metricTimedOut().createAlarm(this, "CorpusRefreshTimedOutAlarm", {
           alarmName: `${appName}-${environmentName}-corpus-refresh-timed-out`,
+          threshold: 1,
+          evaluationPeriods: 1,
+          comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD
+        });
+
+        googleSheetRefreshStateMachine.metricFailed().createAlarm(this, "GoogleSheetRefreshFailedAlarm", {
+          alarmName: `${appName}-${environmentName}-google-sheet-refresh-failed`,
+          threshold: 1,
+          evaluationPeriods: 1,
+          comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD
+        });
+
+        googleSheetRefreshStateMachine.metricTimedOut().createAlarm(this, "GoogleSheetRefreshTimedOutAlarm", {
+          alarmName: `${appName}-${environmentName}-google-sheet-refresh-timed-out`,
           threshold: 1,
           evaluationPeriods: 1,
           comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD
@@ -1267,6 +1567,12 @@ export class ZcgPrototypeStack extends Stack {
     });
     new cdk.CfnOutput(this, "CorpusRefreshStateMachineArn", {
       value: corpusRefreshStateMachineArn
+    });
+    new cdk.CfnOutput(this, "GoogleSheetRefreshStateMachineArn", {
+      value: googleSheetRefreshStateMachineArn
+    });
+    new cdk.CfnOutput(this, "GoogleSheetPollWorkerFunctionName", {
+      value: googleSheetPollWorkerFunctionName
     });
     new cdk.CfnOutput(this, "CorpusWebhookUrl", {
       value: corpusWebhookUrl

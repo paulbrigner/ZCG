@@ -12,6 +12,12 @@ import { collectSourceMirrors, type SourceMirrorEvent, type SourceMirrorResult }
 import { forumTopicUrlsFromSourceRecords } from "../lib/source-mirroring/forum";
 import { mirrorGitHubIssue } from "../lib/source-mirroring/github";
 import {
+  GOOGLE_SHEET_CHECKSUM_PATTERN,
+  GOOGLE_SHEET_POLL_STATE_KEY,
+  googleSheetContentChecksum,
+  type GoogleSheetSuccessMarker
+} from "../lib/source-mirroring/google-sheet-checksum";
+import {
   addCounts,
   emptyCounts,
   recordSourceSnapshot,
@@ -40,9 +46,12 @@ type WorkerEvent = SourceMirrorEvent & {
   refreshId?: string;
   parentSyncRunId?: string;
   trigger?: "admin" | "schedule" | "manual";
+  refreshKind?: "full" | "google-sheet";
   errorSummary?: string;
   requestedAt?: string;
   requestedByPrincipalId?: string | null;
+  onlyUnmirroredForumUrls?: boolean;
+  expectedGoogleSheetChecksum?: string;
 };
 
 type RefreshLeaseResult = {
@@ -50,12 +59,21 @@ type RefreshLeaseResult = {
   refreshId: string;
   parentSyncRunId: string | null;
   message?: string;
-  busyOwnerKind?: "corpus_event" | "full_refresh";
+  busyOwnerKind?: "corpus_event" | "full_refresh" | "sheet_refresh";
+};
+
+type ReleaseCorpusRefreshLeaseDependencies = {
+  writeGoogleSheetMarker: (checksum: string, now?: Date) => Promise<GoogleSheetSuccessMarker>;
 };
 
 const CORPUS_REFRESH_LEASE_KEY = "corpus-refresh:pipeline:v1";
 const CORPUS_REFRESH_LEASE_SCOPE = "corpus-refresh";
-const CORPUS_REFRESH_LEASE_HOURS = 4;
+// Leases intentionally outlive their owning workflow's remaining runtime.
+// A Sheet workflow has a one-hour timeout; the extra 15 minutes covers cleanup
+// and retry lag without making the nightly verification wait two hours for an
+// abandoned run. The full lease exceeds its 4h15 state-machine timeout.
+const CORPUS_REFRESH_LEASE_MINUTES = 5 * 60;
+const GOOGLE_SHEET_REFRESH_LEASE_MINUTES = 75;
 const FORUM_URL_CHUNK_PREFIX = "source-mirrors/orchestrations";
 
 function requiresCorpusRefreshLock(source: string, event: WorkerEvent) {
@@ -196,6 +214,15 @@ async function acquireCorpusRefreshLease(
   event: WorkerEvent
 ): Promise<RefreshLeaseResult> {
   const refreshId = requireRefreshId(event);
+  const refreshKind = event.refreshKind === "google-sheet" ? "google-sheet" : "full";
+  const ownerKind = refreshKind === "google-sheet" ? "sheet_refresh" : "full_refresh";
+  const leaseMinutes = refreshKind === "google-sheet"
+    ? GOOGLE_SHEET_REFRESH_LEASE_MINUTES
+    : CORPUS_REFRESH_LEASE_MINUTES;
+  const parentSource = refreshKind === "google-sheet" ? "google-sheet-refresh" : "phase1-all";
+  const pipelinePhase = refreshKind === "google-sheet"
+    ? "google_sheet_refresh_pipeline"
+    : "corpus_refresh_pipeline";
 
   await client.query("begin");
 
@@ -220,13 +247,14 @@ async function acquireCorpusRefreshLease(
        values (
          $1,
          $2,
-         now() + ($3::int * interval '1 hour'),
+         now() + ($3::int * interval '1 minute'),
          jsonb_build_object(
            'owner', $4::text,
-           'ownerKind', 'full_refresh',
+           'ownerKind', $8::text,
            'trigger', $5::text,
            'requestedAt', $6::text,
-           'requestedByPrincipalId', $7::text
+           'requestedByPrincipalId', $7::text,
+           'refreshKind', $9::text
          ),
          now(),
          now()
@@ -247,11 +275,13 @@ async function acquireCorpusRefreshLease(
       [
         CORPUS_REFRESH_LEASE_KEY,
         CORPUS_REFRESH_LEASE_SCOPE,
-        CORPUS_REFRESH_LEASE_HOURS,
+        leaseMinutes,
         refreshId,
         event.trigger ?? "manual",
         event.requestedAt ?? new Date().toISOString(),
-        event.requestedByPrincipalId ?? null
+        event.requestedByPrincipalId ?? null,
+        ownerKind,
+        refreshKind
       ]
     );
 
@@ -259,14 +289,18 @@ async function acquireCorpusRefreshLease(
       await client.query("rollback");
       const busyOwnerKind = previousLeaseResult.ownerKind === "corpus_event"
         ? "corpus_event"
-        : "full_refresh";
+        : previousLeaseResult.ownerKind === "sheet_refresh"
+          ? "sheet_refresh"
+          : "full_refresh";
       return {
         acquired: false,
         refreshId,
         parentSyncRunId: null,
         message: busyOwnerKind === "corpus_event"
           ? "A targeted corpus event is currently being applied."
-          : "Another full corpus refresh is already running.",
+          : busyOwnerKind === "sheet_refresh"
+            ? "A Google Sheet refresh is already running."
+            : "Another full corpus refresh is already running.",
         busyOwnerKind
       };
     }
@@ -310,14 +344,15 @@ async function acquireCorpusRefreshLease(
       const parent = await client.query<{ id: string }>(
         `insert into sync_runs (source, status, metadata, started_at)
          values (
-           'phase1-all',
+           $5,
            'running',
            jsonb_build_object(
-             'phase', 'corpus_refresh_pipeline',
+             'phase', $6::text,
              'refreshId', $1::text,
              'trigger', $2::text,
              'requestedAt', $3::text,
-             'requestedByPrincipalId', $4::text
+             'requestedByPrincipalId', $4::text,
+             'refreshKind', $7::text
            ),
            now()
          )
@@ -326,7 +361,10 @@ async function acquireCorpusRefreshLease(
           refreshId,
           event.trigger ?? "manual",
           event.requestedAt ?? new Date().toISOString(),
-          event.requestedByPrincipalId ?? null
+          event.requestedByPrincipalId ?? null,
+          parentSource,
+          pipelinePhase,
+          refreshKind
         ]
       );
       parentSyncRunId = parent.rows[0]?.id ?? null;
@@ -353,10 +391,66 @@ async function acquireCorpusRefreshLease(
   }
 }
 
+async function appliedGoogleSheetChecksum(
+  client: pg.Client,
+  parentSyncRunId: string
+) {
+  const result = await client.query<{ checksum: string | null }>(
+    `select source_entry->'metadata'->>'contentChecksum' as checksum
+       from sync_runs sr
+       cross join lateral jsonb_array_elements(
+         coalesce(sr.metadata->'sources', '[]'::jsonb)
+       ) as source_entry
+      where sr.metadata->>'parentSyncRunId' = $1
+        and sr.status = 'completed'
+        and source_entry->>'sourceKind' = 'google_sheet'
+      order by sr.completed_at desc nulls last, sr.started_at desc
+      limit 1`,
+    [parentSyncRunId]
+  );
+  const checksum = result.rows[0]?.checksum?.trim().toLowerCase() ?? "";
+
+  if (!GOOGLE_SHEET_CHECKSUM_PATTERN.test(checksum)) {
+    throw new Error(
+      "The completed refresh did not record an applied Google Sheet checksum; refusing to advance poll state."
+    );
+  }
+
+  return checksum;
+}
+
+async function writeGoogleSheetSuccessMarker(
+  checksum: string,
+  now = new Date()
+): Promise<GoogleSheetSuccessMarker> {
+  const normalizedChecksum = checksum.trim().toLowerCase();
+
+  if (!GOOGLE_SHEET_CHECKSUM_PATTERN.test(normalizedChecksum)) {
+    throw new Error("A valid applied Google Sheet checksum is required to advance poll state.");
+  }
+
+  const marker: GoogleSheetSuccessMarker = {
+    schemaVersion: 1,
+    checksum: normalizedChecksum,
+    committedAt: now.toISOString()
+  };
+
+  await s3.send(new PutObjectCommand({
+    Bucket: snapshotBucketName(),
+    Key: process.env.GOOGLE_SHEET_POLL_STATE_KEY?.trim() || GOOGLE_SHEET_POLL_STATE_KEY,
+    Body: JSON.stringify(marker),
+    ContentType: "application/json",
+    ServerSideEncryption: "AES256"
+  }));
+
+  return marker;
+}
+
 async function releaseCorpusRefreshLease(
   client: pg.Client,
   event: WorkerEvent,
-  status: "completed" | "failed"
+  status: "completed" | "failed",
+  dependencies: Partial<ReleaseCorpusRefreshLeaseDependencies> = {}
 ) {
   const refreshId = requireRefreshId(event);
   const lease = await client.query<{ result: Record<string, unknown> }>(
@@ -366,9 +460,19 @@ async function releaseCorpusRefreshLease(
         and result->>'owner' = $2`,
     [CORPUS_REFRESH_LEASE_KEY, refreshId]
   );
-  const storedParentSyncRunId = lease.rows[0]?.result?.parentSyncRunId;
-  const storedRequestedAt = lease.rows[0]?.result?.requestedAt;
-  const storedRequestedByPrincipalId = lease.rows[0]?.result?.requestedByPrincipalId;
+  const activeLease = lease.rows[0]?.result;
+
+  if (!activeLease) {
+    throw new Error("The active corpus refresh lease could not be resolved.");
+  }
+
+  const storedParentSyncRunId = activeLease.parentSyncRunId;
+  const storedRequestedAt = activeLease.requestedAt;
+  const storedRequestedByPrincipalId = activeLease.requestedByPrincipalId;
+  const storedRefreshKind = activeLease.refreshKind;
+  const refreshKind = event.refreshKind === "google-sheet" || storedRefreshKind === "google-sheet"
+    ? "google-sheet"
+    : "full";
   const parentSyncRunId =
     event.parentSyncRunId ??
     (typeof storedParentSyncRunId === "string" ? storedParentSyncRunId : null);
@@ -411,9 +515,15 @@ async function releaseCorpusRefreshLease(
     recordsSkipped: Number(row?.records_skipped ?? 0)
   };
   const warningCount = Number(row?.warning_count ?? 0);
+  const googleSheetChecksum = status === "completed"
+    ? await appliedGoogleSheetChecksum(client, parentSyncRunId)
+    : null;
   const metadata = {
-    phase: "corpus_refresh_pipeline",
+    phase: refreshKind === "google-sheet"
+      ? "google_sheet_refresh_pipeline"
+      : "corpus_refresh_pipeline",
     refreshId,
+    refreshKind,
     trigger: event.trigger ?? "manual",
     requestedAt:
       event.requestedAt ?? (typeof storedRequestedAt === "string" ? storedRequestedAt : null),
@@ -421,7 +531,8 @@ async function releaseCorpusRefreshLease(
       event.requestedByPrincipalId ??
       (typeof storedRequestedByPrincipalId === "string" ? storedRequestedByPrincipalId : null),
     childCounts: counts,
-    warningCount
+    warningCount,
+    googleSheetContentChecksum: googleSheetChecksum
   };
 
   await client.query(
@@ -450,6 +561,14 @@ async function releaseCorpusRefreshLease(
           : null
     ]
   );
+
+  let googleSheetMarker: GoogleSheetSuccessMarker | null = null;
+
+  if (googleSheetChecksum) {
+    const writeMarker = dependencies.writeGoogleSheetMarker ?? writeGoogleSheetSuccessMarker;
+    googleSheetMarker = await writeMarker(googleSheetChecksum);
+  }
+
   await client.query(
     `delete from idempotency_keys
       where key = $1
@@ -462,8 +581,12 @@ async function releaseCorpusRefreshLease(
        values ($1, 'sync_run', $2, $3::jsonb)`,
       [
         status === "completed"
-          ? "sync_worker.corpus_refresh.completed"
-          : "sync_worker.corpus_refresh.failed",
+          ? refreshKind === "google-sheet"
+            ? "sync_worker.google_sheet_refresh.completed"
+            : "sync_worker.corpus_refresh.completed"
+          : refreshKind === "google-sheet"
+            ? "sync_worker.google_sheet_refresh.failed"
+            : "sync_worker.corpus_refresh.failed",
         parentSyncRunId,
         JSON.stringify(metadata)
       ]
@@ -477,7 +600,15 @@ async function releaseCorpusRefreshLease(
     });
   }
 
-  return { ok: status === "completed", status, refreshId, parentSyncRunId, warningCount, ...counts };
+  return {
+    ok: status === "completed",
+    status,
+    refreshId,
+    parentSyncRunId,
+    warningCount,
+    googleSheetMarker,
+    ...counts
+  };
 }
 
 function refreshObjectKey(refreshId: string, suffix: string) {
@@ -591,6 +722,15 @@ async function githubRecordsFromRefreshChunks(refreshId: string) {
   return [...records.values()];
 }
 
+function serializedSourceRecordManifest(
+  records: Array<{ sourceKind: string; sourceId: string }>
+) {
+  return JSON.stringify(records.map((record) => ({
+    source_kind: record.sourceKind,
+    source_id: record.sourceId
+  })));
+}
+
 async function pruneGitHubRecordsMissingFromFullRefresh(
   client: pg.Client,
   refreshId: string,
@@ -611,7 +751,7 @@ async function pruneGitHubRecordsMissingFromFullRefresh(
              and current_record.source_id = sr.source_id
         )
       order by sr.source_kind, sr.source_id`,
-    [`${owner}/${repo}#`, JSON.stringify(manifestRecords)]
+    [`${owner}/${repo}#`, serializedSourceRecordManifest(manifestRecords)]
   );
   const candidateIssueSourceIds = githubIssueVerificationCandidates(missingRecords.rows);
   const configuredMaxCandidates = Number(
@@ -716,7 +856,10 @@ async function pruneGitHubRecordsAgainstManifest(
            where current_record.source_kind = sr.source_kind
              and current_record.source_id = sr.source_id
         )`,
-    [`${owner}/${repo}#`, JSON.stringify(records)]
+    [
+      `${owner}/${repo}#`,
+      serializedSourceRecordManifest(records)
+    ]
   );
 
   return {
@@ -725,7 +868,138 @@ async function pruneGitHubRecordsAgainstManifest(
   };
 }
 
-async function buildForumUrlManifest(refreshId: string, batchSize: number) {
+function assertGoogleSheetMirrorCompleteForPruning(result: SourceMirrorResult) {
+  if (result.sourceKind !== "google_sheet") {
+    return;
+  }
+
+  const tabs = Array.isArray(result.rawPayload.tabs) ? result.rawPayload.tabs : [];
+  const configuredGids = new Set<string>();
+
+  if (!tabs.length) {
+    throw new Error("The Google Sheet refresh returned no tab manifests; refusing authoritative pruning.");
+  }
+
+  for (const tab of tabs) {
+    if (!tab || typeof tab !== "object" || Array.isArray(tab)) {
+      throw new Error("The Google Sheet refresh returned a malformed tab manifest; refusing authoritative pruning.");
+    }
+
+    const manifest = tab as Record<string, unknown>;
+    const gid = typeof manifest.gid === "string" ? manifest.gid.trim() : "";
+    const headers = Array.isArray(manifest.headers) ? manifest.headers : [];
+    const rows = Array.isArray(manifest.rows) ? manifest.rows : [];
+
+    if (!gid || configuredGids.has(gid) || !headers.length || !rows.length) {
+      throw new Error("The Google Sheet refresh returned an empty or incomplete tab manifest; refusing authoritative pruning.");
+    }
+
+    const matchingTabRecords = result.records.filter((record) =>
+      record.sourceKind === "google_sheet_tab" &&
+      record.metadata?.sheetId === result.sourceId &&
+      record.metadata?.gid === gid
+    );
+    const matchingRowRecords = result.records.filter((record) =>
+      record.sourceKind === "google_sheet_row" &&
+      record.metadata?.sheetId === result.sourceId &&
+      record.metadata?.gid === gid
+    );
+
+    if (matchingTabRecords.length !== 1 || matchingRowRecords.length !== rows.length) {
+      throw new Error("The Google Sheet refresh did not return complete tab and row records; refusing authoritative pruning.");
+    }
+
+    configuredGids.add(gid);
+  }
+}
+
+/**
+ * Calculates the exact content that is about to be persisted. Sheet-only
+ * workflows pass the checksum observed by the cheap poll; a mismatch means the
+ * Sheet changed between the poll and the authoritative mirror, so no database
+ * mutation is allowed and the next poll can retry the newer content.
+ */
+function googleSheetChecksumsForStorage(
+  event: WorkerEvent,
+  results: SourceMirrorResult[]
+) {
+  const expected = event.expectedGoogleSheetChecksum?.trim().toLowerCase() ?? null;
+
+  if (expected && !GOOGLE_SHEET_CHECKSUM_PATTERN.test(expected)) {
+    throw new Error("The expected Google Sheet checksum is invalid.");
+  }
+
+  const checksums = new Map<SourceMirrorResult, string>();
+
+  for (const result of results) {
+    if (result.sourceKind !== "google_sheet") {
+      continue;
+    }
+
+    assertGoogleSheetMirrorCompleteForPruning(result);
+    const actual = googleSheetContentChecksum(result);
+
+    if (expected && actual !== expected) {
+      throw new Error(
+        "The Google Sheet changed after its checksum check; refusing to apply a mixed refresh. " +
+        "The next poll will retry the current content."
+      );
+    }
+
+    checksums.set(result, actual);
+  }
+
+  if (expected && checksums.size === 0) {
+    throw new Error("The expected Google Sheet checksum was supplied without a Google Sheet mirror result.");
+  }
+
+  return checksums;
+}
+
+async function pruneGoogleSheetRecordsAgainstMirror(
+  client: pg.Client,
+  result: SourceMirrorResult
+) {
+  if (result.sourceKind !== "google_sheet") {
+    return null;
+  }
+
+  assertGoogleSheetMirrorCompleteForPruning(result);
+
+  const configuredGids = (result.rawPayload.tabs as Array<Record<string, unknown>>)
+    .map((tab) => String(tab.gid).trim());
+  const currentRecords = result.records
+    .filter((record) => record.sourceKind === "google_sheet_tab" || record.sourceKind === "google_sheet_row")
+    .map((record) => ({ source_kind: record.sourceKind, source_id: record.sourceId }));
+
+  const deleted = await client.query(
+    `delete from source_records sr
+      where sr.source_kind in ('google_sheet_tab', 'google_sheet_row')
+        and sr.metadata->>'sheetId' = $1
+        and sr.metadata->>'gid' = any($2::text[])
+        and not exists (
+          select 1
+            from jsonb_to_recordset($3::jsonb) as current_record(source_kind text, source_id text)
+           where current_record.source_kind = sr.source_kind
+             and current_record.source_id = sr.source_id
+        )`,
+    [result.sourceId, configuredGids, JSON.stringify(currentRecords)]
+  );
+
+  return {
+    sheetId: result.sourceId,
+    configuredGids,
+    authoritativeRecordCount: currentRecords.length,
+    recordsDeleted: deleted.rowCount ?? 0
+  };
+}
+
+async function buildForumUrlManifest(
+  refreshId: string,
+  batchSize: number,
+  client?: pg.Client,
+  onlyUnmirrored = false
+) {
   const bucket = snapshotBucketName();
   const prefix = refreshObjectKey(refreshId, "forum-url-chunks/");
   const keys: string[] = [];
@@ -749,12 +1023,28 @@ async function buildForumUrlManifest(refreshId: string, batchSize: number) {
     }
   }
 
-  const selectedUrls = [...urls].sort((left, right) => left.localeCompare(right));
+  const candidateUrls = [...urls].sort((left, right) => left.localeCompare(right));
+  let selectedUrls = candidateUrls;
+
+  if (onlyUnmirrored && client && candidateUrls.length) {
+    const mirrored = await client.query<{ source_id: string }>(
+      `select source_id
+         from source_records
+        where source_kind in ('forum_link', 'forum_update_topic', 'forum_meeting_minutes')
+          and source_id = any($1::text[])
+          and metadata->>'mirrorKind' in ('forum_topic', 'forum_update_topic', 'forum_meeting_minutes')`,
+      [candidateUrls]
+    );
+    const mirroredUrls = new Set(mirrored.rows.map((row) => row.source_id));
+    selectedUrls = candidateUrls.filter((url) => !mirroredUrls.has(url));
+  }
+
   const location = await putRefreshJson(refreshId, "forum-url-manifest.json", { urls: selectedUrls });
   const batchCount = Math.ceil(selectedUrls.length / batchSize);
 
   return {
     ...location,
+    candidateTopicCount: candidateUrls.length,
     topicCount: selectedUrls.length,
     batchSize,
     batchIndexes: Array.from({ length: batchCount }, (_, index) => index)
@@ -1396,7 +1686,12 @@ export async function handler(event: WorkerEvent = {}) {
 
     if (source === "forum-url-plan") {
       const refreshId = requireRefreshId(event);
-      const plan = await buildForumUrlManifest(refreshId, batchSize);
+      const plan = await buildForumUrlManifest(
+        refreshId,
+        batchSize,
+        client,
+        event.onlyUnmirroredForumUrls === true
+      );
       const metadata = {
         phase: "forum_url_plan",
         parentSyncRunId: event.parentSyncRunId ?? null,
@@ -1447,6 +1742,7 @@ export async function handler(event: WorkerEvent = {}) {
     const mirrorEvent = await sourceEventWithResumeSkips(client, effectiveEvent);
     const results = await collectSourceMirrors(mirrorEvent);
     assertStagedMirrorComplete(event, results);
+    const googleSheetChecksums = googleSheetChecksumsForStorage(event, results);
     const mirrorWarnings = stagedMirrorWarnings(results);
     const refreshId = event.refreshId ? requireRefreshId(event) : null;
     let counts = { ...emptyCounts };
@@ -1454,6 +1750,8 @@ export async function handler(event: WorkerEvent = {}) {
 
     for (const result of results) {
       const stored = await storeMirrorResult(client, syncRunId, result);
+      const authoritativePrune = await pruneGoogleSheetRecordsAgainstMirror(client, result);
+      const contentChecksum = googleSheetChecksums.get(result) ?? null;
       counts = addCounts(counts, stored);
       sourceSummaries.push({
         sourceKind: result.sourceKind,
@@ -1461,7 +1759,11 @@ export async function handler(event: WorkerEvent = {}) {
         recordCount: result.records.length,
         snapshotKey: stored.snapshotKey,
         normalizedForum: stored.normalizedForum,
-        metadata: result.metadata ?? {}
+        authoritativePrune,
+        metadata: {
+          ...(result.metadata ?? {}),
+          ...(contentChecksum ? { contentChecksum } : {})
+        }
       });
     }
 
@@ -1508,6 +1810,7 @@ export async function handler(event: WorkerEvent = {}) {
       const location = await putRefreshJson(refreshId, "forum-updates-manifest.json", { urls: selectedUrls });
       forumUpdatesPlan = {
         ...location,
+        candidateTopicCount: selectedUrls.length,
         topicCount: selectedUrls.length,
         batchSize,
         batchIndexes: Array.from(
@@ -1634,10 +1937,15 @@ export async function handler(event: WorkerEvent = {}) {
 
 export const syncWorkerTestHooks = {
   acquireCorpusRefreshLease,
+  appliedGoogleSheetChecksum,
+  googleSheetChecksumsForStorage,
   githubIssueVerificationCandidates,
   pruneGitHubRecordsAgainstManifest,
+  pruneGoogleSheetRecordsAgainstMirror,
+  serializedSourceRecordManifest,
   assertStagedMirrorComplete,
-  corpusRefreshLeaseHours: CORPUS_REFRESH_LEASE_HOURS,
+  corpusRefreshLeaseMinutes: CORPUS_REFRESH_LEASE_MINUTES,
+  googleSheetRefreshLeaseMinutes: GOOGLE_SHEET_REFRESH_LEASE_MINUTES,
   corpusRefreshLeaseKey: CORPUS_REFRESH_LEASE_KEY,
   corpusRefreshLockName: CORPUS_REFRESH_LOCK_NAME,
   releaseCorpusRefreshLease,
@@ -1645,7 +1953,8 @@ export const syncWorkerTestHooks = {
   requiresCorpusRefreshLock,
   tryAcquireCorpusRefreshLock,
   releaseCorpusRefreshLock,
-  recordBusySyncRun
+  recordBusySyncRun,
+  writeGoogleSheetSuccessMarker
 };
 
 if (process.argv[1]?.endsWith("sync-worker.ts")) {

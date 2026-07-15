@@ -4,7 +4,7 @@ Date: 2026-07-15
 
 The hybrid refresh path keeps the existing full-corpus workflow as a safety net
 while adding small, event-driven updates for sources that can notify the
-prototype when something changes.
+prototype and a checksum-gated poll for the public Google Sheet exports.
 
 ## Operating model
 
@@ -12,7 +12,9 @@ prototype when something changes.
 flowchart LR
     github["GitHub issues and comments"] -->|"signed webhook"| ingress
     discourse["Zcash Forum topics and posts"] -->|"signed webhook"| ingress
-    drive["Google Drive file changed"] -->|"channel token"| ingress
+    sheetPoll["Public Sheet CSV check every 15 minutes"] --> checksum{"Content changed?"}
+    checksum -->|"no"| stop["Stop without waking Aurora"]
+    checksum -->|"yes"| sheetRefresh["Mirror Sheet, new Forum links, reconcile, and index"]
     ingress["Webhook ingress Lambda"] --> queue["Encrypted SQS queue"]
     queue --> worker["Single-concurrency corpus event worker"]
     worker --> mirror["Mirror affected source object"]
@@ -28,7 +30,25 @@ The event path is additive. It does not remove or replace:
 - the durable full-refresh and reconciliation leases; or
 - the hourly embedding catch-up worker.
 
-Both paths use the same durable corpus lease. Events wait and retry when a full
+The Sheet checker runs outside the VPC. It downloads the same two public CSV
+exports used by the existing mirror and compares a deterministic content hash
+with an S3 marker. It is deliberately read-only with respect to that marker: it
+reports the observed checksum but never commits processing state. An unchanged
+check does not connect to PostgreSQL, invoke the sync worker, or rebuild the
+index. A changed check enters a Sheet-only Step Functions workflow that uses the
+same shared corpus lease as the other paths.
+
+The changed workflow passes the poller's checksum to `MirrorChangedGoogleSheet`
+as `expectedGoogleSheetChecksum`. The mirror verifies that the content it
+actually fetched still has that checksum before applying it, so an edit between
+the poll and mirror cannot cause the workflow to acknowledge different content.
+The successful corpus-refresh completion operation writes the S3 marker before
+releasing the shared lease. This same completion boundary is used by both the
+Sheet-only path and the full refresh. The marker therefore advances only after
+mirroring, authoritative pruning, reconciliation, knowledge indexing, and
+workflow completion all succeed.
+
+All mutation paths use the same durable corpus lease. Events wait and retry when a full
 refresh owns it; a full refresh that encounters a short targeted update waits a
 minute and retries rather than skipping its verification run. Delivery IDs are
 recorded in `idempotency_keys`, so source-system retries do not apply the same
@@ -53,6 +73,8 @@ The stack outputs include:
 - `CorpusEventDeadLetterQueueUrl`
 - `CorpusWebhookIngressFunctionName`
 - `CorpusEventWorkerFunctionName`
+- `GoogleSheetRefreshStateMachineArn`
+- `GoogleSheetPollWorkerFunctionName`
 - `GitHubWebhookSecretArn`
 - `DiscourseWebhookSecretArn`
 - `GoogleDriveChannelTokenSecretArn`
@@ -126,40 +148,58 @@ The event worker refreshes only topics already linked to a known grant or
 previously mirrored as grant evidence. A signed event for an unknown topic is
 acknowledged and ignored without expanding the corpus.
 
-## Google Drive and Sheet activation
+## Google Sheet polling
 
-Google Drive change notifications are useful as a low-cost signal, but they do
-not contain the changed rows. The initial hybrid implementation therefore
-authenticates and records a relevant file notification, then marks it as
-requiring a full source verification. It does not silently start a heavy full
-refresh for every notification.
+No Google identity, service-account key, Drive API access, or FPF security-policy
+change is required. The deployed Sheet mirror already reads the configured
+public CSV exports. EventBridge Scheduler starts the lightweight checksum
+workflow every 15 minutes by default.
 
-Activation requires a Google identity that can watch the official Sheet:
+Configure the path with CDK context when needed:
 
-1. create a Drive API watch channel for the configured file;
-2. use the Google Drive callback URL above as the HTTPS address;
-3. use the value stored at `GoogleDriveChannelTokenSecretArn` as the channel
-   token;
-4. optionally deploy `googleDriveChannelId` and `googleDriveFileId` context
-   values to reject notifications for any other channel or file; and
-5. renew the channel before its expiration.
+- `enableGoogleSheetPollSchedule` enables or disables the schedule;
+- `googleSheetPollMinutes` changes the cadence and must be at least 5; and
+- `googleSheetId` and `googleSheetTabs` retain their existing meanings.
 
-Drive channels expire and notification bodies do not identify cell-level
-changes. See Google's [push notification guide](https://developers.google.com/workspace/drive/api/guides/push).
-Until a reliable row-delta strategy is added, the 3:00 AM full refresh remains
-the authoritative recovery path for Sheet changes.
+When content changes, the workflow mirrors every configured tab, deletes stale
+rows only within those returned tab namespaces, mirrors newly discovered Forum
+topics, reconciles the canonical registry, and rebuilds knowledge documents.
+The embedding worker still embeds only missing or content-changed documents on
+its normal schedule. If any processing step fails, the successful-checksum
+marker is not updated and a later poll retries the same content. The poll Lambda
+never has a separate `commit` action; committing the checksum belongs to the
+lease-holding corpus completion operation so there is no interval in which the
+marker claims success after the lease has been released.
+
+On the first deployment, the marker does not exist. The first scheduled check
+therefore reports the current Sheet as changed and intentionally starts a
+one-time Sheet-only bootstrap refresh. Monitor that execution through completion
+rather than treating it as an unexpected change. Its successful completion
+creates the initial marker. Independently, every successful nightly full refresh
+also writes the checksum of the Sheet content it processed, so the 3:00 AM run
+advances or repairs the polling baseline even when the polling schedule was
+disabled or a prior Sheet-only execution failed.
+
+The Google Drive callback remains deployed but dormant for rollback and future
+experimentation. Do not register or renew a Drive watch for normal operation.
+Drive notifications do not identify changed rows and are no longer required for
+Sheet freshness. The 3:00 AM full refresh remains the authoritative recovery
+and cross-source verification path.
 
 ## Transition sequence
 
-1. **Deploy dormant infrastructure.** No source behavior changes until callback
-   registration. Verify invalid requests receive `401` or `403` and the nightly
-   schedule still exists.
+1. **Deploy additive infrastructure.** The checksum schedule starts immediately.
+   Because a new deployment has no marker, expect and monitor one intentional
+   Sheet-only bootstrap execution; subsequent unchanged checks stop before
+   database work. Verify invalid callback requests receive `401` or `403` and
+   the nightly schedule still exists.
 2. **Activate GitHub.** Observe successful deliveries, targeted sync runs, queue
    age, and the next full verification result.
 3. **Activate Discourse with a Forum administrator.** Compare targeted updates
    with the following full refresh before widening category coverage.
-4. **Add the Drive watch when access is available.** Treat it as an early-change
-   signal while retaining scheduled verification.
+4. **Verify Sheet polling.** Confirm the bootstrap or a known Sheet edit produces
+   a `google-sheet-refresh` sync run, that its successful completion writes the
+   marker, and that the next unchanged execution stops after the checksum check.
 5. **Reassess cadence only after evidence.** Do not reduce the daily full
    verification schedule until several complete cycles show no missed changes.
 
@@ -171,17 +211,19 @@ Read the current outputs:
 AWS_PROFILE=zodldashboard AWS_REGION=us-east-1 \
   aws cloudformation describe-stacks \
   --stack-name ZcgPrototypeStack \
-  --query 'Stacks[0].Outputs[?starts_with(OutputKey, `Corpus`)]' \
+  --query 'Stacks[0].Outputs[?starts_with(OutputKey, `Corpus`) || starts_with(OutputKey, `GoogleSheet`)]' \
   --output table
 ```
 
 Inspect queue depth and the dead-letter queue from the AWS console or with
-CloudWatch metrics. Targeted executions also create `sync_runs` and audit
-events, so the Telemetry page remains the primary application-level view.
+CloudWatch metrics. Targeted and changed-Sheet executions also create
+`sync_runs` and audit events, so the Telemetry page remains the primary
+application-level view.
 
 Rollback is deliberately simple:
 
-1. disable the provider webhook or Drive watch at the source;
+1. disable the provider webhook at the source or set
+   `enableGoogleSheetPollSchedule=false` for Sheet polling;
 2. leave the existing full refresh enabled;
 3. investigate or redrive the dead-letter queue; and
 4. redeploy with `-c enableHybridCorpusRefresh=false` only if the receiver and

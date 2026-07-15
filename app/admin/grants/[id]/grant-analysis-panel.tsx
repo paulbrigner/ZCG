@@ -93,6 +93,7 @@ export type GrantAnalysisPanelProps = {
   initialReports: readonly GrantAnalysisReport[];
   canRead: boolean;
   canGenerate: boolean;
+  committeeBriefingEligible: boolean;
   canPublish: boolean;
 };
 
@@ -961,6 +962,7 @@ export function GrantAnalysisPanel({
   initialReports,
   canRead,
   canGenerate,
+  committeeBriefingEligible,
   canPublish
 }: GrantAnalysisPanelProps) {
   const customPromptId = useId();
@@ -1387,6 +1389,7 @@ export function GrantAnalysisPanel({
 
   const busy = activeOperation !== null;
   const briefingBusy = busy || Boolean(pendingBriefing);
+  const canGenerateBriefing = canGenerate && committeeBriefingEligible;
   const latestFreshness = latestBriefing ? freshness(latestBriefing) : null;
 
   return (
@@ -1435,6 +1438,13 @@ export function GrantAnalysisPanel({
         </p>
       ) : null}
 
+      {canGenerate && !committeeBriefingEligible ? (
+        <p className={styles.muted}>
+          Committee briefings become available after FPF assigns the proposal with both the Grant Application and
+          Ready For ZCG Review GitHub labels.
+        </p>
+      ) : null}
+
       {latestBriefing ? (
         <article className={styles.latestReport} id={`committee-briefing-${latestBriefing.id}`}>
           <div className={styles.reportHeading}>
@@ -1464,7 +1474,7 @@ export function GrantAnalysisPanel({
               >
                 Print briefing
               </button>
-              {canGenerate ? (
+              {canGenerateBriefing ? (
                 <button
                   className={styles.primaryButton}
                   disabled={briefingBusy}
@@ -1510,7 +1520,7 @@ export function GrantAnalysisPanel({
               comparable grants. The completed shared report will be available to other authorized users.
             </p>
           </div>
-          {canGenerate ? (
+          {canGenerateBriefing ? (
             <button
               className={styles.primaryButton}
               disabled={briefingBusy}
@@ -1527,6 +1537,8 @@ export function GrantAnalysisPanel({
                   ? "Generating…"
                   : "Generate committee briefing"}
             </button>
+          ) : canGenerate ? (
+            <p className={styles.muted}>This proposal has not yet received both official FPF assignment labels.</p>
           ) : (
             <p className={styles.muted}>Your account can read shared briefings but cannot generate them.</p>
           )}
