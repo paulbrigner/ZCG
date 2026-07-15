@@ -188,7 +188,8 @@ test("report freshness queries only the saved evidence snapshot and returns prec
     modelChanged: false
   });
   assert.equal(queries.length, 1);
-  assert.doesNotMatch(queries[0], /indexed_at|application_id|grant_application_relationships|grant_application_participants/);
+  assert.match(queries[0], /saved\.application_id/);
+  assert.doesNotMatch(queries[0], /indexed_at|grant_application_relationships|grant_application_participants/);
 
   assert.deepEqual(
     await getGrantAnalysisReportFreshnessDetails(
@@ -219,6 +220,91 @@ test("report freshness queries only the saved evidence snapshot and returns prec
   assert.equal(changedSnapshot.status, "stale");
   assert.equal(changedSnapshot.evidenceStatus, "changed");
   assert.equal(changedSnapshot.changedEvidenceRecordCount, 1);
+});
+
+test("report freshness resolves a moved Sheet row through stable evidence identity", async () => {
+  const applicationId = "00000000-0000-4000-8000-000000000040";
+  const sheetNamespace = "sheet-one:803214474";
+  const savedContent = [
+    "Grant application: Example grant",
+    `Source: google_sheet_row:${sheetNamespace}:row:765`,
+    "Project: Example grant",
+    "Grantee: Example grantee",
+    "Milestone: Final report",
+    "Amount (USD): 25000"
+  ].join("\n");
+  const currentContent = savedContent.replace(":row:765", ":row:766");
+  const queries: string[] = [];
+  const dependencies = {
+    query: async <T extends Record<string, unknown>>(text: string) => {
+      queries.push(text);
+      if (text.includes("grant_analysis_google_sheet_identity_candidates")) {
+        return {
+          rows: [{
+            document_key: "application:example:source:current",
+            content_hash: "current-coordinate-hash",
+            application_id: applicationId,
+            source_kind: "google_sheet_row",
+            source_id: `${sheetNamespace}:row:766`,
+            title: "Example grant",
+            content: currentContent
+          }] as unknown as T[]
+        };
+      }
+      return {
+        rows: [{
+          report_id: "00000000-0000-4000-8000-000000000030",
+          citation_number: 1,
+          knowledge_document_id: null,
+          saved_document_key: "application:example:source:saved",
+          saved_content_hash: "saved-coordinate-hash",
+          evidence_role: "current",
+          retrieval_rank: 1,
+          application_id: applicationId,
+          source_record_id: null,
+          title: "Example grant",
+          source_kind: "google_sheet_row",
+          source_id: `${sheetNamespace}:row:765`,
+          source_url: "https://docs.google.com/spreadsheets/d/sheet-one/edit?gid=803214474",
+          content_snapshot: savedContent,
+          metadata: {},
+          current_document_key: null,
+          current_content_hash: null,
+          created_at: "2026-07-12T18:29:00.000Z"
+        }] as unknown as T[]
+      };
+    }
+  };
+
+  assert.deepEqual(
+    await getGrantAnalysisReportFreshnessDetails(
+      {
+        report: {
+          id: "00000000-0000-4000-8000-000000000030",
+          status: "succeeded",
+          evidenceFingerprint: "saved-fingerprint",
+          completedAt: "2026-07-12T18:29:00.000Z",
+          templateKey: "zcg_committee_briefing",
+          templateVersion: "4",
+          model: "grounded-model"
+        },
+        currentTemplateKey: "zcg_committee_briefing",
+        currentTemplateVersion: "4",
+        currentModel: "grounded-model"
+      },
+      dependencies
+    ),
+    {
+      status: "fresh",
+      evidenceStatus: "current",
+      evidenceRecordCount: 1,
+      changedEvidenceRecordCount: 0,
+      templateChanged: false,
+      modelChanged: false
+    }
+  );
+  assert.equal(queries.length, 2);
+  assert.match(queries[1], /grant_analysis_google_sheet_identity_candidates/);
 });
 
 test("only completed shared committee briefings with content are publicly viewable", () => {

@@ -690,13 +690,24 @@ function EvidenceList({
               {item.changeStatus === "missing" ? (
                 <span
                   className={`${styles.chip} ${styles.evidenceMissingChip}`}
-                  title="This evidence record is no longer available in the current index."
+                  title="A matching current evidence record could not be identified."
                 >
-                  No longer indexed
+                  No current match
                 </span>
               ) : null}
               {item.evidenceRole ? (
-                <span className={styles.chip}>{humanize(item.evidenceRole)}</span>
+                <span
+                  className={styles.chip}
+                  title={
+                    item.evidenceRole === "current"
+                      ? "This evidence is about the application being reviewed."
+                      : undefined
+                  }
+                >
+                  {item.evidenceRole === "current"
+                    ? "This application"
+                    : humanize(item.evidenceRole)}
+                </span>
               ) : null}
               {item.sourceKind ? (
                 <span className={styles.chip}>{humanize(item.sourceKind)}</span>

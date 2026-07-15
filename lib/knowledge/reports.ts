@@ -1,5 +1,10 @@
 import { createHash } from "node:crypto";
 import { query } from "@/lib/db";
+import {
+  googleSheetRowNamespace,
+  resolveGrantAnalysisEvidenceChanges,
+  type CurrentGrantAnalysisEvidenceIdentity
+} from "@/lib/knowledge/evidence-identity";
 
 export type GrantAnalysisReportType = "committee_briefing" | "custom";
 export type GrantAnalysisReportVisibility = "private" | "shared";
@@ -180,8 +185,19 @@ type GrantAnalysisReportEvidenceRow = {
   source_url: string | null;
   content_snapshot: string | null;
   metadata: string | Record<string, unknown> | null;
+  current_document_key: string | null;
   current_content_hash: string | null;
   created_at: string;
+};
+
+type GrantAnalysisCurrentEvidenceCandidateRow = {
+  document_key: string;
+  content_hash: string;
+  application_id: string;
+  source_kind: string | null;
+  source_id: string | null;
+  title: string | null;
+  content: string;
 };
 
 const reportReturningColumns = `id::text,
@@ -311,7 +327,10 @@ function mapReportRow(row: GrantAnalysisReportRow): GrantAnalysisReport {
   };
 }
 
-function mapEvidenceRow(row: GrantAnalysisReportEvidenceRow): GrantAnalysisReportEvidence {
+function mapEvidenceRow(
+  row: GrantAnalysisReportEvidenceRow,
+  changeStatus = grantAnalysisEvidenceChangeStatus(row.content_hash, row.current_content_hash)
+): GrantAnalysisReportEvidence {
   return {
     reportId: row.report_id,
     citationNumber: Number(row.citation_number),
@@ -326,9 +345,9 @@ function mapEvidenceRow(row: GrantAnalysisReportEvidenceRow): GrantAnalysisRepor
     sourceKind: row.source_kind,
     sourceId: row.source_id,
     sourceUrl: row.source_url,
-    contentSnapshot: row.content_snapshot,
+    contentSnapshot: row.content_snapshot?.slice(0, 600) ?? null,
     metadata: parseJsonRecord(row.metadata),
-    changeStatus: grantAnalysisEvidenceChangeStatus(row.content_hash, row.current_content_hash),
+    changeStatus,
     createdAt: row.created_at
   };
 }
@@ -342,6 +361,71 @@ export function grantAnalysisEvidenceChangeStatus(
   }
 
   return savedContentHash === currentContentHash ? "current" : "changed";
+}
+
+function savedEvidenceIdentity(row: GrantAnalysisReportEvidenceRow) {
+  return {
+    documentKey: row.document_key,
+    contentHash: row.content_hash,
+    applicationId: row.application_id,
+    sourceKind: row.source_kind,
+    sourceId: row.source_id,
+    title: row.title,
+    contentSnapshot: row.content_snapshot,
+    currentDocumentKey: row.current_document_key,
+    currentContentHash: row.current_content_hash
+  };
+}
+
+async function grantAnalysisEvidenceChangeStatuses(
+  rows: readonly GrantAnalysisReportEvidenceRow[],
+  executeQuery: GrantAnalysisReportFreshnessDependencies["query"]
+) {
+  const applicationIds = [
+    ...new Set(
+      rows
+        .filter(
+          (row) =>
+            row.source_kind === "google_sheet_row" &&
+            googleSheetRowNamespace(row.source_id) &&
+            row.current_content_hash !== row.content_hash
+        )
+        .map((row) => row.application_id)
+    )
+  ];
+
+  let candidates: CurrentGrantAnalysisEvidenceIdentity[] = [];
+  if (applicationIds.length) {
+    const candidateResult = await executeQuery<GrantAnalysisCurrentEvidenceCandidateRow>(
+      `/* grant_analysis_google_sheet_identity_candidates */
+       select current_document.document_key,
+              current_document.content_hash,
+              current_document.application_id::text,
+              current_document.source_kind,
+              current_document.source_id,
+              current_document.title,
+              current_document.content
+        from grant_knowledge_documents current_document
+        where current_document.source_kind = 'google_sheet_row'
+          and current_document.application_id in (
+                select application_id.value::uuid
+                  from jsonb_array_elements_text($1::jsonb) application_id(value)
+              )
+        order by current_document.document_key`,
+      [JSON.stringify(applicationIds)]
+    );
+    candidates = candidateResult.rows.map((row) => ({
+      documentKey: row.document_key,
+      contentHash: row.content_hash,
+      applicationId: row.application_id,
+      sourceKind: row.source_kind,
+      sourceId: row.source_id,
+      title: row.title,
+      content: row.content
+    }));
+  }
+
+  return resolveGrantAnalysisEvidenceChanges(rows.map(savedEvidenceIdentity), candidates);
 }
 
 function canonicalFingerprintValue(value: unknown): unknown {
@@ -471,15 +555,43 @@ export async function getGrantAnalysisReportFreshnessDetails(
   }
 
   const result = await dependencies.query<{
+    report_id: string;
+    citation_number: number | string;
+    knowledge_document_id: string | null;
     saved_document_key: string;
     saved_content_hash: string;
+    evidence_role: GrantAnalysisEvidenceRole;
+    retrieval_rank: number | string | null;
+    application_id: string;
+    source_record_id: string | null;
+    title: string | null;
+    source_kind: string | null;
+    source_id: string | null;
+    source_url: string | null;
+    content_snapshot: string | null;
+    metadata: string | Record<string, unknown> | null;
     current_document_key: string | null;
     current_content_hash: string | null;
+    created_at: string;
   }>(
-    `select saved.document_key as saved_document_key,
+    `select saved.report_id::text,
+            saved.citation_number,
+            saved.knowledge_document_id::text,
+            saved.document_key as saved_document_key,
             saved.content_hash as saved_content_hash,
+            saved.evidence_role,
+            saved.retrieval_rank,
+            saved.application_id::text,
+            saved.source_record_id::text,
+            saved.title,
+            saved.source_kind,
+            saved.source_id,
+            saved.source_url,
+            saved.content_snapshot,
+            saved.metadata::text,
             current_document.document_key as current_document_key,
-            current_document.content_hash as current_content_hash
+            current_document.content_hash as current_content_hash,
+            saved.created_at::text
        from grant_analysis_report_evidence saved
        left join grant_knowledge_documents current_document
          on current_document.document_key = saved.document_key
@@ -487,18 +599,34 @@ export async function getGrantAnalysisReportFreshnessDetails(
       order by saved.citation_number`,
     [report.id]
   );
-
-  const comparison = compareGrantAnalysisReportEvidence(
-    result.rows.map((row) => ({
-      documentKey: row.saved_document_key,
-      contentHash: row.saved_content_hash
-    })),
-    result.rows.flatMap((row) =>
-      row.current_document_key && row.current_content_hash
-        ? [{ documentKey: row.current_document_key, contentHash: row.current_content_hash }]
-        : []
-    )
+  const evidenceRows: GrantAnalysisReportEvidenceRow[] = result.rows.map((row) => ({
+    report_id: row.report_id,
+    citation_number: row.citation_number,
+    knowledge_document_id: row.knowledge_document_id,
+    document_key: row.saved_document_key,
+    content_hash: row.saved_content_hash,
+    evidence_role: row.evidence_role,
+    retrieval_rank: row.retrieval_rank,
+    application_id: row.application_id,
+    source_record_id: row.source_record_id,
+    title: row.title,
+    source_kind: row.source_kind,
+    source_id: row.source_id,
+    source_url: row.source_url,
+    content_snapshot: row.content_snapshot,
+    metadata: row.metadata,
+    current_document_key: row.current_document_key,
+    current_content_hash: row.current_content_hash,
+    created_at: row.created_at
+  }));
+  const evidenceStatuses = await grantAnalysisEvidenceChangeStatuses(
+    evidenceRows,
+    dependencies.query
   );
+  const comparison = {
+    evidenceRecordCount: evidenceRows.length,
+    changedEvidenceRecordCount: evidenceStatuses.filter((status) => status !== "current").length
+  };
   const hasEvidenceSnapshot = comparison.evidenceRecordCount > 0;
   const evidenceChanged = comparison.changedEvidenceRecordCount > 0;
 
@@ -860,8 +988,9 @@ export async function listGrantAnalysisReportEvidence(reportId: string) {
             saved.source_kind,
             saved.source_id,
             saved.source_url,
-            left(saved.content_snapshot, 600) as content_snapshot,
+            saved.content_snapshot,
             saved.metadata::text,
+            current_document.document_key as current_document_key,
             current_document.content_hash as current_content_hash,
             saved.created_at::text
        from grant_analysis_report_evidence saved
@@ -871,8 +1000,12 @@ export async function listGrantAnalysisReportEvidence(reportId: string) {
       order by saved.citation_number`,
     [reportId]
   );
+  const statuses = await grantAnalysisEvidenceChangeStatuses(
+    result.rows,
+    query as GrantAnalysisReportFreshnessDependencies["query"]
+  );
 
-  return result.rows.map(mapEvidenceRow);
+  return result.rows.map((row, index) => mapEvidenceRow(row, statuses[index]));
 }
 
 export async function completeGrantAnalysisReport({
