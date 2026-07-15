@@ -215,7 +215,7 @@ test("fails an abandoned parent run before an expired refresh lease is reassigne
   ]);
 });
 
-test("returns a busy outcome without creating a parent run when the durable refresh lease is occupied", async () => {
+test("identifies a targeted event owner when the durable refresh lease is occupied", async () => {
   const queries: Array<{ text: string; values: unknown[] }> = [];
   const client = {
     async query(text: string, values: unknown[] = []) {
@@ -227,7 +227,7 @@ test("returns a busy outcome without creating a parent run when the durable refr
 
       if (text.includes("from idempotency_keys") && text.includes("for update")) {
         return {
-          rows: [{ result: { owner: "active-refresh" }, reclaimable: false }],
+          rows: [{ result: { owner: "active-event", ownerKind: "corpus_event" }, reclaimable: false }],
           rowCount: 1
         };
       }
@@ -248,7 +248,8 @@ test("returns a busy outcome without creating a parent run when the durable refr
 
   assert.equal(result.acquired, false);
   assert.equal(result.parentSyncRunId, null);
-  assert.match(result.message ?? "", /already running/i);
+  assert.equal(result.busyOwnerKind, "corpus_event");
+  assert.match(result.message ?? "", /targeted corpus event/i);
   assert.equal(queries.length, 4);
   assert.equal(queries[0].text, "begin");
   assert.match(queries[1].text, /for update/);
@@ -301,6 +302,73 @@ test("blocks staged refresh batches on Forum rate limits and fetch errors", () =
       /staged source mirror was incomplete/i
     );
   }
+});
+
+test("authoritative GitHub pruning is scoped to the configured repository and current manifest", async () => {
+  const queries: Array<{ text: string; values: unknown[] }> = [];
+  const client = {
+    async query(text: string, values: unknown[] = []) {
+      queries.push({ text, values });
+      return { rows: [], rowCount: 2 };
+    }
+  } as unknown as LockClient;
+  const records = [
+    {
+      sourceKind: "github_issue",
+      sourceId: "ZcashCommunityGrants/zcashcommunitygrants#351"
+    },
+    {
+      sourceKind: "github_issue_comment",
+      sourceId: "ZcashCommunityGrants/zcashcommunitygrants#351:comment:9001"
+    }
+  ];
+
+  const result = await syncWorkerTestHooks.pruneGitHubRecordsAgainstManifest(client, records);
+
+  assert.deepEqual(result, { authoritativeRecordCount: 2, recordsDeleted: 2 });
+  assert.equal(queries.length, 1);
+  assert.match(queries[0].text, /delete from source_records/);
+  assert.match(queries[0].text, /left\(sr\.source_id, length\(\$1\)\) = \$1/);
+  assert.match(queries[0].text, /jsonb_to_recordset/);
+  assert.deepEqual(queries[0].values, [
+    "ZcashCommunityGrants/zcashcommunitygrants#",
+    JSON.stringify(records)
+  ]);
+});
+
+test("authoritative GitHub pruning refuses an empty issue manifest", async () => {
+  const client = {
+    async query() {
+      throw new Error("query should not run");
+    }
+  } as unknown as LockClient;
+
+  await assert.rejects(
+    syncWorkerTestHooks.pruneGitHubRecordsAgainstManifest(client, []),
+    /produced no issue records/i
+  );
+});
+
+test("missing GitHub comments cause their issue to be verified before authoritative pruning", () => {
+  const candidates = syncWorkerTestHooks.githubIssueVerificationCandidates([
+    {
+      source_kind: "github_issue_comment",
+      source_id: "ZcashCommunityGrants/zcashcommunitygrants#351:comment:9001"
+    },
+    {
+      source_kind: "github_issue",
+      source_id: "ZcashCommunityGrants/zcashcommunitygrants#351"
+    },
+    {
+      source_kind: "github_issue_comment",
+      source_id: "ZcashCommunityGrants/zcashcommunitygrants#352:comment:9002"
+    }
+  ]);
+
+  assert.deepEqual(candidates, [
+    "ZcashCommunityGrants/zcashcommunitygrants#351",
+    "ZcashCommunityGrants/zcashcommunitygrants#352"
+  ]);
 });
 
 test("finalizes a scheduled refresh with stored request time and visible warning telemetry", async () => {

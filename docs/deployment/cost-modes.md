@@ -34,6 +34,8 @@ The current ZCG prototype is split across:
 - Private S3 snapshot bucket for source mirror snapshots.
 - Secrets Manager secrets for database and Better Auth.
 - Lambda migration runner and sync worker in the VPC.
+- Signature-verifying webhook ingress, encrypted source-event queue and
+  dead-letter queue, and a targeted corpus-event worker.
 - Optional ECS/Fargate web tier and optional public ALB.
 - VPC with private database subnets and NAT egress when deployed workers need
   public internet access.
@@ -59,6 +61,8 @@ Default behavior:
 - CloudWatch log retention defaults to 7 days.
 - Nonessential alarms are disabled.
 - Lambda workers remain deployed.
+- The hybrid refresh receiver and event queue remain deployed; they are idle and
+  request-authenticated until source callbacks are registered.
 - The low-volume Step Functions pipeline for the daily 3:00 AM Eastern source refresh and the hourly embedding catch-up remain enabled.
 - One NAT gateway remains deployed because the current sync worker needs public
   internet egress for GitHub and Google Sheet mirroring.

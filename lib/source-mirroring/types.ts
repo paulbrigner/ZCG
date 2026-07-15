@@ -18,6 +18,44 @@ export type SourceMirrorResult = {
   metadata?: Record<string, unknown>;
 };
 
+export type TargetedSourceMirrorStatus = "found" | "not_found";
+
+/**
+ * Declares a complete child-record namespace returned by a targeted mirror.
+ * Consumers may remove stored records in the namespace when their source IDs
+ * are absent from currentSourceIds.
+ */
+export type SourceMirrorAuthoritativeScope = {
+  sourceKind: string;
+  sourceIdPrefix: string;
+  currentSourceIds: string[];
+};
+
+/**
+ * Identifies an exact record or record namespace that no longer exists at the
+ * authoritative source. Exactly one of sourceId or sourceIdPrefix is set.
+ */
+type SourceMirrorTombstoneDetails = {
+  sourceKind: string;
+  reason: "not_found";
+  observedAt: string;
+};
+
+export type SourceMirrorTombstone = SourceMirrorTombstoneDetails & (
+  | { sourceId: string; sourceIdPrefix?: never }
+  | { sourceId?: never; sourceIdPrefix: string }
+);
+
+export type TargetedSourceMirrorResult = SourceMirrorResult & {
+  target: {
+    sourceKind: string;
+    sourceId: string;
+    status: TargetedSourceMirrorStatus;
+  };
+  authoritativeScopes: SourceMirrorAuthoritativeScope[];
+  tombstones: SourceMirrorTombstone[];
+};
+
 export type GitHubMirrorConfig = {
   owner?: string;
   repo?: string;

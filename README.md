@@ -21,6 +21,7 @@ ZCG to replace its current tools first.
 | Area | Current state |
 | --- | --- |
 | Source mirroring | GitHub issues and comments, two public ZCG Google Sheet tabs, linked Zcash Community Forum topics, and the Forum's Community Grants Updates category |
+| Source refresh | Signed GitHub and Discourse callbacks feed a buffered, deduplicated targeted-refresh queue; the existing Admin action and daily full refresh remain the verification and recovery path |
 | Evidence preservation | Checksum-tracked source records in PostgreSQL and optional aggregate JSON snapshots in private S3 |
 | Reconciliation | Canonical applications, funded-status grant records, stale-grant cleanup when an application leaves a funded status, GitHub label normalization, source links, confidence scores, generated issues, and durable reviewer decisions |
 | Decision history | Meeting-minute topics parsed into decision sources and grant mentions with rationale, speaker notes, provenance, and review status |
@@ -247,6 +248,13 @@ addresses.
   Forum batches, reconciles canonical applications, and waits for a knowledge-
   index rebuild. A durable lease prevents overlapping full refreshes, and the
   embedding worker catches up new or changed documents on its hourly schedule.
+- **Incremental refresh:** a public-but-signature-verified callback Lambda accepts
+  GitHub and Discourse events, buffers them in encrypted SQS, and runs targeted
+  source mirroring, reconciliation, and knowledge-document updates at single
+  concurrency. Google Drive notifications are accepted as verification signals
+  because they do not identify changed Sheet rows. Provider callbacks are
+  activated separately, so deploying the path does not interrupt the current
+  full-refresh workflow.
 
 ### Repository map
 
@@ -339,6 +347,12 @@ The deployed Admin action and daily schedule use the bounded Step Functions
 pipeline instead of the compatibility command so growth in GitHub issues or
 Forum topics cannot exceed one Lambda invocation's runtime limit.
 
+The deployed hybrid path can also process signed GitHub and Discourse callbacks
+for only the affected issue, topic, application, and knowledge documents. It is
+additive: the full Admin and scheduled workflows remain available while source
+callbacks are registered and proven. See the
+[hybrid corpus refresh runbook](docs/deployment/hybrid-corpus-refresh.md).
+
 The embedding command requires a configured embedding API key. Keyword search
 works without embeddings or AI answer composition.
 
@@ -382,6 +396,8 @@ The current public deployment combines:
 - an encrypted, versioned, non-public S3 snapshot bucket;
 - Lambda workers for migration, synchronization, indexing, embedding, and
   grounded answer jobs;
+- an authenticated webhook ingress, encrypted SQS event queue, dead-letter
+  queue, and single-concurrency targeted corpus worker;
 - Secrets Manager, IAM roles, CloudWatch logs, and optional alarms; and
 - an optional ECS/Fargate and load-balancer web path for production-style
   deployments.
@@ -407,7 +423,9 @@ AWS_PROFILE=zodldashboard AWS_REGION=us-east-1 \
 See [AWS account portability](docs/deployment/aws-account-portability.md),
 [Amplify target](docs/deployment/amplify-zcg-target.md),
 [backend connection](docs/deployment/backend-connection-spike.md), and
-[deployment cost modes](docs/deployment/cost-modes.md).
+[deployment cost modes](docs/deployment/cost-modes.md). Callback registration
+and transition steps are in the
+[hybrid corpus refresh runbook](docs/deployment/hybrid-corpus-refresh.md).
 
 ## Design and Data Principles
 
@@ -440,8 +458,9 @@ files and account-specific CDK context are ignored.
    route structure.
 5. Add applicant and FPF/ZCG workflow surfaces only after source confidence and
    privacy boundaries are agreed.
-6. Define incremental sync, writeback, cutover, archive, and rollback policies
-   with system owners.
+6. Register and observe the implemented GitHub and Discourse incremental-refresh
+   callbacks with source-system administrators; add a renewable Google Drive
+   watch and define future writeback, cutover, archive, and rollback policies.
 
 The [architectural assessment](docs/zcg-architectural-assessment-refined.md)
 contains the fuller target-system argument and proposed architecture.
@@ -456,6 +475,7 @@ contains the fuller target-system argument and proposed architecture.
 - [Manual reconciliation decisions](docs/manual-reconciliation-decisions.md)
 - [Committee grant briefing plan](docs/committee-grant-briefing-plan.md)
 - [Deployment cost modes](docs/deployment/cost-modes.md)
+- [Hybrid corpus refresh](docs/deployment/hybrid-corpus-refresh.md)
 - [AWS account portability](docs/deployment/aws-account-portability.md)
 
 ## License, Contributions, and Security

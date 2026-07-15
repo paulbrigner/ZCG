@@ -11,10 +11,12 @@ import * as targets from "aws-cdk-lib/aws-events-targets";
 import * as elbv2 from "aws-cdk-lib/aws-elasticloadbalancingv2";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as lambda from "aws-cdk-lib/aws-lambda";
+import * as lambdaEventSources from "aws-cdk-lib/aws-lambda-event-sources";
 import * as lambdaNodejs from "aws-cdk-lib/aws-lambda-nodejs";
 import * as logs from "aws-cdk-lib/aws-logs";
 import * as rds from "aws-cdk-lib/aws-rds";
 import * as s3 from "aws-cdk-lib/aws-s3";
+import * as sqs from "aws-cdk-lib/aws-sqs";
 import * as scheduler from "aws-cdk-lib/aws-scheduler";
 import * as schedulerTargets from "aws-cdk-lib/aws-scheduler-targets";
 import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
@@ -122,6 +124,7 @@ export class ZcgPrototypeStack extends Stack {
     const enableWebService = contextBoolean(this, "enableWebService", !isPrototypeLowCost);
     const enableAlb = contextBoolean(this, "enableAlb", true);
     const enableWorkers = contextBoolean(this, "enableWorkers", true);
+    const enableHybridCorpusRefresh = contextBoolean(this, "enableHybridCorpusRefresh", enableWorkers);
     const enableSourceSyncSchedule = contextBoolean(this, "enableSourceSyncSchedule", enableWorkers);
     const enableKnowledgeEmbeddingSchedule = contextBoolean(this, "enableKnowledgeEmbeddingSchedule", enableWorkers);
     const enableAlarms = contextBoolean(this, "enableAlarms", !isPrototypeLowCost);
@@ -145,6 +148,13 @@ export class ZcgPrototypeStack extends Stack {
     const forumFetchDelayMs = contextNumber(this, "forumFetchDelayMs", 500);
     const githubIssueBatchSize = contextNumber(this, "githubIssueBatchSize", 25);
     const forumTopicBatchSize = contextNumber(this, "forumTopicBatchSize", 20);
+    const githubWebhookSecretId = this.node.tryGetContext("githubWebhookSecretId") as string | undefined;
+    const discourseWebhookSecretId = this.node.tryGetContext("discourseWebhookSecretId") as string | undefined;
+    const googleDriveChannelTokenSecretId = this.node.tryGetContext("googleDriveChannelTokenSecretId") as
+      | string
+      | undefined;
+    const googleDriveChannelId = this.node.tryGetContext("googleDriveChannelId") as string | undefined;
+    const googleDriveFileId = this.node.tryGetContext("googleDriveFileId") as string | undefined;
     const logRetention = logRetentionForDays(logRetentionDays);
 
     if (dbMinAcu === 0 && (dbAutoPauseSeconds < 300 || dbAutoPauseSeconds > 86400)) {
@@ -155,6 +165,10 @@ export class ZcgPrototypeStack extends Stack {
       throw new Error(
         "natGateways=0 is not safe while enableWorkers=true because sync workers need public internet access for GitHub and Google Sheet mirroring. Disable workers or keep NAT until workers use Data API/out-of-VPC egress."
       );
+    }
+
+    if (enableHybridCorpusRefresh && !enableWorkers) {
+      throw new Error("enableHybridCorpusRefresh=true requires enableWorkers=true.");
     }
 
     cdk.Tags.of(this).add("Project", "ZCG");
@@ -499,6 +513,14 @@ export class ZcgPrototypeStack extends Stack {
     let knowledgeEmbeddingWorkerFunctionName = "disabled";
     let knowledgeAnswerWorkerFunctionName = "disabled";
     let corpusRefreshStateMachineArn = "disabled";
+    let corpusWebhookUrl = "disabled";
+    let corpusEventQueueUrl = "disabled";
+    let corpusEventDeadLetterQueueUrl = "disabled";
+    let corpusWebhookIngressFunctionName = "disabled";
+    let corpusEventWorkerFunctionName = "disabled";
+    let githubWebhookSecretArn = "disabled";
+    let discourseWebhookSecretArn = "disabled";
+    let googleDriveChannelTokenSecretArn = "disabled";
 
     if (enableWorkers) {
       const syncWorkerEnvironment = {
@@ -629,6 +651,165 @@ export class ZcgPrototypeStack extends Stack {
           externalModules: []
         }
       });
+
+      if (enableHybridCorpusRefresh) {
+        const resolveWebhookSecret = (
+          constructId: string,
+          configuredSecretId: string | undefined,
+          description: string
+        ): secretsmanager.ISecret => {
+          if (configuredSecretId) {
+            return configuredSecretId.startsWith("arn:")
+              ? secretsmanager.Secret.fromSecretCompleteArn(this, constructId, configuredSecretId)
+              : secretsmanager.Secret.fromSecretNameV2(this, constructId, configuredSecretId);
+          }
+
+          return new secretsmanager.Secret(this, constructId, {
+            description,
+            generateSecretString: {
+              secretStringTemplate: JSON.stringify({}),
+              generateStringKey: "secret",
+              passwordLength: 48,
+              excludePunctuation: true
+            },
+            removalPolicy: RemovalPolicy.RETAIN
+          });
+        };
+
+        const githubWebhookSecret = resolveWebhookSecret(
+          "GitHubWebhookSecret",
+          githubWebhookSecretId,
+          "Shared secret used to authenticate ZCG GitHub webhook deliveries."
+        );
+        const discourseWebhookSecret = resolveWebhookSecret(
+          "DiscourseWebhookSecret",
+          discourseWebhookSecretId,
+          "Shared secret used to authenticate Zcash Forum webhook deliveries."
+        );
+        const googleDriveChannelTokenSecret = resolveWebhookSecret(
+          "GoogleDriveChannelTokenSecret",
+          googleDriveChannelTokenSecretId,
+          "Channel token used to authenticate Google Drive change notifications."
+        );
+        const corpusEventDeadLetterQueue = new sqs.Queue(this, "CorpusEventDeadLetterQueue", {
+          encryption: sqs.QueueEncryption.SQS_MANAGED,
+          enforceSSL: true,
+          retentionPeriod: Duration.days(14),
+          removalPolicy
+        });
+        const corpusEventQueue = new sqs.Queue(this, "CorpusEventQueue", {
+          encryption: sqs.QueueEncryption.SQS_MANAGED,
+          enforceSSL: true,
+          deliveryDelay: Duration.seconds(15),
+          visibilityTimeout: Duration.minutes(7),
+          retentionPeriod: Duration.days(4),
+          deadLetterQueue: {
+            queue: corpusEventDeadLetterQueue,
+            // The full verification refresh can legitimately hold the corpus lease for
+            // much longer than one targeted attempt. Preserve events while it runs.
+            maxReceiveCount: 40
+          },
+          removalPolicy
+        });
+        const corpusWebhookIngressLogGroup = new logs.LogGroup(this, "CorpusWebhookIngressLogGroup", {
+          retention: logRetention,
+          removalPolicy
+        });
+        const corpusEventWorkerLogGroup = new logs.LogGroup(this, "CorpusEventWorkerLogGroup", {
+          retention: logRetention,
+          removalPolicy
+        });
+        const corpusWebhookIngress = new lambdaNodejs.NodejsFunction(this, "CorpusWebhookIngress", {
+          entry: path.join(__dirname, "..", "workers", "webhook-ingress-worker.ts"),
+          handler: "handler",
+          runtime: lambda.Runtime.NODEJS_24_X,
+          timeout: Duration.seconds(15),
+          memorySize: 256,
+          reservedConcurrentExecutions: 5,
+          environment: {
+            WEBHOOK_QUEUE_URL: corpusEventQueue.queueUrl,
+            GITHUB_WEBHOOK_SECRET_ARN: githubWebhookSecret.secretArn,
+            DISCOURSE_WEBHOOK_SECRET_ARN: discourseWebhookSecret.secretArn,
+            GOOGLE_DRIVE_CHANNEL_TOKEN_SECRET_ARN: googleDriveChannelTokenSecret.secretArn,
+            ...(googleDriveChannelId ? { GOOGLE_DRIVE_CHANNEL_ID: googleDriveChannelId } : {}),
+            ...(googleDriveFileId ? { GOOGLE_DRIVE_FILE_ID: googleDriveFileId } : {})
+          },
+          logGroup: corpusWebhookIngressLogGroup,
+          bundling: {
+            externalModules: []
+          }
+        });
+        const corpusEventWorker = new lambdaNodejs.NodejsFunction(this, "CorpusEventWorker", {
+          entry: path.join(__dirname, "..", "workers", "corpus-event-worker.ts"),
+          handler: "handler",
+          runtime: lambda.Runtime.NODEJS_24_X,
+          timeout: Duration.minutes(5),
+          memorySize: 1024,
+          reservedConcurrentExecutions: 1,
+          vpc,
+          vpcSubnets: {
+            subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS
+          },
+          securityGroups: [workerSecurityGroup],
+          environment: syncWorkerEnvironment,
+          logGroup: corpusEventWorkerLogGroup,
+          bundling: {
+            externalModules: []
+          }
+        });
+        const corpusWebhookFunctionUrl = corpusWebhookIngress.addFunctionUrl({
+          authType: lambda.FunctionUrlAuthType.NONE
+        });
+
+        corpusEventWorker.addEventSource(
+          new lambdaEventSources.SqsEventSource(corpusEventQueue, {
+            batchSize: 10,
+            maxBatchingWindow: Duration.seconds(60),
+            reportBatchItemFailures: true
+          })
+        );
+        corpusEventQueue.grantSendMessages(corpusWebhookIngress);
+        githubWebhookSecret.grantRead(corpusWebhookIngress);
+        discourseWebhookSecret.grantRead(corpusWebhookIngress);
+        googleDriveChannelTokenSecret.grantRead(corpusWebhookIngress);
+        corpusEventQueue.grantConsumeMessages(corpusEventWorker);
+        snapshotBucket.grantReadWrite(corpusEventWorker);
+        database.secret!.grantRead(corpusEventWorker);
+        githubTokenSecret?.grantRead(corpusEventWorker);
+        database.connections.allowDefaultPortFrom(corpusEventWorker);
+
+        corpusWebhookUrl = corpusWebhookFunctionUrl.url;
+        corpusEventQueueUrl = corpusEventQueue.queueUrl;
+        corpusEventDeadLetterQueueUrl = corpusEventDeadLetterQueue.queueUrl;
+        corpusWebhookIngressFunctionName = corpusWebhookIngress.functionName;
+        corpusEventWorkerFunctionName = corpusEventWorker.functionName;
+        githubWebhookSecretArn = githubWebhookSecret.secretArn;
+        discourseWebhookSecretArn = discourseWebhookSecret.secretArn;
+        googleDriveChannelTokenSecretArn = googleDriveChannelTokenSecret.secretArn;
+
+        // These two alarms protect durable source-change delivery even in the
+        // low-cost mode where broader operational alarms are disabled.
+        corpusEventDeadLetterQueue.metricApproximateNumberOfMessagesVisible().createAlarm(
+          this,
+          "CorpusEventDeadLetterQueueAlarm",
+          {
+            alarmName: `${appName}-${environmentName}-corpus-event-dead-letter-queue`,
+            threshold: 1,
+            evaluationPeriods: 1,
+            comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD
+          }
+        );
+        corpusEventQueue.metricApproximateAgeOfOldestMessage().createAlarm(
+          this,
+          "CorpusEventQueueAgeAlarm",
+          {
+            alarmName: `${appName}-${environmentName}-corpus-event-queue-age`,
+            threshold: 30 * 60,
+            evaluationPeriods: 2,
+            comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD
+          }
+        );
+      }
 
       syncWorkerFunctionName = syncWorker.functionName;
       migrationRunnerFunctionName = migrationRunner.functionName;
@@ -916,8 +1097,17 @@ export class ZcgPrototypeStack extends Stack {
       const skipConcurrentCorpusRefresh = new sfn.Succeed(this, "SkipConcurrentCorpusRefresh", {
         comment: "A non-expired full corpus refresh lease is already active."
       });
+      const waitForTargetedCorpusEvent = new sfn.Wait(this, "WaitForTargetedCorpusEvent", {
+        time: sfn.WaitTime.duration(Duration.seconds(60)),
+        comment: "A short targeted source update owns the shared corpus lease; retry the full refresh after it finishes."
+      });
+      waitForTargetedCorpusEvent.next(acquireCorpusRefresh);
       const corpusRefreshLeaseAcquired = new sfn.Choice(this, "CorpusRefreshLeaseAcquired")
         .when(sfn.Condition.booleanEquals("$.lease.acquired", true), corpusRefreshWork)
+        .when(
+          sfn.Condition.stringEquals("$.lease.busyOwnerKind", "corpus_event"),
+          waitForTargetedCorpusEvent
+        )
         .otherwise(skipConcurrentCorpusRefresh);
 
       const corpusRefreshStateMachine = new sfn.StateMachine(this, "CorpusRefreshStateMachine", {
@@ -1077,6 +1267,30 @@ export class ZcgPrototypeStack extends Stack {
     });
     new cdk.CfnOutput(this, "CorpusRefreshStateMachineArn", {
       value: corpusRefreshStateMachineArn
+    });
+    new cdk.CfnOutput(this, "CorpusWebhookUrl", {
+      value: corpusWebhookUrl
+    });
+    new cdk.CfnOutput(this, "CorpusEventQueueUrl", {
+      value: corpusEventQueueUrl
+    });
+    new cdk.CfnOutput(this, "CorpusEventDeadLetterQueueUrl", {
+      value: corpusEventDeadLetterQueueUrl
+    });
+    new cdk.CfnOutput(this, "CorpusWebhookIngressFunctionName", {
+      value: corpusWebhookIngressFunctionName
+    });
+    new cdk.CfnOutput(this, "CorpusEventWorkerFunctionName", {
+      value: corpusEventWorkerFunctionName
+    });
+    new cdk.CfnOutput(this, "GitHubWebhookSecretArn", {
+      value: githubWebhookSecretArn
+    });
+    new cdk.CfnOutput(this, "DiscourseWebhookSecretArn", {
+      value: discourseWebhookSecretArn
+    });
+    new cdk.CfnOutput(this, "GoogleDriveChannelTokenSecretArn", {
+      value: googleDriveChannelTokenSecretArn
     });
     new cdk.CfnOutput(this, "CostMode", {
       value: costMode

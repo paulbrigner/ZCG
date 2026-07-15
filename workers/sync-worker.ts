@@ -10,6 +10,7 @@ import pg from "pg";
 import { workerDatabaseUrl } from "../lib/worker-db-url";
 import { collectSourceMirrors, type SourceMirrorEvent, type SourceMirrorResult } from "../lib/source-mirroring";
 import { forumTopicUrlsFromSourceRecords } from "../lib/source-mirroring/forum";
+import { mirrorGitHubIssue } from "../lib/source-mirroring/github";
 import {
   addCounts,
   emptyCounts,
@@ -49,6 +50,7 @@ type RefreshLeaseResult = {
   refreshId: string;
   parentSyncRunId: string | null;
   message?: string;
+  busyOwnerKind?: "corpus_event" | "full_refresh";
 };
 
 const CORPUS_REFRESH_LEASE_KEY = "corpus-refresh:pipeline:v1";
@@ -221,6 +223,7 @@ async function acquireCorpusRefreshLease(
          now() + ($3::int * interval '1 hour'),
          jsonb_build_object(
            'owner', $4::text,
+           'ownerKind', 'full_refresh',
            'trigger', $5::text,
            'requestedAt', $6::text,
            'requestedByPrincipalId', $7::text
@@ -254,11 +257,17 @@ async function acquireCorpusRefreshLease(
 
     if (!claimed.rowCount) {
       await client.query("rollback");
+      const busyOwnerKind = previousLeaseResult.ownerKind === "corpus_event"
+        ? "corpus_event"
+        : "full_refresh";
       return {
         acquired: false,
         refreshId,
         parentSyncRunId: null,
-        message: "Another full corpus refresh is already running."
+        message: busyOwnerKind === "corpus_event"
+          ? "A targeted corpus event is currently being applied."
+          : "Another full corpus refresh is already running.",
+        busyOwnerKind
       };
     }
 
@@ -524,6 +533,196 @@ async function writeForumUrlChunk(
   });
 
   return { ...location, urlCount: urls.length };
+}
+
+async function writeGitHubRecordChunk(
+  refreshId: string,
+  page: number,
+  results: SourceMirrorResult[]
+) {
+  const records = results
+    .flatMap((result) => result.records)
+    .filter((record) => ["github_issue", "github_issue_comment"].includes(record.sourceKind))
+    .map((record) => ({ sourceKind: record.sourceKind, sourceId: record.sourceId }));
+  const location = await putRefreshJson(
+    refreshId,
+    `github-record-chunks/page-${String(page).padStart(6, "0")}.json`,
+    { records }
+  );
+
+  return { ...location, recordCount: records.length };
+}
+
+async function githubRecordsFromRefreshChunks(refreshId: string) {
+  const bucket = snapshotBucketName();
+  const prefix = refreshObjectKey(refreshId, "github-record-chunks/");
+  const keys: string[] = [];
+  let continuationToken: string | undefined;
+
+  do {
+    const listed = await s3.send(
+      new ListObjectsV2Command({ Bucket: bucket, Prefix: prefix, ContinuationToken: continuationToken })
+    );
+    keys.push(...(listed.Contents ?? []).flatMap((item) => (item.Key ? [item.Key] : [])));
+    continuationToken = listed.IsTruncated ? listed.NextContinuationToken : undefined;
+  } while (continuationToken);
+
+  const records = new Map<string, { sourceKind: string; sourceId: string }>();
+
+  for (const key of keys.sort()) {
+    const chunk = await getRefreshJson<{
+      records?: Array<{ sourceKind?: string; sourceId?: string }>;
+    }>(bucket, key);
+
+    for (const record of chunk.records ?? []) {
+      if (
+        ["github_issue", "github_issue_comment"].includes(record.sourceKind ?? "") &&
+        typeof record.sourceId === "string" &&
+        record.sourceId
+      ) {
+        records.set(`${record.sourceKind}:${record.sourceId}`, {
+          sourceKind: record.sourceKind!,
+          sourceId: record.sourceId
+        });
+      }
+    }
+  }
+
+  return [...records.values()];
+}
+
+async function pruneGitHubRecordsMissingFromFullRefresh(
+  client: pg.Client,
+  refreshId: string,
+  syncRunId: string
+) {
+  const manifestRecords = await githubRecordsFromRefreshChunks(refreshId);
+  const owner = process.env.ZCG_GITHUB_OWNER ?? "ZcashCommunityGrants";
+  const repo = process.env.ZCG_GITHUB_REPO ?? "zcashcommunitygrants";
+  const missingRecords = await client.query<{ source_kind: string; source_id: string }>(
+    `select sr.source_kind, sr.source_id
+       from source_records sr
+      where sr.source_kind in ('github_issue', 'github_issue_comment')
+        and left(sr.source_id, length($1)) = $1
+        and not exists (
+          select 1
+            from jsonb_to_recordset($2::jsonb) as current_record(source_kind text, source_id text)
+           where current_record.source_kind = sr.source_kind
+             and current_record.source_id = sr.source_id
+        )
+      order by sr.source_kind, sr.source_id`,
+    [`${owner}/${repo}#`, JSON.stringify(manifestRecords)]
+  );
+  const candidateIssueSourceIds = githubIssueVerificationCandidates(missingRecords.rows);
+  const configuredMaxCandidates = Number(
+    process.env.ZCG_GITHUB_AUTHORITATIVE_VERIFY_MAX ?? 100
+  );
+  const maxCandidates = Number.isSafeInteger(configuredMaxCandidates) && configuredMaxCandidates > 0
+    ? configuredMaxCandidates
+    : 100;
+
+  if (candidateIssueSourceIds.length > maxCandidates) {
+    throw new Error(
+      `The full GitHub refresh omitted records from ${candidateIssueSourceIds.length} previously mirrored issues; ` +
+      `refusing to verify and prune more than ${maxCandidates} in one run.`
+    );
+  }
+
+  const verifiedRecords = [...manifestRecords];
+  const recoveredResults: SourceMirrorResult[] = [];
+  let verificationCounts = { ...emptyCounts };
+
+  for (const candidateSourceId of candidateIssueSourceIds) {
+    const issueNumber = Number(candidateSourceId.match(/#([1-9][0-9]*)$/)?.[1]);
+
+    if (!Number.isSafeInteger(issueNumber) || issueNumber <= 0) {
+      throw new Error(`Cannot verify malformed mirrored GitHub issue source ID ${candidateSourceId}.`);
+    }
+
+    const result = await mirrorGitHubIssue(issueNumber, { owner, repo });
+    const stored = await storeMirrorResult(client, syncRunId, result);
+    verificationCounts = addCounts(verificationCounts, stored);
+
+    if (result.target.status === "found") {
+      recoveredResults.push(result);
+      verifiedRecords.push(
+        ...result.records
+          .filter((record) => ["github_issue", "github_issue_comment"].includes(record.sourceKind))
+          .map((record) => ({ sourceKind: record.sourceKind, sourceId: record.sourceId }))
+      );
+    }
+  }
+
+  const pruned = await pruneGitHubRecordsAgainstManifest(client, verifiedRecords);
+
+  return {
+    metadata: {
+      ...pruned,
+      candidatesVerified: candidateIssueSourceIds.length,
+      recordsRecoveredFromPageShift: recoveredResults.reduce(
+        (total, result) => total + result.records.length,
+        0
+      )
+    },
+    recoveredResults,
+    verificationCounts
+  };
+}
+
+function githubIssueVerificationCandidates(
+  records: Array<{ sourceKind?: string; source_kind?: string; sourceId?: string; source_id?: string }>
+) {
+  const issueSourceIds = new Set<string>();
+
+  for (const record of records) {
+    const sourceKind = record.sourceKind ?? record.source_kind;
+    const sourceId = record.sourceId ?? record.source_id ?? "";
+    const issueSourceId = sourceKind === "github_issue"
+      ? sourceId
+      : sourceKind === "github_issue_comment"
+        ? sourceId.match(/^(.+#[1-9][0-9]*):comment:[^:]+$/)?.[1] ?? ""
+        : "";
+
+    if (!issueSourceId) {
+      throw new Error(`Cannot derive a GitHub issue from ${sourceKind ?? "unknown"}:${sourceId}.`);
+    }
+
+    issueSourceIds.add(issueSourceId);
+  }
+
+  return [...issueSourceIds].sort((left, right) => left.localeCompare(right));
+}
+
+async function pruneGitHubRecordsAgainstManifest(
+  client: pg.Client,
+  records: Array<{ sourceKind: string; sourceId: string }>
+) {
+
+  // This repository is known to contain many issues. Treat an empty manifest as
+  // an incomplete source read rather than authoritatively deleting the mirror.
+  if (!records.some((record) => record.sourceKind === "github_issue")) {
+    throw new Error("The full GitHub refresh produced no issue records; refusing authoritative pruning.");
+  }
+
+  const owner = process.env.ZCG_GITHUB_OWNER ?? "ZcashCommunityGrants";
+  const repo = process.env.ZCG_GITHUB_REPO ?? "zcashcommunitygrants";
+  const deleted = await client.query(
+    `delete from source_records sr
+      where sr.source_kind in ('github_issue', 'github_issue_comment')
+        and left(sr.source_id, length($1)) = $1
+        and not exists (
+          select 1
+            from jsonb_to_recordset($2::jsonb) as current_record(source_kind text, source_id text)
+           where current_record.source_kind = sr.source_kind
+             and current_record.source_id = sr.source_id
+        )`,
+    [`${owner}/${repo}#`, JSON.stringify(records)]
+  );
+
+  return {
+    authoritativeRecordCount: records.length,
+    recordsDeleted: deleted.rowCount ?? 0
+  };
 }
 
 async function buildForumUrlManifest(refreshId: string, batchSize: number) {
@@ -1249,6 +1448,7 @@ export async function handler(event: WorkerEvent = {}) {
     const results = await collectSourceMirrors(mirrorEvent);
     assertStagedMirrorComplete(event, results);
     const mirrorWarnings = stagedMirrorWarnings(results);
+    const refreshId = event.refreshId ? requireRefreshId(event) : null;
     let counts = { ...emptyCounts };
     const sourceSummaries: Record<string, unknown>[] = [];
 
@@ -1265,7 +1465,24 @@ export async function handler(event: WorkerEvent = {}) {
       });
     }
 
-    const refreshId = event.refreshId ? requireRefreshId(event) : null;
+    const firstResultMetadata = results[0]?.metadata ?? {};
+    const githubRecordChunk =
+      refreshId && source === "github-issues-batch"
+        ? await writeGitHubRecordChunk(
+            refreshId,
+            Math.max(1, Math.floor(event.batchIndex ?? 1)),
+            results
+          )
+        : null;
+    const githubAuthoritativePruneResult =
+      refreshId && source === "github-issues-batch" && firstResultMetadata.hasMore !== true
+        ? await pruneGitHubRecordsMissingFromFullRefresh(client, refreshId, syncRunId)
+        : null;
+    const githubAuthoritativePrune = githubAuthoritativePruneResult?.metadata ?? null;
+
+    if (githubAuthoritativePruneResult) {
+      counts = addCounts(counts, githubAuthoritativePruneResult.verificationCounts);
+    }
     const forumUrlChunk =
       refreshId && (source === "github-issues-batch" || source === "google-sheet")
         ? await writeForumUrlChunk(
@@ -1273,7 +1490,9 @@ export async function handler(event: WorkerEvent = {}) {
             source === "github-issues-batch"
               ? `github-${Math.max(1, Math.floor(event.batchIndex ?? 1))}`
               : "google-sheet",
-            results
+            githubAuthoritativePruneResult
+              ? [...results, ...githubAuthoritativePruneResult.recoveredResults]
+              : results
           )
         : null;
     let forumUpdatesPlan: Awaited<ReturnType<typeof buildForumUrlManifest>> | null = null;
@@ -1325,6 +1544,8 @@ export async function handler(event: WorkerEvent = {}) {
       parentSyncRunId: event.parentSyncRunId ?? null,
       refreshId,
       sources: sourceSummaries,
+      githubRecordChunk,
+      githubAuthoritativePrune,
       forumUrlChunk,
       forumUpdatesPlan,
       reconciliation,
@@ -1344,8 +1565,6 @@ export async function handler(event: WorkerEvent = {}) {
       [syncRunId, JSON.stringify({ source, counts, ...metadata })]
     );
 
-    const firstResultMetadata = results[0]?.metadata ?? {};
-
     return {
       ok: true,
       syncRunId,
@@ -1353,6 +1572,8 @@ export async function handler(event: WorkerEvent = {}) {
       sources: sourceSummaries,
       reconciliation,
       knowledgeIndex,
+      githubRecordChunk,
+      githubAuthoritativePrune,
       forumUrlChunk,
       forumUpdatesPlan,
       ...mirrorWarnings,
@@ -1413,6 +1634,8 @@ export async function handler(event: WorkerEvent = {}) {
 
 export const syncWorkerTestHooks = {
   acquireCorpusRefreshLease,
+  githubIssueVerificationCandidates,
+  pruneGitHubRecordsAgainstManifest,
   assertStagedMirrorComplete,
   corpusRefreshLeaseHours: CORPUS_REFRESH_LEASE_HOURS,
   corpusRefreshLeaseKey: CORPUS_REFRESH_LEASE_KEY,

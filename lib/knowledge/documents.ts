@@ -153,6 +153,27 @@ export type GrantKnowledgeIndexResult = {
   staleDocumentsRemoved: number;
 };
 
+export type GrantKnowledgeRefreshOptions = {
+  applicationIds?: readonly string[];
+};
+
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function normalizedApplicationIds(applicationIds: readonly string[] | undefined) {
+  if (!applicationIds?.length) {
+    return null;
+  }
+
+  const normalized = applicationIds.map((applicationId) => applicationId.trim());
+  const invalidApplicationId = normalized.find((applicationId) => !uuidPattern.test(applicationId));
+
+  if (invalidApplicationId !== undefined) {
+    throw new Error(`Invalid grant application ID: ${invalidApplicationId || "(empty)"}`);
+  }
+
+  return [...new Set(normalized)];
+}
+
 function parseJsonRecord(value: string | null): Record<string, unknown> {
   if (!value) {
     return {};
@@ -1187,11 +1208,22 @@ async function fetchNormalizedForumTopicsForApplication(applicationId: string) {
   }
 }
 
-async function fetchApplicationRows() {
+async function fetchApplicationRows(applicationIds: readonly string[] | null = null) {
   const rows: GrantKnowledgeApplicationRow[] = [];
   let offset = 0;
 
   while (true) {
+    const applicationFilter = applicationIds
+      ? `where ga.id in (
+           select selected.value::uuid
+             from jsonb_array_elements_text($1::jsonb) as selected(value)
+         )`
+      : "";
+    const limitParameter = applicationIds ? 2 : 1;
+    const offsetParameter = applicationIds ? 3 : 2;
+    const values = applicationIds
+      ? [JSON.stringify(applicationIds), sourceRecordBatchSize, offset]
+      : [sourceRecordBatchSize, offset];
     const result = await query<GrantKnowledgeApplicationBaseRow>(
       `select ga.id::text,
               ga.canonical_key,
@@ -1220,9 +1252,10 @@ async function fetchApplicationRows() {
               ) as github_labels,
               ga.updated_at::text
          from grant_applications ga
+        ${applicationFilter}
         order by ga.updated_at desc, ga.id desc
-        limit $1 offset $2`,
-      [sourceRecordBatchSize, offset]
+        limit $${limitParameter} offset $${offsetParameter}`,
+      values
     );
 
     for (const row of result.rows) {
@@ -1440,7 +1473,29 @@ async function upsertKnowledgeDocuments(documents: KnowledgeDocumentInput[]) {
   }
 }
 
-async function deleteStaleDocuments(documentKeys: string[]) {
+async function deleteStaleDocuments(
+  documentKeys: string[],
+  applicationIds: readonly string[] | null = null
+) {
+  if (applicationIds) {
+    const result = await query(
+      `delete from grant_knowledge_documents
+        where metadata->>'generatedBy' = $1
+          and application_id in (
+            select selected.value::uuid
+              from jsonb_array_elements_text($2::jsonb) as selected(value)
+          )
+          and not exists (
+            select 1
+              from jsonb_array_elements_text($3::jsonb) as retained(value)
+             where retained.value = grant_knowledge_documents.document_key
+          )`,
+      [generatedBy, JSON.stringify(applicationIds), JSON.stringify(documentKeys)]
+    );
+
+    return result.rowCount ?? 0;
+  }
+
   if (!documentKeys.length) {
     const result = await query(
       `delete from grant_knowledge_documents
@@ -1464,8 +1519,11 @@ async function deleteStaleDocuments(documentKeys: string[]) {
   return result.rowCount ?? 0;
 }
 
-export async function refreshGrantKnowledgeDocuments(): Promise<GrantKnowledgeIndexResult> {
-  const applications = await fetchApplicationRows();
+export async function refreshGrantKnowledgeDocuments(
+  options: GrantKnowledgeRefreshOptions = {}
+): Promise<GrantKnowledgeIndexResult> {
+  const applicationIds = normalizedApplicationIds(options.applicationIds);
+  const applications = await fetchApplicationRows(applicationIds);
   const documents = [
     ...new Map(
       applications
@@ -1475,7 +1533,10 @@ export async function refreshGrantKnowledgeDocuments(): Promise<GrantKnowledgeIn
   ];
 
   await upsertKnowledgeDocuments(documents);
-  const staleDocumentsRemoved = await deleteStaleDocuments(documents.map((document) => document.documentKey));
+  const staleDocumentsRemoved = await deleteStaleDocuments(
+    documents.map((document) => document.documentKey),
+    applicationIds
+  );
 
   return {
     ok: true,

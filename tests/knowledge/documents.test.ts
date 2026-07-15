@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   knowledgeDocumentTestHooks,
+  refreshGrantKnowledgeDocuments,
   type GrantKnowledgeForumTopic
 } from "../../lib/knowledge/documents";
+import { pool } from "../../lib/db";
 
 type ApplicationRow = Parameters<typeof knowledgeDocumentTestHooks.documentsFromApplication>[0];
 type SourceRow = ApplicationRow["sources"][number];
@@ -254,4 +256,166 @@ test("builds a compact deterministic comparison summary with decisions and outco
   assert.match(first.content, /Committee rationale: The milestones were concrete/);
   assert.doesNotMatch(first.content, /sheetCategory/);
   assert.deepEqual(first.metadata.decisionMentionIds, ["00000000-0000-4000-8000-000000000030"]);
+});
+
+function queryResult(rows: unknown[] = [], rowCount = rows.length) {
+  return {
+    command: "",
+    oid: 0,
+    fields: [],
+    rowCount,
+    rows
+  };
+}
+
+test("refreshes and removes stale documents only for selected applications", async (t) => {
+  const applicationId = "00000000-0000-4000-8000-000000000001";
+  const calls: Array<{ text: string; values: readonly unknown[] }> = [];
+  const previousDatabaseDriver = process.env.DATABASE_DRIVER;
+  delete process.env.DATABASE_DRIVER;
+  t.after(() => {
+    if (previousDatabaseDriver === undefined) {
+      delete process.env.DATABASE_DRIVER;
+    } else {
+      process.env.DATABASE_DRIVER = previousDatabaseDriver;
+    }
+  });
+
+  t.mock.method(pool, "query", async (text: string, values: readonly unknown[] = []) => {
+    calls.push({ text, values });
+
+    if (text.includes("from grant_applications ga")) {
+      return queryResult([applicationRow()]);
+    }
+
+    if (text.includes("insert into grant_knowledge_documents")) {
+      return queryResult([], 2);
+    }
+
+    if (text.includes("delete from grant_knowledge_documents")) {
+      return queryResult([], 1);
+    }
+
+    return queryResult();
+  });
+
+  const result = await refreshGrantKnowledgeDocuments({ applicationIds: [applicationId, applicationId] });
+
+  assert.deepEqual(result, {
+    ok: true,
+    applicationsSeen: 1,
+    documentsIndexed: 2,
+    staleDocumentsRemoved: 1
+  });
+
+  const applicationQuery = calls.find((call) => call.text.includes("from grant_applications ga"));
+  assert.ok(applicationQuery);
+  assert.match(applicationQuery.text, /where ga\.id in/);
+  assert.deepEqual(applicationQuery.values, [JSON.stringify([applicationId]), 10, 0]);
+
+  const insertQuery = calls.find((call) => call.text.includes("insert into grant_knowledge_documents"));
+  assert.ok(insertQuery);
+  const indexedDocuments = JSON.parse(String(insertQuery.values[0])) as Array<{
+    application_id: string;
+    content_hash: string;
+  }>;
+  assert.equal(indexedDocuments.length, 2);
+  assert.ok(indexedDocuments.every((document) => document.application_id === applicationId));
+  assert.ok(indexedDocuments.every((document) => document.content_hash.length === 64));
+
+  const deleteQuery = calls.find((call) => call.text.includes("delete from grant_knowledge_documents"));
+  assert.ok(deleteQuery);
+  assert.match(deleteQuery.text, /and application_id in/);
+  assert.match(deleteQuery.text, /and not exists/);
+  assert.deepEqual(deleteQuery.values.slice(0, 2), [
+    "grant_knowledge_index_v1",
+    JSON.stringify([applicationId])
+  ]);
+  assert.equal((JSON.parse(String(deleteQuery.values[2])) as string[]).length, 2);
+});
+
+test("a missing selected application removes only that application's generated documents", async (t) => {
+  const applicationId = "00000000-0000-4000-8000-000000000099";
+  const calls: Array<{ text: string; values: readonly unknown[] }> = [];
+  const previousDatabaseDriver = process.env.DATABASE_DRIVER;
+  delete process.env.DATABASE_DRIVER;
+  t.after(() => {
+    if (previousDatabaseDriver === undefined) {
+      delete process.env.DATABASE_DRIVER;
+    } else {
+      process.env.DATABASE_DRIVER = previousDatabaseDriver;
+    }
+  });
+
+  t.mock.method(pool, "query", async (text: string, values: readonly unknown[] = []) => {
+    calls.push({ text, values });
+    return text.includes("delete from grant_knowledge_documents")
+      ? queryResult([], 4)
+      : queryResult();
+  });
+
+  const result = await refreshGrantKnowledgeDocuments({ applicationIds: [applicationId] });
+
+  assert.deepEqual(result, {
+    ok: true,
+    applicationsSeen: 0,
+    documentsIndexed: 0,
+    staleDocumentsRemoved: 4
+  });
+  assert.equal(calls.some((call) => call.text.includes("insert into grant_knowledge_documents")), false);
+
+  const deleteQuery = calls.find((call) => call.text.includes("delete from grant_knowledge_documents"));
+  assert.ok(deleteQuery);
+  assert.match(deleteQuery.text, /and application_id in/);
+  assert.deepEqual(deleteQuery.values, [
+    "grant_knowledge_index_v1",
+    JSON.stringify([applicationId]),
+    "[]"
+  ]);
+});
+
+test("an empty application selection preserves the full refresh behavior", async (t) => {
+  const calls: Array<{ text: string; values: readonly unknown[] }> = [];
+  const previousDatabaseDriver = process.env.DATABASE_DRIVER;
+  delete process.env.DATABASE_DRIVER;
+  t.after(() => {
+    if (previousDatabaseDriver === undefined) {
+      delete process.env.DATABASE_DRIVER;
+    } else {
+      process.env.DATABASE_DRIVER = previousDatabaseDriver;
+    }
+  });
+
+  t.mock.method(pool, "query", async (text: string, values: readonly unknown[] = []) => {
+    calls.push({ text, values });
+    return text.includes("delete from grant_knowledge_documents")
+      ? queryResult([], 3)
+      : queryResult();
+  });
+
+  const result = await refreshGrantKnowledgeDocuments({ applicationIds: [] });
+
+  assert.deepEqual(result, {
+    ok: true,
+    applicationsSeen: 0,
+    documentsIndexed: 0,
+    staleDocumentsRemoved: 3
+  });
+
+  const applicationQuery = calls.find((call) => call.text.includes("from grant_applications ga"));
+  assert.ok(applicationQuery);
+  assert.doesNotMatch(applicationQuery.text, /where ga\.id in/);
+  assert.deepEqual(applicationQuery.values, [10, 0]);
+
+  const deleteQuery = calls.find((call) => call.text.includes("delete from grant_knowledge_documents"));
+  assert.ok(deleteQuery);
+  assert.doesNotMatch(deleteQuery.text, /application_id in/);
+  assert.deepEqual(deleteQuery.values, ["grant_knowledge_index_v1"]);
+});
+
+test("rejects invalid scoped application IDs before a full refresh can run", async () => {
+  await assert.rejects(
+    refreshGrantKnowledgeDocuments({ applicationIds: [" "] }),
+    /Invalid grant application ID: \(empty\)/
+  );
 });

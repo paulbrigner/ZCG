@@ -1,4 +1,9 @@
-import type { GitHubMirrorConfig, SourceMirrorResult, SourceMirrorRecord } from "./types";
+import type {
+  GitHubMirrorConfig,
+  SourceMirrorResult,
+  SourceMirrorRecord,
+  TargetedSourceMirrorResult
+} from "./types";
 import { GetSecretValueCommand, SecretsManagerClient } from "@aws-sdk/client-secrets-manager";
 
 type GitHubLabel = {
@@ -46,6 +51,13 @@ const MAX_PAGE_SIZE = 100;
 const secretsManager = new SecretsManagerClient({});
 
 let cachedSecretToken: string | undefined;
+
+export class GitHubPullRequestTargetError extends Error {
+  constructor(readonly issueNumber: number) {
+    super(`GitHub item #${issueNumber} is a pull request, not an issue.`);
+    this.name = "GitHubPullRequestTargetError";
+  }
+}
 
 function positiveInteger(value: unknown, fallback: number) {
   const parsed = Number(value);
@@ -186,6 +198,254 @@ async function fetchIssueComments(params: {
   return comments;
 }
 
+async function fetchAllIssueComments(params: {
+  issue: GitHubIssue;
+  owner: string;
+  repo: string;
+  token?: string;
+  maxPages: number;
+}) {
+  const comments: GitHubIssueComment[] = [];
+
+  for (let page = 1; page <= params.maxPages; page += 1) {
+    const url = new URL(
+      params.issue.comments_url ??
+        `https://api.github.com/repos/${params.owner}/${params.repo}/issues/${params.issue.number}/comments`
+    );
+    url.searchParams.set("per_page", "100");
+    url.searchParams.set("page", String(page));
+
+    const response = await fetch(url, {
+      headers: githubHeaders(params.token)
+    });
+
+    if (!response.ok) {
+      throw new Error(
+        `GitHub issue comment mirror failed for #${params.issue.number}: ${response.status} ${response.statusText}`
+      );
+    }
+
+    const pageComments = (await response.json()) as GitHubIssueComment[];
+    comments.push(...pageComments);
+    const linkedNextPage = issuePageFromLinkHeader(response.headers.get("link"), "next");
+
+    if (!linkedNextPage && pageComments.length < MAX_PAGE_SIZE) {
+      return comments;
+    }
+
+    if (
+      !linkedNextPage &&
+      pageComments.length === MAX_PAGE_SIZE &&
+      comments.length >= (params.issue.comments ?? 0)
+    ) {
+      return comments;
+    }
+  }
+
+  throw new Error(
+    `GitHub issue comment mirror for #${params.issue.number} exceeded the configured ${params.maxPages}-page safety limit.`
+  );
+}
+
+function issueRecord(issue: GitHubIssue, owner: string, repo: string): SourceMirrorRecord {
+  return {
+    sourceKind: "github_issue",
+    sourceId: `${owner}/${repo}#${issue.number}`,
+    sourceUrl: issue.html_url,
+    sourceUpdatedAt: issue.updated_at,
+    title: issue.title,
+    summary: issueSummary(issue),
+    rawPayload: issue as unknown as Record<string, unknown>,
+    metadata: {
+      owner,
+      repo,
+      number: issue.number,
+      state: issue.state,
+      labels: labelsFor(issue),
+      labelDetails: labelDetailsFor(issue),
+      author: issue.user?.login ?? null,
+      commentCount: issue.comments ?? 0,
+      closedAt: issue.closed_at
+    }
+  };
+}
+
+function commentRecords(
+  issue: GitHubIssue,
+  comments: GitHubIssueComment[],
+  owner: string,
+  repo: string
+): SourceMirrorRecord[] {
+  const issueSourceId = `${owner}/${repo}#${issue.number}`;
+
+  return comments.map((comment) => ({
+    sourceKind: "github_issue_comment",
+    sourceId: `${issueSourceId}:comment:${comment.id}`,
+    sourceUrl: comment.html_url,
+    sourceUpdatedAt: comment.updated_at,
+    title: `Comment on #${issue.number}: ${issue.title}`,
+    summary: commentSummary(comment),
+    rawPayload: {
+      ...comment,
+      parentIssue: {
+        number: issue.number,
+        title: issue.title,
+        html_url: issue.html_url,
+        source_id: issueSourceId
+      }
+    } as Record<string, unknown>,
+    metadata: {
+      owner,
+      repo,
+      number: issue.number,
+      issueNumber: issue.number,
+      issueSourceId,
+      issueUrl: issue.html_url,
+      commentId: comment.id,
+      author: comment.user?.login ?? null,
+      authorAssociation: comment.author_association ?? null,
+      createdAt: comment.created_at
+    }
+  }));
+}
+
+/**
+ * Fetches one GitHub issue and its complete current comment collection.
+ *
+ * A 404/410 response is returned as an explicit tombstone instead of an
+ * exception so downstream targeted cleanup can remove the issue and all of its
+ * mirrored comments. Other GitHub failures remain retryable errors.
+ */
+export async function mirrorGitHubIssue(
+  issueNumber: number,
+  config: GitHubMirrorConfig = {}
+): Promise<TargetedSourceMirrorResult> {
+  if (!Number.isInteger(issueNumber) || issueNumber <= 0) {
+    throw new Error(`GitHub issue number must be a positive integer; received ${issueNumber}.`);
+  }
+
+  const owner = config.owner ?? process.env.ZCG_GITHUB_OWNER ?? DEFAULT_OWNER;
+  const repo = config.repo ?? process.env.ZCG_GITHUB_REPO ?? DEFAULT_REPO;
+  const token =
+    config.token ??
+    process.env.GITHUB_TOKEN ??
+    process.env.ZCG_GITHUB_TOKEN ??
+    (await githubTokenFromSecretsManager());
+  const commentMaxPages = positiveInteger(
+    config.commentMaxPages ?? process.env.ZCG_GITHUB_COMMENT_MAX_PAGES,
+    10
+  );
+  const fetchedAt = new Date().toISOString();
+  const issueSourceId = `${owner}/${repo}#${issueNumber}`;
+  const commentSourceIdPrefix = `${issueSourceId}:comment:`;
+  const sourceUrl = `https://github.com/${owner}/${repo}/issues/${issueNumber}`;
+  const response = await fetch(`https://api.github.com/repos/${owner}/${repo}/issues/${issueNumber}`, {
+    headers: githubHeaders(token)
+  });
+
+  if (response.status === 404 || response.status === 410) {
+    return {
+      sourceKind: "github_issue_target",
+      sourceId: issueSourceId,
+      sourceUrl,
+      rawPayload: {
+        fetchedAt,
+        owner,
+        repo,
+        issueNumber,
+        status: "not_found",
+        httpStatus: response.status
+      },
+      records: [],
+      metadata: {
+        fetchedAt,
+        owner,
+        repo,
+        issueNumber,
+        status: "not_found",
+        recordCount: 0
+      },
+      target: {
+        sourceKind: "github_issue",
+        sourceId: issueSourceId,
+        status: "not_found"
+      },
+      authoritativeScopes: [],
+      tombstones: [
+        {
+          sourceKind: "github_issue",
+          sourceId: issueSourceId,
+          reason: "not_found",
+          observedAt: fetchedAt
+        },
+        {
+          sourceKind: "github_issue_comment",
+          sourceIdPrefix: commentSourceIdPrefix,
+          reason: "not_found",
+          observedAt: fetchedAt
+        }
+      ]
+    };
+  }
+
+  if (!response.ok) {
+    throw new Error(
+      `GitHub issue mirror failed for #${issueNumber}: ${response.status} ${response.statusText}`
+    );
+  }
+
+  const issue = (await response.json()) as GitHubIssue;
+
+  if (issue.pull_request) {
+    throw new GitHubPullRequestTargetError(issueNumber);
+  }
+
+  const comments = await fetchAllIssueComments({ issue, owner, repo, token, maxPages: commentMaxPages });
+  const records = [issueRecord(issue, owner, repo), ...commentRecords(issue, comments, owner, repo)];
+  const currentCommentSourceIds = records
+    .filter((record) => record.sourceKind === "github_issue_comment")
+    .map((record) => record.sourceId);
+
+  return {
+    sourceKind: "github_issue_target",
+    sourceId: issueSourceId,
+    sourceUrl: issue.html_url,
+    rawPayload: {
+      fetchedAt,
+      owner,
+      repo,
+      issueNumber,
+      status: "found",
+      issue,
+      comments
+    },
+    records,
+    metadata: {
+      fetchedAt,
+      owner,
+      repo,
+      issueNumber,
+      status: "found",
+      issueCount: 1,
+      commentCount: currentCommentSourceIds.length,
+      recordCount: records.length
+    },
+    target: {
+      sourceKind: "github_issue",
+      sourceId: issueSourceId,
+      status: "found"
+    },
+    authoritativeScopes: [
+      {
+        sourceKind: "github_issue_comment",
+        sourceIdPrefix: commentSourceIdPrefix,
+        currentSourceIds: currentCommentSourceIds
+      }
+    ],
+    tombstones: []
+  };
+}
+
 export async function mirrorGitHubIssues(config: GitHubMirrorConfig = {}): Promise<SourceMirrorResult> {
   const owner = config.owner ?? process.env.ZCG_GITHUB_OWNER ?? DEFAULT_OWNER;
   const repo = config.repo ?? process.env.ZCG_GITHUB_REPO ?? DEFAULT_REPO;
@@ -276,59 +536,11 @@ export async function mirrorGitHubIssues(config: GitHubMirrorConfig = {}): Promi
     commentsByIssueNumber.set(issue.number, comments);
   }
 
-  const issueRecords: SourceMirrorRecord[] = issues.map((issue) => ({
-    sourceKind: "github_issue",
-    sourceId: `${owner}/${repo}#${issue.number}`,
-    sourceUrl: issue.html_url,
-    sourceUpdatedAt: issue.updated_at,
-    title: issue.title,
-    summary: issueSummary(issue),
-    rawPayload: issue as unknown as Record<string, unknown>,
-    metadata: {
-      owner,
-      repo,
-      number: issue.number,
-      state: issue.state,
-      labels: labelsFor(issue),
-      labelDetails: labelDetailsFor(issue),
-      author: issue.user?.login ?? null,
-      commentCount: issue.comments ?? 0,
-      closedAt: issue.closed_at
-    }
-  }));
-  const commentRecords: SourceMirrorRecord[] = issues.flatMap((issue) => {
-    const issueSourceId = `${owner}/${repo}#${issue.number}`;
-    return (commentsByIssueNumber.get(issue.number) ?? []).map((comment) => ({
-      sourceKind: "github_issue_comment",
-      sourceId: `${issueSourceId}:comment:${comment.id}`,
-      sourceUrl: comment.html_url,
-      sourceUpdatedAt: comment.updated_at,
-      title: `Comment on #${issue.number}: ${issue.title}`,
-      summary: commentSummary(comment),
-      rawPayload: {
-        ...comment,
-        parentIssue: {
-          number: issue.number,
-          title: issue.title,
-          html_url: issue.html_url,
-          source_id: issueSourceId
-        }
-      } as Record<string, unknown>,
-      metadata: {
-        owner,
-        repo,
-        number: issue.number,
-        issueNumber: issue.number,
-        issueSourceId,
-        issueUrl: issue.html_url,
-        commentId: comment.id,
-        author: comment.user?.login ?? null,
-        authorAssociation: comment.author_association ?? null,
-        createdAt: comment.created_at
-      }
-    }));
-  });
-  const records = [...issueRecords, ...commentRecords];
+  const issueRecords = issues.map((issue) => issueRecord(issue, owner, repo));
+  const mirroredCommentRecords = issues.flatMap((issue) =>
+    commentRecords(issue, commentsByIssueNumber.get(issue.number) ?? [], owner, repo)
+  );
+  const records = [...issueRecords, ...mirroredCommentRecords];
 
   return {
     sourceKind: "github_issues",
@@ -347,7 +559,7 @@ export async function mirrorGitHubIssues(config: GitHubMirrorConfig = {}): Promi
       hasMore,
       nextPage,
       issueCount: issueRecords.length,
-      commentCount: commentRecords.length,
+      commentCount: mirroredCommentRecords.length,
       issues,
       issueComments: Object.fromEntries(commentsByIssueNumber.entries())
     },
@@ -365,7 +577,7 @@ export async function mirrorGitHubIssues(config: GitHubMirrorConfig = {}): Promi
       hasMore,
       nextPage,
       issueCount: issueRecords.length,
-      commentCount: commentRecords.length,
+      commentCount: mirroredCommentRecords.length,
       recordCount: records.length
     }
   };

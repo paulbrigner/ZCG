@@ -15,6 +15,8 @@ The Phase 0 portable deployment path is CDK-managed AWS infrastructure:
 - Secrets Manager secrets for database credentials and Better Auth.
 - Lambda migration runner.
 - Lambda sync worker.
+- Signed webhook ingress, encrypted SQS queue with a dead-letter queue, and a
+  single-concurrency targeted corpus-event worker.
 - EventBridge Scheduler source-refresh pipeline and knowledge-embedding schedule.
 - CloudWatch log groups and basic alarms.
 
@@ -161,6 +163,13 @@ aws stepfunctions start-execution \
 Expected output includes an execution ARN. The execution should finish in
 `SUCCEEDED`, with a completed `phase1-all` parent run and bounded child runs on
 the Telemetry page.
+
+The stack also deploys a dormant hybrid refresh path by default. It does not
+receive source events until administrators register the generated callback URLs
+and secrets with GitHub, Discourse, or Google Drive. The existing Admin and
+3:00 AM full refresh paths stay enabled during that transition. See the
+[hybrid corpus refresh runbook](hybrid-corpus-refresh.md) for activation,
+verification, access requirements, and rollback.
 
 ## Required follow-up before stakeholder use
 

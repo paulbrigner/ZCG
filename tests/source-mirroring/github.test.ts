@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mirrorGitHubIssues } from "../../lib/source-mirroring/github";
+import { mirrorGitHubIssue, mirrorGitHubIssues } from "../../lib/source-mirroring/github";
 
 type TestIssue = {
   number: number;
@@ -55,6 +55,164 @@ function jsonResponseWithHeaders(payload: unknown, headers: HeadersInit) {
     headers: { "content-type": "application/json", ...headers }
   });
 }
+
+test("authoritatively mirrors one issue and its current comments", async () => {
+  const issue351: TestIssue = {
+    ...issue(351),
+    state: "open",
+    comments: 2,
+    closed_at: null,
+    labels: [
+      {
+        name: "👀 Ready For ZCG Review",
+        color: "115858",
+        description: "Ready for committee evaluation"
+      }
+    ]
+  };
+  const currentComments = [
+    {
+      id: 35101,
+      html_url: `${issue351.html_url}#issuecomment-35101`,
+      body: "First committee comment",
+      created_at: "2026-07-11T01:00:00Z",
+      updated_at: "2026-07-11T01:00:00Z",
+      author_association: "MEMBER",
+      user: { login: "reviewer-1", html_url: "https://github.com/reviewer-1" }
+    },
+    {
+      id: 35103,
+      html_url: `${issue351.html_url}#issuecomment-35103`,
+      body: "Third comment; the second was deleted",
+      created_at: "2026-07-11T03:00:00Z",
+      updated_at: "2026-07-11T03:00:00Z",
+      author_association: "MEMBER",
+      user: { login: "reviewer-3", html_url: "https://github.com/reviewer-3" }
+    }
+  ];
+  const requestedPaths: string[] = [];
+  const originalFetch = globalThis.fetch;
+
+  globalThis.fetch = (async (input, init) => {
+    const url = new URL(String(input));
+    requestedPaths.push(`${url.pathname}${url.search}`);
+    assert.equal(new Headers(init?.headers).get("authorization"), "Bearer test-token");
+
+    if (url.pathname === `/repos/${owner}/${repo}/issues/351`) {
+      return jsonResponse(issue351);
+    }
+
+    if (url.pathname === `/repos/${owner}/${repo}/issues/351/comments`) {
+      assert.equal(url.searchParams.get("per_page"), "100");
+      assert.equal(url.searchParams.get("page"), "1");
+      return jsonResponse(currentComments);
+    }
+
+    throw new Error(`Unexpected GitHub request: ${url}`);
+  }) as typeof fetch;
+
+  try {
+    const result = await mirrorGitHubIssue(351, { owner, repo, token: "test-token" });
+    const issueSourceId = `${owner}/${repo}#351`;
+
+    assert.deepEqual(requestedPaths, [
+      `/repos/${owner}/${repo}/issues/351`,
+      `/repos/${owner}/${repo}/issues/351/comments?per_page=100&page=1`
+    ]);
+    assert.deepEqual(result.target, {
+      sourceKind: "github_issue",
+      sourceId: issueSourceId,
+      status: "found"
+    });
+    assert.deepEqual(result.tombstones, []);
+    assert.deepEqual(result.records.map((record) => record.sourceId), [
+      issueSourceId,
+      `${issueSourceId}:comment:35101`,
+      `${issueSourceId}:comment:35103`
+    ]);
+    assert.deepEqual(result.authoritativeScopes, [
+      {
+        sourceKind: "github_issue_comment",
+        sourceIdPrefix: `${issueSourceId}:comment:`,
+        currentSourceIds: [
+          `${issueSourceId}:comment:35101`,
+          `${issueSourceId}:comment:35103`
+        ]
+      }
+    ]);
+    assert.equal(result.records[0]?.metadata?.commentCount, 2);
+    assert.equal(result.records[1]?.metadata?.issueSourceId, issueSourceId);
+    assert.equal(result.records[1]?.rawPayload.parentIssue instanceof Object, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("returns explicit issue and comment tombstones when a targeted issue is gone", async () => {
+  const originalFetch = globalThis.fetch;
+
+  globalThis.fetch = (async (input) => {
+    const url = new URL(String(input));
+    assert.equal(url.pathname, `/repos/${owner}/${repo}/issues/351`);
+    return new Response(JSON.stringify({ message: "Not Found" }), {
+      status: 404,
+      statusText: "Not Found",
+      headers: { "content-type": "application/json" }
+    });
+  }) as typeof fetch;
+
+  try {
+    const result = await mirrorGitHubIssue(351, { owner, repo, token: "test-token" });
+    const issueSourceId = `${owner}/${repo}#351`;
+
+    assert.equal(result.target.status, "not_found");
+    assert.equal(result.records.length, 0);
+    assert.deepEqual(result.authoritativeScopes, []);
+    assert.deepEqual(
+      result.tombstones.map(({ sourceKind, sourceId, sourceIdPrefix, reason }) => ({
+        sourceKind,
+        sourceId,
+        sourceIdPrefix,
+        reason
+      })),
+      [
+        {
+          sourceKind: "github_issue",
+          sourceId: issueSourceId,
+          sourceIdPrefix: undefined,
+          reason: "not_found"
+        },
+        {
+          sourceKind: "github_issue_comment",
+          sourceId: undefined,
+          sourceIdPrefix: `${issueSourceId}:comment:`,
+          reason: "not_found"
+        }
+      ]
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("keeps non-missing targeted GitHub failures retryable", async () => {
+  const originalFetch = globalThis.fetch;
+
+  globalThis.fetch = (async () => new Response(JSON.stringify({ message: "rate limited" }), {
+    status: 429,
+    statusText: "Too Many Requests",
+    headers: { "content-type": "application/json" }
+  })) as typeof fetch;
+
+  try {
+    await assert.rejects(
+      () => mirrorGitHubIssue(351, { owner, repo, token: "test-token" }),
+      /GitHub issue mirror failed for #351: 429 Too Many Requests/
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
 
 test("fetches a new grant application on page four and retains reconciliation metadata", async () => {
   const issue351: TestIssue = {

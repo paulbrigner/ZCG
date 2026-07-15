@@ -21,6 +21,20 @@ type RawSourceRecord = {
   metadata: string;
 };
 
+type RetirableGitHubApplicationRow = {
+  id: string;
+  canonical_key: string;
+  title: string;
+  applicant_name: string | null;
+  github_issue_number: string | null;
+  github_issue_url: string | null;
+  github_state: string | null;
+  normalized_status: string;
+  requested_amount_usd: string | null;
+  match_confidence: string;
+  source_summary: string;
+};
+
 type GitHubApplication = {
   sourceRecord: RawSourceRecord;
   key: string;
@@ -177,6 +191,14 @@ type ProcessedApplicationStatus = {
   normalizedStatus: string;
 };
 
+type PlannedGitHubApplicationResult = {
+  planned: PlannedApplication;
+  matchedHistoricalKey: string | null;
+  matchedPaymentDetailKey: string | null;
+  matchedHistoricalApplication: boolean;
+  unmatchedGitHubApplications: number;
+};
+
 type QueryRunner = (
   text: string,
   values?: readonly unknown[]
@@ -229,6 +251,25 @@ export type ReconciliationRunResult = {
   unmatchedGitHubApplications: number;
   unmatchedSheetProjects: number;
 };
+
+export type TargetedGitHubReconciliationResult = {
+  ok: true;
+  githubSourceId: string;
+  applicationIds: string[];
+  discoveredForumUrls: string[];
+} & (
+  | {
+      requiresFullReconciliation: false;
+    }
+  | {
+      requiresFullReconciliation: true;
+      reason: GitHubApplicationRetirementReason;
+    }
+);
+
+type GitHubApplicationRetirementReason =
+  | "missing_or_tombstoned_source"
+  | "source_is_not_grant_application";
 
 export class ReconciliationBusyError extends Error {
   readonly busy = true;
@@ -1498,6 +1539,91 @@ async function fetchSourceRecords(sourceKind: "github_issue" | "github_issue_com
   return records;
 }
 
+function normalizedGitHubSourceId(value: string) {
+  const normalized = value.trim();
+
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+#[1-9][0-9]*$/.test(normalized)) {
+    throw new Error(`Invalid GitHub issue source ID: ${value || "(empty)"}`);
+  }
+
+  return normalized;
+}
+
+function isTombstonedGitHubSource(record: RawSourceRecord) {
+  const raw = parseJsonRecord(record.raw_payload);
+  const metadata = parseJsonRecord(record.metadata);
+  const status = stringValue(metadata.status) ?? stringValue(raw.status);
+
+  return (
+    status === "not_found" ||
+    status === "deleted" ||
+    status === "tombstoned" ||
+    metadata.tombstone === true ||
+    raw.tombstone === true
+  );
+}
+
+async function fetchTargetedGitHubSourceRecord(githubSourceId: string) {
+  const result = await query<RawSourceRecord>(
+    `select id,
+            source_kind,
+            source_id,
+            source_url,
+            checksum_sha256,
+            title,
+            summary,
+            source_updated_at,
+            raw_payload::text as raw_payload,
+            metadata::text as metadata
+       from source_records
+      where source_kind = 'github_issue'
+        and source_id = $1
+      limit 1`,
+    [githubSourceId]
+  );
+
+  return result.rows[0] ?? null;
+}
+
+async function fetchTargetedGitHubCommentRecords(githubSourceId: string) {
+  const records: RawSourceRecord[] = [];
+  let offset = 0;
+
+  while (true) {
+    const result = await query<RawSourceRecord>(
+      `select id,
+              source_kind,
+              source_id,
+              source_url,
+              checksum_sha256,
+              title,
+              summary,
+              source_updated_at,
+              raw_payload::text as raw_payload,
+              metadata::text as metadata
+         from source_records
+        where source_kind = 'github_issue_comment'
+          and (
+            metadata->>'issueSourceId' = $1
+            or source_id like $1 || ':comment:%'
+          )
+        order by source_id
+        limit $2 offset $3`,
+      [githubSourceId, sourceRecordBatchSize, offset]
+    );
+
+    records.push(...result.rows);
+
+    if (result.rows.length < sourceRecordBatchSize) {
+      break;
+    }
+
+    offset += sourceRecordBatchSize;
+  }
+
+  return records;
+}
+
 async function bulkUpsertApplications(
   applications: ApplicationInput[],
   context: ReconciliationContext
@@ -2020,6 +2146,172 @@ async function bulkCreateIssues(issues: ReconciliationIssueInput[]) {
   return issues.length;
 }
 
+async function clearTargetedGeneratedState(
+  applicationId: string,
+  executeQuery: QueryRunner = query
+) {
+  const issues = await executeQuery(
+    `delete from reconciliation_issues
+      where canonical_type = 'grant_application'
+        and canonical_id = $1
+        and details->>'generatedBy' = $2
+        and status in ('open', 'assigned')`,
+    [applicationId, generatedBy]
+  );
+  const links = await executeQuery(
+    `delete from source_links sl
+      using source_records sr
+      where sl.source_record_id = sr.id
+        and sl.canonical_type = 'grant_application'
+        and sl.canonical_id = $1
+        and (
+          sr.source_kind in ('github_issue', 'github_issue_comment', 'google_sheet_row')
+          or (
+            sr.source_kind = 'forum_link'
+            and (
+              sr.metadata->>'generatedBy' = $2
+              or sr.metadata->>'reconciliationGeneratedBy' = $2
+            )
+          )
+        )`,
+    [applicationId, generatedBy]
+  );
+
+  return {
+    issuesDeleted: issues.rowCount ?? 0,
+    linksDeleted: links.rowCount ?? 0
+  };
+}
+
+async function fetchGeneratedGitHubApplicationsForRetirement(options: {
+  canonicalKey?: string;
+  activeCanonicalKeys?: readonly string[];
+}) {
+  const targeted = options.canonicalKey !== undefined;
+  const scopePredicate = targeted
+    ? "and ga.canonical_key = $2"
+    : `and not exists (
+         select 1
+           from jsonb_array_elements_text($2::jsonb) as active(canonical_key)
+          where active.canonical_key = ga.canonical_key
+       )`;
+  const scopeValue = targeted
+    ? options.canonicalKey
+    : JSON.stringify(options.activeCanonicalKeys ?? []);
+  const result = await query<RetirableGitHubApplicationRow>(
+    `select ga.id::text,
+            ga.canonical_key,
+            ga.title,
+            ga.applicant_name,
+            ga.github_issue_number::text,
+            ga.github_issue_url,
+            ga.github_state,
+            ga.normalized_status,
+            ga.requested_amount_usd::text,
+            ga.match_confidence::text,
+            coalesce(ga.source_summary, '{}'::jsonb)::text as source_summary
+       from grant_applications ga
+      where ga.canonical_key like 'github:%'
+        and ga.source_summary->>'generatedBy' = $1
+        ${scopePredicate}
+      order by ga.canonical_key`,
+    [generatedBy, scopeValue]
+  );
+
+  return result.rows;
+}
+
+function retirementApplicationInput(
+  row: RetirableGitHubApplicationRow,
+  context: ReconciliationContext,
+  reason: GitHubApplicationRetirementReason
+): ApplicationInput {
+  const sourceSummary = parseJsonRecord(row.source_summary);
+  const priorRetirement =
+    sourceSummary.retirement &&
+    typeof sourceSummary.retirement === "object" &&
+    !Array.isArray(sourceSummary.retirement)
+      ? (sourceSummary.retirement as Record<string, unknown>)
+      : {};
+  const githubSourceId = row.canonical_key.slice("github:".length);
+  const retiredAt = stringValue(priorRetirement.retiredAt) ?? context.observedAt;
+  const previousStatus = stringValue(priorRetirement.previousStatus) ?? row.normalized_status;
+
+  return {
+    canonicalKey: row.canonical_key,
+    title: row.title,
+    applicantName: row.applicant_name,
+    githubIssueNumber: numberValue(row.github_issue_number),
+    githubIssueUrl: row.github_issue_url,
+    githubState: row.github_state,
+    normalizedStatus: "unknown",
+    requestedAmountUsd: numberValue(row.requested_amount_usd),
+    matchConfidence: numberValue(row.match_confidence) ?? 0,
+    sourceSummary: {
+      ...sourceSummary,
+      generatedBy,
+      reconciliationState: "retired",
+      retirement: {
+        githubSourceId,
+        reason,
+        retiredAt,
+        previousStatus
+      }
+    },
+    statusEvidence: {
+      provenance: "observed",
+      effectiveAt: null,
+      effectiveDate: null,
+      confidence: 1,
+      sourceRecordId: null,
+      sourceKind: "canonical_reconciliation",
+      sourceId: githubSourceId,
+      sourceUrl: row.github_issue_url,
+      sourceChecksumSha256: null,
+      sourceField: "source_availability",
+      evidenceLocator: `canonical:${row.canonical_key}:retirement`,
+      evidence: {
+        basis: "github_application_retirement",
+        reason,
+        previousStatus
+      }
+    }
+  };
+}
+
+async function retireGeneratedGitHubApplications(
+  rows: RetirableGitHubApplicationRow[],
+  context: ReconciliationContext,
+  reasonForRow: (row: RetirableGitHubApplicationRow) => GitHubApplicationRetirementReason
+) {
+  if (!rows.length) {
+    return { applicationIds: [] as string[], grantsDeleted: 0 };
+  }
+
+  const inputs = rows.map((row) => retirementApplicationInput(row, context, reasonForRow(row)));
+  const idsByCanonicalKey = await bulkUpsertApplications(inputs, context);
+  const applicationIds = inputs.map((input) => {
+    const applicationId = idsByCanonicalKey.get(input.canonicalKey);
+
+    if (!applicationId) {
+      throw new Error(`Failed to retire generated GitHub application ${input.canonicalKey}`);
+    }
+
+    return applicationId;
+  });
+
+  for (const applicationId of applicationIds) {
+    await clearTargetedGeneratedState(applicationId);
+  }
+
+  const grantsDeleted = await deleteGrantsForUnfundedProcessedApplications(
+    applicationIds.map((applicationId) => ({ applicationId, normalizedStatus: "unknown" }))
+  );
+  await replaceApplicationGithubLabels(applicationIds, []);
+
+  return { applicationIds, grantsDeleted };
+}
+
 async function deleteLegacySheetOnlyApplications() {
   await query(
     `delete from grants
@@ -2070,6 +2362,193 @@ async function deleteMatchedHistoricalRegistryApplications(matchedHistoricalKeys
       where ga.canonical_key = stale.canonical_key`,
     [JSON.stringify(payload)]
   );
+}
+
+function planGitHubApplication(params: {
+  app: GitHubApplication;
+  githubComments: RawSourceRecord[];
+  historicalGroups: Map<string, HistoricalApplicationGroup>;
+  historicalByGitHubIssueNumber: Map<number, HistoricalApplicationGroup>;
+  paymentDetailGroups: Map<string, SheetProjectGroup>;
+  hasHistoricalRegistry: boolean;
+}): PlannedGitHubApplicationResult {
+  const {
+    app,
+    githubComments,
+    historicalGroups,
+    historicalByGitHubIssueNumber,
+    paymentDetailGroups,
+    hasHistoricalRegistry
+  } = params;
+  const historicalMatch = hasHistoricalRegistry
+    ? bestHistoricalApplicationMatch(app, historicalGroups, historicalByGitHubIssueNumber)
+    : null;
+  const paymentMatch = historicalMatch
+    ? bestPaymentDetailMatchForHistoricalApplication(historicalMatch.group, paymentDetailGroups)
+    : bestPaymentDetailMatch(app, paymentDetailGroups);
+  const sourceStatus = historicalMatch?.group.status ?? paymentMatch?.group.status ?? null;
+  const sheetStatus = sourceStatus ? statusFromSheet(sourceStatus) : null;
+  const normalizedStatus = resolveCanonicalStatus(sheetStatus, statusFromGitHub(app));
+  const requestedAmountUsd =
+    app.requestedAmountUsd ??
+    paymentMatch?.group.requestedAmountUsd ??
+    historicalMatch?.group.amountFunded2021 ??
+    null;
+  const matchConfidence = Math.max(historicalMatch?.confidence ?? 0, paymentMatch?.confidence ?? 0);
+  const planned: PlannedApplication = {
+    application: {
+      canonicalKey: `github:${app.sourceRecord.source_id}`,
+      title: app.displayTitle,
+      applicantName: app.applicantName ?? historicalMatch?.group.applicantName ?? paymentMatch?.group.grantee ?? null,
+      githubIssueNumber: app.issueNumber,
+      githubIssueUrl: app.issueUrl,
+      githubState: app.state,
+      normalizedStatus,
+      requestedAmountUsd,
+      matchConfidence,
+      sourceSummary: {
+        generatedBy,
+        githubSourceId: app.sourceRecord.source_id,
+        githubLabels: app.labels,
+        githubCommentCount: githubComments.length,
+        historicalRegistryProject: historicalMatch?.group.title ?? null,
+        historicalRegistryApplicant: historicalMatch?.group.applicantName ?? null,
+        historicalRegistryStatus: historicalMatch?.group.status ?? null,
+        historicalRegistrySubmittedDate: historicalMatch?.group.submittedDate ?? null,
+        historicalRegistryDecisionDate: historicalMatch?.group.decisionDate ?? null,
+        historicalRegistryGrantPlatformLink: historicalMatch?.group.grantPlatformLink ?? null,
+        historicalRegistryLegacyProposalUrl: historicalMatch?.group.legacyProposalUrl ?? null,
+        historicalRegistryForumUrl: historicalMatch?.group.forumUrl ?? null,
+        historicalRegistryRowCount: historicalMatch?.group.rows.length ?? 0,
+        sheetProject: paymentMatch?.group.project ?? null,
+        sheetRowCount: paymentMatch?.group.rows.length ?? 0,
+        sheetCategory: paymentMatch?.group.category ?? null,
+        sheetPaidAmountUsd: paymentMatch?.group.paidAmountUsd ?? null
+      }
+    },
+    links: [
+      { sourceRecordId: app.sourceRecord.id, confidence: 1 },
+      ...githubComments.map((record) => ({ sourceRecordId: record.id, confidence: 1 }))
+    ],
+    githubLabels: githubLabelsFromApplication(app),
+    forumLinks: mergeForumLinks([app.sourceRecord, ...githubComments]),
+    grant: null,
+    issues: []
+  };
+  let unmatchedGitHubApplications = 0;
+
+  if (historicalMatch) {
+    for (const row of historicalMatch.group.rows) {
+      planned.links.push({ sourceRecordId: row.id, confidence: historicalMatch.confidence });
+    }
+
+    planned.forumLinks = mergeForumLinks([app.sourceRecord, ...githubComments, ...historicalMatch.group.rows]);
+
+    if (historicalMatch.confidence < 0.92) {
+      planned.issues.push({
+        issueType: "low_confidence_historical_registry_match",
+        severity: "warning",
+        sourceRecordId: app.sourceRecord.id,
+        summary: `Review possible All Grants registry match for ${app.displayTitle}`,
+        details: {
+          githubTitle: app.title,
+          historicalRegistryTitle: historicalMatch.group.title,
+          confidence: historicalMatch.confidence
+        }
+      });
+    }
+  } else if (hasHistoricalRegistry) {
+    unmatchedGitHubApplications += 1;
+    planned.issues.push({
+      issueType: "missing_historical_registry_match",
+      severity: "warning",
+      sourceRecordId: app.sourceRecord.id,
+      summary: `No All Grants registry match found for ${app.displayTitle}`,
+      details: {
+        githubTitle: app.title,
+        issueNumber: app.issueNumber,
+        issueUrl: app.issueUrl
+      }
+    });
+  }
+
+  if (paymentMatch) {
+    planned.forumLinks = mergeForumLinks([
+      app.sourceRecord,
+      ...githubComments,
+      ...(historicalMatch?.group.rows ?? []),
+      ...paymentMatch.group.rows
+    ]);
+
+    for (const row of paymentMatch.group.rows) {
+      planned.links.push({ sourceRecordId: row.id, confidence: paymentMatch.confidence });
+    }
+
+    if (isFundedGrantStatus(normalizedStatus)) {
+      planned.grant = {
+        title: app.displayTitle,
+        granteeName: paymentMatch.group.grantee ?? historicalMatch?.group.applicantName ?? app.applicantName,
+        status: normalizedStatus,
+        approvedAmountUsd: paymentMatch.group.requestedAmountUsd ?? historicalMatch?.group.amountFunded2021 ?? null
+      };
+    }
+
+    if (paymentMatch.confidence < 0.92) {
+      planned.issues.push({
+        issueType: "low_confidence_payment_detail_match",
+        severity: "warning",
+        sourceRecordId: app.sourceRecord.id,
+        summary: `Review possible payment/detail Sheet match for ${app.displayTitle}`,
+        details: {
+          githubTitle: app.title,
+          sheetProject: paymentMatch.group.project,
+          confidence: paymentMatch.confidence
+        }
+      });
+    }
+  } else if (historicalMatch && isFundedGrantStatus(normalizedStatus)) {
+    planned.grant = {
+      title: app.displayTitle,
+      granteeName: historicalMatch.group.applicantName ?? app.applicantName,
+      status: normalizedStatus,
+      approvedAmountUsd: historicalMatch.group.amountFunded2021
+    };
+  } else if (!hasHistoricalRegistry) {
+    unmatchedGitHubApplications += 1;
+    planned.issues.push({
+      issueType: "missing_sheet_match",
+      severity: "info",
+      sourceRecordId: app.sourceRecord.id,
+      summary: `No Sheet project match found for ${app.displayTitle}`,
+      details: {
+        githubTitle: app.title,
+        issueNumber: app.issueNumber,
+        issueUrl: app.issueUrl
+      }
+    });
+  }
+
+  if (app.state === "open" && ["completed", "cancelled", "declined", "withdrawn", "filtered"].includes(normalizedStatus)) {
+    planned.issues.push({
+      issueType: "status_conflict",
+      severity: "warning",
+      sourceRecordId: app.sourceRecord.id,
+      summary: `GitHub is open but source status is ${sourceStatus}`,
+      details: {
+        githubState: app.state,
+        sourceStatus,
+        normalizedStatus
+      }
+    });
+  }
+
+  return {
+    planned,
+    matchedHistoricalKey: historicalMatch?.group.key ?? null,
+    matchedPaymentDetailKey: paymentMatch?.group.key ?? null,
+    matchedHistoricalApplication: Boolean(historicalMatch),
+    unmatchedGitHubApplications
+  };
 }
 
 async function performGrantReconciliation(
@@ -2131,6 +2610,22 @@ async function performGrantReconciliation(
     unmatchedGitHubApplications: 0,
     unmatchedSheetProjects: 0
   };
+  const activeGitHubCanonicalKeys = githubApplications.map(
+    (application) => `github:${application.sourceRecord.source_id}`
+  );
+  const mirroredGitHubSourceIds = new Set(githubRecords.map((record) => record.source_id));
+  const retiredApplications = await retireGeneratedGitHubApplications(
+    await fetchGeneratedGitHubApplicationsForRetirement({
+      activeCanonicalKeys: activeGitHubCanonicalKeys
+    }),
+    context,
+    (row) =>
+      mirroredGitHubSourceIds.has(row.canonical_key.slice("github:".length))
+        ? "source_is_not_grant_application"
+        : "missing_or_tombstoned_source"
+  );
+  counts.applicationsCreatedOrUpdated += retiredApplications.applicationIds.length;
+  counts.grantsDeleted += retiredApplications.grantsDeleted;
   const plannedApplications: PlannedApplication[] = [];
   const orphanIssues: ReconciliationIssueInput[] = [];
 
@@ -2573,7 +3068,7 @@ async function performGrantReconciliation(
     }
   }
 
-  counts.grantsDeleted = await deleteGrantsForUnfundedProcessedApplications(processedApplicationStatuses);
+  counts.grantsDeleted += await deleteGrantsForUnfundedProcessedApplications(processedApplicationStatuses);
   counts.grantsCreatedOrUpdated = await bulkUpsertGrants(grants);
   counts.githubLabelsCreatedOrUpdated = await replaceApplicationGithubLabels(
     [...applicationIds.values()],
@@ -2605,6 +3100,170 @@ async function performGrantReconciliation(
   return counts;
 }
 
+async function retireTargetedGitHubApplication(
+  githubSourceId: string,
+  context: ReconciliationContext,
+  reason: GitHubApplicationRetirementReason
+): Promise<TargetedGitHubReconciliationResult> {
+  const retired = await retireGeneratedGitHubApplications(
+    await fetchGeneratedGitHubApplicationsForRetirement({
+      canonicalKey: `github:${githubSourceId}`
+    }),
+    context,
+    () => reason
+  );
+
+  if (retired.applicationIds.length) {
+    await applyManualSourceLinkDecisions();
+
+    for (const applicationId of retired.applicationIds) {
+      await query(
+        `insert into audit_events (action, target_type, target_id, metadata)
+         values ('reconciliation.grants.targeted_retired', 'grant_application', $1, $2::jsonb)`,
+        [
+          applicationId,
+          JSON.stringify({
+            githubSourceId,
+            reason,
+            syncRunId: context.syncRunId,
+            reconciliationRunId: context.reconciliationRunId
+          })
+        ]
+      );
+    }
+  }
+
+  return {
+    ok: true,
+    requiresFullReconciliation: true,
+    reason,
+    githubSourceId,
+    applicationIds: retired.applicationIds,
+    discoveredForumUrls: []
+  };
+}
+
+async function performTargetedGitHubReconciliation(
+  githubSourceId: string,
+  context: ReconciliationContext
+): Promise<TargetedGitHubReconciliationResult> {
+  const sourceRecord = await fetchTargetedGitHubSourceRecord(githubSourceId);
+
+  if (!sourceRecord || isTombstonedGitHubSource(sourceRecord)) {
+    return retireTargetedGitHubApplication(
+      githubSourceId,
+      context,
+      "missing_or_tombstoned_source"
+    );
+  }
+
+  const app = parseGitHubApplication(sourceRecord);
+
+  if (!app) {
+    return retireTargetedGitHubApplication(
+      githubSourceId,
+      context,
+      "source_is_not_grant_application"
+    );
+  }
+
+  const [githubComments, sheetRecords] = await Promise.all([
+    fetchTargetedGitHubCommentRecords(githubSourceId),
+    fetchSourceRecords("google_sheet_row")
+  ]);
+  const historicalGroups = buildHistoricalApplicationGroups(sheetRecords);
+  const paymentDetailGroups = buildPaymentDetailGroups(sheetRecords);
+  const planResult = planGitHubApplication({
+    app,
+    githubComments,
+    historicalGroups,
+    historicalByGitHubIssueNumber: buildHistoricalApplicationsByGitHubIssue(historicalGroups.values()),
+    paymentDetailGroups,
+    hasHistoricalRegistry: historicalGroups.size > 0
+  });
+  const { planned } = planResult;
+  const sourceRecordsById = new Map(
+    [sourceRecord, ...githubComments, ...sheetRecords].map((record) => [record.id, record])
+  );
+  planned.application.statusEvidence = statusEvidenceForPlannedApplication(planned, sourceRecordsById);
+
+  const applicationIdsByKey = await bulkUpsertApplications([planned.application], context);
+  const applicationId = applicationIdsByKey.get(planned.application.canonicalKey);
+
+  if (!applicationId) {
+    throw new Error(`Failed to upsert targeted grant application ${planned.application.canonicalKey}`);
+  }
+
+  const forumSourceIds = await bulkUpsertForumSourceRecords(planned.forumLinks);
+  await clearTargetedGeneratedState(applicationId);
+
+  if (planned.grant) {
+    await bulkUpsertGrants([{ ...planned.grant, applicationId }]);
+  } else {
+    await query(`delete from grants where application_id = $1`, [applicationId]);
+  }
+
+  await replaceApplicationGithubLabels(
+    [applicationId],
+    planned.githubLabels.map((label) => ({ ...label, applicationId }))
+  );
+
+  const links: SourceLinkInput[] = planned.links.map((link) => ({
+    ...link,
+    canonicalId: applicationId
+  }));
+
+  for (const forumLink of planned.forumLinks) {
+    const forumSourceId = forumSourceIds.get(forumLink.url);
+
+    if (forumSourceId) {
+      links.push({
+        sourceRecordId: forumSourceId,
+        canonicalId: applicationId,
+        confidence: 1,
+        relationshipRole: forumLink.relationshipRole
+      });
+    }
+  }
+
+  await bulkLinkSources(links);
+  await bulkCreateIssues(
+    planned.issues.map((issue) => ({
+      ...issue,
+      canonicalId: applicationId
+    }))
+  );
+  await applyManualSourceLinkDecisions();
+
+  const discoveredForumUrls = [...new Set(planned.forumLinks.map((link) => link.url))].sort();
+  const applicationIds = [applicationId];
+
+  await query(
+    `insert into audit_events (action, target_type, target_id, metadata)
+     values ('reconciliation.grants.targeted_completed', 'grant_application', $1, $2::jsonb)`,
+    [
+      applicationId,
+      JSON.stringify({
+        githubSourceId,
+        applicationIds,
+        discoveredForumUrls,
+        syncRunId: context.syncRunId,
+        reconciliationRunId: context.reconciliationRunId,
+        matchedHistoricalApplication: planResult.matchedHistoricalApplication,
+        unmatchedGitHubApplications: planResult.unmatchedGitHubApplications
+      })
+    ]
+  );
+
+  return {
+    ok: true,
+    requiresFullReconciliation: false,
+    githubSourceId,
+    applicationIds,
+    discoveredForumUrls
+  };
+}
+
 export async function runGrantReconciliation(
   options: { syncRunId?: string | null } = {}
 ): Promise<ReconciliationRunResult> {
@@ -2620,13 +3279,34 @@ export async function runGrantReconciliation(
   });
 }
 
+export async function runTargetedGitHubReconciliation(options: {
+  githubSourceId: string;
+  syncRunId?: string | null;
+}): Promise<TargetedGitHubReconciliationResult> {
+  const githubSourceId = normalizedGitHubSourceId(options.githubSourceId);
+  const reconciliationRunId = randomUUID();
+  const context: ReconciliationContext = {
+    reconciliationRunId,
+    syncRunId: options.syncRunId ?? null,
+    observedAt: new Date().toISOString()
+  };
+
+  return withGrantReconciliationLease(
+    () => performTargetedGitHubReconciliation(githubSourceId, context),
+    { ownerId: reconciliationRunId }
+  );
+}
+
 export const grantReconciliationTestHooks = {
   acquireGrantReconciliationLease,
+  clearTargetedGeneratedState,
   deleteGrantsForUnfundedProcessedApplications,
+  fetchGeneratedGitHubApplicationsForRetirement,
   grantReconciliationLeaseKey,
   grantReconciliationLeaseMinutes,
   grantReconciliationLeaseScope,
   releaseGrantReconciliationLease,
+  retirementApplicationInput,
   normalizedCalendarDate,
   resolveCanonicalStatus,
   statusEvidenceForPlannedApplication,
