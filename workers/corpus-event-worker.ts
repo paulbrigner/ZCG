@@ -588,7 +588,12 @@ async function defaultStoreMirrorResult(
     client as pg.Client,
     { syncRunId, result, snapshot }
   );
-  const counts = await upsertSourceRecords(client as pg.Client, result.records, rawSnapshotId);
+  const counts = await upsertSourceRecords(
+    client as pg.Client,
+    result.records,
+    rawSnapshotId,
+    syncRunId
+  );
   const normalizedForum = await storeNormalizedForumRecords(client as pg.Client, {
     syncRunId,
     records: result.records

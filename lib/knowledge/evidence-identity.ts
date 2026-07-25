@@ -26,14 +26,16 @@ const googleSheetRowSourceKind = "google_sheet_row";
 
 export function googleSheetRowNamespace(sourceId: string | null | undefined) {
   if (!sourceId) return null;
-  const match = sourceId.trim().match(/^(.*):row:\d+$/);
+  const match = sourceId
+    .trim()
+    .match(/^(.*):(?:row:\d+|grant-platform:[a-f0-9]{64})$/);
   return match?.[1] || null;
 }
 
 /**
- * Removes only the location-bearing row number from the generated Source line.
- * Dates, amounts, milestone numbers, URLs, and any row-like text in the payload
- * remain part of the comparison.
+ * Normalizes the generated Source line across the legacy row locator and the
+ * stable Grant Platform Link identity. Dates, amounts, milestone numbers,
+ * URLs, and any row-like text in the payload remain part of the comparison.
  */
 export function normalizeGoogleSheetEvidenceLocation(
   content: string | null | undefined,

@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { parse } from "csv-parse/sync";
 import type {
   GoogleSheetMirrorConfig,
@@ -7,10 +8,65 @@ import type {
 } from "./types";
 
 const DEFAULT_SHEET_ID = "1FQ28rDCyRW0TiNxrm3rgD8ai2KGUsXAjPieQmI1kKKg";
+const ALL_GRANTS_TAB_NAME = "all_grants_tracking";
 const DEFAULT_TABS: GoogleSheetTabConfig[] = [
-  { name: "all_grants_tracking", gid: "1164534734" },
-  { name: "milestone_details", gid: "803214474" }
+  {
+    name: ALL_GRANTS_TAB_NAME,
+    gid: "1164534734",
+    rowIdentity: "grant_platform_link"
+  },
+  {
+    name: "milestone_details",
+    gid: "803214474",
+    rowIdentity: "sheet_row_location"
+  }
 ];
+const GRANT_PLATFORM_LINK_FIELD = "Grant Platform Link";
+
+function normalizedHeader(value: string) {
+  return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+function rowField(row: Record<string, string>, field: string) {
+  const expected = normalizedHeader(field);
+  const entry = Object.entries(row).find(([key]) => normalizedHeader(key) === expected);
+  return entry?.[1]?.trim() ?? "";
+}
+
+function rowIdentityForTab(
+  tab: GoogleSheetTabConfig
+): NonNullable<GoogleSheetTabConfig["rowIdentity"]> {
+  if (tab.rowIdentity) {
+    return tab.rowIdentity;
+  }
+
+  // Preserve the existing environment-variable format while binding stable
+  // identity to the configured All Grants dataset, not to incidental headers.
+  return normalizedHeader(tab.name) === normalizedHeader(ALL_GRANTS_TAB_NAME)
+    ? "grant_platform_link"
+    : "sheet_row_location";
+}
+
+/**
+ * Grant Platform Link is treated as an opaque business identifier. Trimming
+ * and a trailing-slash normalization avoid accidental identity churn without
+ * applying URL semantics to legacy values such as "NA".
+ */
+export function normalizeGrantPlatformIdentifier(value: string) {
+  return value.trim().replace(/\/+$/, "");
+}
+
+export function grantPlatformSourceId(
+  sheetId: string,
+  gid: string,
+  businessIdentifier: string
+) {
+  const digest = crypto
+    .createHash("sha256")
+    .update(normalizeGrantPlatformIdentifier(businessIdentifier))
+    .digest("hex");
+  return `${sheetId}:${gid}:grant-platform:${digest}`;
+}
 
 function configuredTabs(config?: GoogleSheetMirrorConfig): GoogleSheetTabConfig[] {
   if (config?.tabs?.length) {
@@ -95,6 +151,44 @@ export async function mirrorGoogleSheetTabs(
 
     const headers = rows[0] ? Object.keys(rows[0]) : [];
     const tabUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/edit?gid=${tab.gid}`;
+    const rowIdentity = rowIdentityForTab(tab);
+    const hasGrantPlatformLinkHeader = headers.some(
+      (header) => normalizedHeader(header) === normalizedHeader(GRANT_PLATFORM_LINK_FIELD)
+    );
+    const businessIdentifierRows = new Map<string, number>();
+
+    if (rowIdentity === "grant_platform_link" && !hasGrantPlatformLinkHeader) {
+      throw new Error(
+        `Google Sheet tab ${tab.name} is configured to use ${GRANT_PLATFORM_LINK_FIELD} identity, ` +
+        "but that column is missing."
+      );
+    }
+
+    if (rowIdentity === "grant_platform_link") {
+      rows.forEach((row, index) => {
+        const rowNumber = index + 2;
+        const identifier = normalizeGrantPlatformIdentifier(
+          rowField(row, GRANT_PLATFORM_LINK_FIELD)
+        );
+
+        if (!identifier) {
+          throw new Error(
+            `Google Sheet tab ${tab.name} row ${rowNumber} is missing ${GRANT_PLATFORM_LINK_FIELD}; ` +
+            "refusing to fall back to a mutable row-number identity."
+          );
+        }
+
+        const existingRowNumber = businessIdentifierRows.get(identifier);
+        if (existingRowNumber !== undefined) {
+          throw new Error(
+            `Google Sheet tab ${tab.name} has duplicate ${GRANT_PLATFORM_LINK_FIELD} ` +
+            `values at rows ${existingRowNumber} and ${rowNumber}; refusing an ambiguous mirror.`
+          );
+        }
+
+        businessIdentifierRows.set(identifier, rowNumber);
+      });
+    }
 
     records.push({
       sourceKind: "google_sheet_tab",
@@ -113,6 +207,7 @@ export async function mirrorGoogleSheetTabs(
         sheetId,
         tabName: tab.name,
         gid: tab.gid,
+        rowIdentity,
         headers,
         rowCount: rows.length
       }
@@ -120,9 +215,18 @@ export async function mirrorGoogleSheetTabs(
 
     rows.forEach((row, index) => {
       const rowNumber = index + 2;
+      const rowLocationSourceId = `${sheetId}:${tab.gid}:row:${rowNumber}`;
+      const rawBusinessIdentifier = rowIdentity === "grant_platform_link"
+        ? rowField(row, GRANT_PLATFORM_LINK_FIELD)
+        : "";
+      const businessIdentifier = rawBusinessIdentifier
+        ? normalizeGrantPlatformIdentifier(rawBusinessIdentifier)
+        : null;
       records.push({
         sourceKind: "google_sheet_row",
-        sourceId: `${sheetId}:${tab.gid}:row:${rowNumber}`,
+        sourceId: businessIdentifier
+          ? grantPlatformSourceId(sheetId, tab.gid, businessIdentifier)
+          : rowLocationSourceId,
         sourceUrl: tabUrl,
         sourceUpdatedAt: null,
         title: titleFromRow(row, rowNumber),
@@ -132,7 +236,18 @@ export async function mirrorGoogleSheetTabs(
           sheetId,
           tabName: tab.name,
           gid: tab.gid,
-          rowNumber
+          rowNumber,
+          rowLocationSourceId,
+          identityStrategy: businessIdentifier
+            ? "grant_platform_link"
+            : "sheet_row_location",
+          ...(businessIdentifier
+            ? {
+                businessIdentifierField: GRANT_PLATFORM_LINK_FIELD,
+                businessIdentifier,
+                businessIdentifierRaw: rawBusinessIdentifier
+              }
+            : {})
         }
       });
     });
@@ -140,6 +255,7 @@ export async function mirrorGoogleSheetTabs(
     rawTabs.push({
       name: tab.name,
       gid: tab.gid,
+      rowIdentity,
       rowCount: rows.length,
       headers,
       rows

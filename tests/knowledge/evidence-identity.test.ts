@@ -89,6 +89,47 @@ test("Sheet namespace and content normalization remove only the row location", (
   assert.match(normalized ?? "", /issues\/765/);
 });
 
+test("legacy All Grants evidence remains current after the stable identity cutover", () => {
+  const legacyId = sourceId(allGrantsGid, 277);
+  const stableId =
+    `${sheetId}:${allGrantsGid}:grant-platform:${"a".repeat(64)}`;
+  const lines = [
+    "Proposal Title: Developer Relations Engineer",
+    "Applicant(s): Pacu",
+    "Grant Platform Link: https://zcashgrants.org/gallery/example",
+    "Grant Status: Approved"
+  ];
+  const legacyContent = [
+    "Grant application: Example grant",
+    `Source: google_sheet_row:${legacyId}`,
+    ...lines
+  ].join("\n");
+  const stableContent = [
+    "Grant application: Example grant",
+    `Source: google_sheet_row:${stableId}`,
+    ...lines
+  ].join("\n");
+
+  assert.equal(googleSheetRowNamespace(stableId), `${sheetId}:${allGrantsGid}`);
+  assert.equal(
+    normalizeGoogleSheetEvidenceLocation(legacyContent, legacyId),
+    normalizeGoogleSheetEvidenceLocation(stableContent, stableId)
+  );
+  assert.deepEqual(
+    resolveGrantAnalysisEvidenceChanges(
+      [savedEvidence({
+        sourceId: legacyId,
+        contentSnapshot: legacyContent
+      })],
+      [currentEvidence({
+        sourceId: stableId,
+        content: stableContent
+      })]
+    ),
+    ["current"]
+  );
+});
+
 test("an unchanged Sheet row move remains current", () => {
   assert.deepEqual(
     resolveGrantAnalysisEvidenceChanges([savedEvidence()], [currentEvidence()]),

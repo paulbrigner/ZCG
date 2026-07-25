@@ -1228,11 +1228,11 @@
       "updated_at": "2026-07-08 13:35:22.159881+00"
     },
     {
-      "decision_key": "manual:link_source:c94762a7378d7f684dc61077",
+      "decision_key": "manual:link_source:867ae3ef708dda2c7fe9106b",
       "decision_type": "link_source",
       "status": "active",
       "source_kind": "google_sheet_row",
-      "source_id": "1FQ28rDCyRW0TiNxrm3rgD8ai2KGUsXAjPieQmI1kKKg:1164534734:row:277",
+      "source_id": "1FQ28rDCyRW0TiNxrm3rgD8ai2KGUsXAjPieQmI1kKKg:1164534734:grant-platform:b50902fe2b56d782c8b5eac3c537471061b42870ae3e84d9b46dbaad47de8133",
       "canonical_type": "grant_application",
       "canonical_key": "github:ZcashCommunityGrants/zcashcommunitygrants#18",
       "related_canonical_key": null,
@@ -1241,16 +1241,20 @@
       "field_value": null,
       "rationale": "Corrected durable source link: All Grants sheet row 277 belongs with GitHub issue #18. The earlier manual decision captured the right row and canonical application but used the wrong source kind; this decision records the source as a google_sheet_row so it can be replayed after reconciliation rebuilds.",
       "confidence": "1.0000",
-      "evidence": {},
+      "evidence": {
+        "legacySourceId": "1FQ28rDCyRW0TiNxrm3rgD8ai2KGUsXAjPieQmI1kKKg:1164534734:row:277",
+        "businessIdentifier": "https://zcashgrants.org/gallery/25215916-53ea-4041-a3b2-6d00c487917d/47056927/",
+        "stableIdentityMigration": "grant_platform_link_v1"
+      },
       "created_at": "2026-07-08 13:50:00.410954+00",
       "updated_at": "2026-07-08 13:50:00.410954+00"
     },
     {
-      "decision_key": "manual:link_source:5f1bacb5a1a702557bb49704",
+      "decision_key": "manual:link_source:2d6ac29e952ffabb5c2c2d1f",
       "decision_type": "link_source",
       "status": "active",
       "source_kind": "google_sheet_row",
-      "source_id": "1FQ28rDCyRW0TiNxrm3rgD8ai2KGUsXAjPieQmI1kKKg:1164534734:row:322",
+      "source_id": "1FQ28rDCyRW0TiNxrm3rgD8ai2KGUsXAjPieQmI1kKKg:1164534734:grant-platform:0c1b5794bfd22673f9c50fcb26a9d2b5ee5dadc811c7069870d09225a1f6f722",
       "canonical_type": "grant_application",
       "canonical_key": "github:ZcashCommunityGrants/zcashcommunitygrants#24",
       "related_canonical_key": null,
@@ -1259,16 +1263,20 @@
       "field_value": null,
       "rationale": "Corrected durable source link: All Grants sheet row 322 belongs with GitHub issue #24. The earlier manual decision captured the right row and canonical application but used the wrong source kind; this decision records the source as a google_sheet_row so it can be replayed after reconciliation rebuilds.",
       "confidence": "1.0000",
-      "evidence": {},
+      "evidence": {
+        "legacySourceId": "1FQ28rDCyRW0TiNxrm3rgD8ai2KGUsXAjPieQmI1kKKg:1164534734:row:322",
+        "businessIdentifier": "https://github.com/ZcashCommunityGrants/zcashcommunitygrants/issues/24",
+        "stableIdentityMigration": "grant_platform_link_v1"
+      },
       "created_at": "2026-07-08 13:50:01.103424+00",
       "updated_at": "2026-07-08 13:50:01.103424+00"
     },
     {
-      "decision_key": "manual:link_source:e0577d382a280d6f1d48bbf0",
+      "decision_key": "manual:link_source:6503a2fe3c32f7336f3480ed",
       "decision_type": "link_source",
       "status": "active",
       "source_kind": "google_sheet_row",
-      "source_id": "1FQ28rDCyRW0TiNxrm3rgD8ai2KGUsXAjPieQmI1kKKg:1164534734:row:518",
+      "source_id": "1FQ28rDCyRW0TiNxrm3rgD8ai2KGUsXAjPieQmI1kKKg:1164534734:grant-platform:69933f8b4c0a5df154f5375a88473a2a5c3352e42899b5caa0990b5ddde0c33d",
       "canonical_type": "grant_application",
       "canonical_key": "github:ZcashCommunityGrants/zcashcommunitygrants#243",
       "related_canonical_key": null,
@@ -1277,7 +1285,11 @@
       "field_value": null,
       "rationale": "Corrected durable source link: All Grants sheet row 518 belongs with GitHub issue #243, the replacement for abandoned issue #241. The earlier manual decision captured the right row and canonical application but used the wrong source kind; this decision records the source as a google_sheet_row so it can be replayed after reconciliation rebuilds.",
       "confidence": "1.0000",
-      "evidence": {},
+      "evidence": {
+        "legacySourceId": "1FQ28rDCyRW0TiNxrm3rgD8ai2KGUsXAjPieQmI1kKKg:1164534734:row:518",
+        "businessIdentifier": "https://github.com/ZcashCommunityGrants/zcashcommunitygrants/issues/241",
+        "stableIdentityMigration": "grant_platform_link_v1"
+      },
       "created_at": "2026-07-08 13:50:01.763686+00",
       "updated_at": "2026-07-08 13:50:01.763686+00"
     },

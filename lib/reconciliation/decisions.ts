@@ -208,7 +208,7 @@ function normalizeConfidence(value: unknown) {
   return parsed;
 }
 
-function decisionKey(input: {
+export function reconciliationDecisionKey(input: {
   decisionType: ReconciliationDecisionType;
   sourceKind: string | null;
   sourceId: string | null;
@@ -373,7 +373,7 @@ export async function createReconciliationDecision(input: ReconciliationDecision
     reconciliationIssueId: linkedIssueId
   });
 
-  const key = decisionKey({
+  const key = reconciliationDecisionKey({
     decisionType,
     sourceKind,
     sourceId,

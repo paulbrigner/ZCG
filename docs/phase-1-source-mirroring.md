@@ -32,12 +32,65 @@ Each Phase 1 run creates:
 
 - a `sync_runs` row with source, status, counts, and metadata;
 - source snapshots in S3 when `SNAPSHOT_BUCKET_NAME` is configured;
-- `source_records` rows for each mirrored source object;
+- `source_records` current projections for each mirrored source object;
+- append-only `source_record_observations` versions for every inserted,
+  changed, moved, re-keyed, or removed source state;
 - `audit_events` rows for sync completion or failure.
 
 The mirror preserves source-specific raw payloads. Canonical normalization and
 reconciliation run as explicit later workflow steps rather than being hidden
 inside the importer.
+
+## Stable Sheet identity and observation history
+
+The configured All Grants dataset uses `Grant Platform Link` identity, so its
+row records have a deterministic `sheet:gid:grant-platform:<sha256>` source ID
+derived from the trimmed cell value (with trailing slashes normalized).
+Identity strategy is part of tab configuration, not inferred from incidental
+headers; a future milestone tab can therefore contain a parent grant-link
+column without changing its row identity. A row insertion, deletion, or
+reorder changes only `metadata.rowNumber` and
+`metadata.rowLocationSourceId`; it does not transfer source identity to the
+business record now occupying an old coordinate.
+
+The importer validates every row in a dataset configured for this identity
+strategy. A missing column, blank value, or duplicate normalized value rejects
+the complete mirror before storage or authoritative pruning. The current
+public All Grants export has
+631 populated, unique values. One is the legacy literal `NA`; it is treated as
+an opaque identifier, so another `NA` would be rejected as ambiguous.
+
+The milestone-detail tab does not expose an equivalent durable row identifier,
+and some rows are content-identical. Those records remain location-addressed
+for now. Versioned observations prevent their earlier payload and locator
+states from being overwritten, but a maintainer-provided ledger-entry ID is
+still the correct long-term identity.
+
+`source_records` remains the backward-compatible current projection used by
+existing foreign keys and queries. Migration `0019` re-keys All Grants records
+in place, preserving each UUID and dependent link, milestone, knowledge, and
+report reference. It also migrates manual decisions that store textual source
+IDs. The independent observation table keeps its copied source UUID and
+identity after a current record is pruned; database triggers append a
+tombstone and prohibit updates or deletes from that history.
+
+The migration can backfill only the current pre-cutover state as version 1.
+Earlier row states that were already overwritten cannot be reconstructed from
+PostgreSQL; retained aggregate S3 snapshots remain the only possible recovery
+source for that pre-cutover history.
+
+The Sheet store and authoritative Sheet prune execute in one PostgreSQL
+transaction. Repeated byte-equivalent observations are skipped, while a
+metadata-only row move updates the current locator and creates the next
+version without changing the raw-payload checksum.
+
+A partial unique index enforces the same Sheet/business-identifier invariant
+in PostgreSQL. It also makes an accidental rollback to the old row-number
+importer fail before pruning instead of recreating duplicate legacy rows.
+Rolling the worker back intentionally still requires restoring each
+`metadata.legacySourceId` first; migration `0019` retains that reverse mapping.
+The migration also acquires the shared corpus lease and reconciliation
+advisory lock, so it aborts rather than racing an active old worker.
 
 ## Historical registry refinement
 

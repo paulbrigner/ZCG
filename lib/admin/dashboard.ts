@@ -754,25 +754,42 @@ export async function getAdminDashboard({
                    )
                    and not (
                      evidence_snapshot.source_kind = 'google_sheet_row'
-                     and evidence_snapshot.source_id ~ ':row:[0-9]+$'
+                     and evidence_snapshot.source_id ~
+                       ':(row:[0-9]+|grant-platform:[a-f0-9]{64})$'
                      and evidence_snapshot.content_snapshot is not null
                      and (
                        select count(*)
                          from grant_knowledge_documents sheet_candidate
                         where sheet_candidate.application_id = evidence_snapshot.application_id
                           and sheet_candidate.source_kind = 'google_sheet_row'
-                          and regexp_replace(sheet_candidate.source_id, ':row:[0-9]+$', '') =
-                              regexp_replace(evidence_snapshot.source_id, ':row:[0-9]+$', '')
+                          and regexp_replace(
+                                sheet_candidate.source_id,
+                                ':(row:[0-9]+|grant-platform:[a-f0-9]{64})$',
+                                ''
+                              ) =
+                              regexp_replace(
+                                evidence_snapshot.source_id,
+                                ':(row:[0-9]+|grant-platform:[a-f0-9]{64})$',
+                                ''
+                              )
                           and replace(
                                 sheet_candidate.content,
                                 'Source: google_sheet_row:' || sheet_candidate.source_id,
                                 'Source: google_sheet_row:' ||
-                                  regexp_replace(sheet_candidate.source_id, ':row:[0-9]+$', ':row:*')
+                                  regexp_replace(
+                                    sheet_candidate.source_id,
+                                    ':(row:[0-9]+|grant-platform:[a-f0-9]{64})$',
+                                    ':row:*'
+                                  )
                               ) = replace(
                                 evidence_snapshot.content_snapshot,
                                 'Source: google_sheet_row:' || evidence_snapshot.source_id,
                                 'Source: google_sheet_row:' ||
-                                  regexp_replace(evidence_snapshot.source_id, ':row:[0-9]+$', ':row:*')
+                                  regexp_replace(
+                                    evidence_snapshot.source_id,
+                                    ':(row:[0-9]+|grant-platform:[a-f0-9]{64})$',
+                                    ':row:*'
+                                  )
                               )
                      ) >= greatest(1, (
                        select count(*)
@@ -780,18 +797,34 @@ export async function getAdminDashboard({
                         where saved_peer.report_id = evidence_snapshot.report_id
                           and saved_peer.application_id = evidence_snapshot.application_id
                           and saved_peer.source_kind = 'google_sheet_row'
-                          and regexp_replace(saved_peer.source_id, ':row:[0-9]+$', '') =
-                              regexp_replace(evidence_snapshot.source_id, ':row:[0-9]+$', '')
+                          and regexp_replace(
+                                saved_peer.source_id,
+                                ':(row:[0-9]+|grant-platform:[a-f0-9]{64})$',
+                                ''
+                              ) =
+                              regexp_replace(
+                                evidence_snapshot.source_id,
+                                ':(row:[0-9]+|grant-platform:[a-f0-9]{64})$',
+                                ''
+                              )
                           and replace(
                                 saved_peer.content_snapshot,
                                 'Source: google_sheet_row:' || saved_peer.source_id,
                                 'Source: google_sheet_row:' ||
-                                  regexp_replace(saved_peer.source_id, ':row:[0-9]+$', ':row:*')
+                                  regexp_replace(
+                                    saved_peer.source_id,
+                                    ':(row:[0-9]+|grant-platform:[a-f0-9]{64})$',
+                                    ':row:*'
+                                  )
                               ) = replace(
                                 evidence_snapshot.content_snapshot,
                                 'Source: google_sheet_row:' || evidence_snapshot.source_id,
                                 'Source: google_sheet_row:' ||
-                                  regexp_replace(evidence_snapshot.source_id, ':row:[0-9]+$', ':row:*')
+                                  regexp_replace(
+                                    evidence_snapshot.source_id,
+                                    ':(row:[0-9]+|grant-platform:[a-f0-9]{64})$',
+                                    ':row:*'
+                                  )
                               )
                      ))
                    )

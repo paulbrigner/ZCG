@@ -72,6 +72,11 @@ export type GitHubMirrorConfig = {
 export type GoogleSheetTabConfig = {
   name: string;
   gid: string;
+  /**
+   * Selects the durable identity contract for rows in this configured dataset.
+   * It must not be inferred from whichever columns happen to be present.
+   */
+  rowIdentity?: "sheet_row_location" | "grant_platform_link";
 };
 
 export type GoogleSheetMirrorConfig = {

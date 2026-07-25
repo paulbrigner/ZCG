@@ -190,7 +190,11 @@ The applicant portal should come after the mirror and admin console prove value:
 
 - `sync_runs`: each import/export run, source, status, counts, started/completed timestamps, error summary.
 - `source_snapshots`: immutable reference to S3 snapshot, source kind, source ID, checksum, captured timestamp.
-- `source_records`: generic source object index with source kind, source ID, source URL, source updated timestamp, checksum.
+- `source_records`: current generic source-object projection with durable source
+  identity, source URL, source-updated timestamp, and payload checksum.
+- `source_record_observations`: append-only versions of source payload,
+  metadata, locator, snapshot, and sync provenance, including tombstones after
+  a current source record is removed.
 - `source_links`: mappings between source records and canonical records.
 - `reconciliation_issues`: unmatched records, conflicting status, missing links, duplicate candidates, amount mismatches, stale data warnings.
 - `idempotency_keys`: durable lock keys for imports, exports, and writebacks.

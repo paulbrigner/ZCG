@@ -1268,7 +1268,12 @@ async function storeMirrorResult(
     payload: result.rawPayload
   });
   const rawSnapshotId = await recordSourceSnapshot(client, { syncRunId, result, snapshot });
-  const counts = await upsertSourceRecords(client, result.records, rawSnapshotId);
+  const counts = await upsertSourceRecords(
+    client,
+    result.records,
+    rawSnapshotId,
+    syncRunId
+  );
   const normalizedForum = await storeNormalizedForumRecords(client, {
     syncRunId,
     records: result.records
@@ -1749,8 +1754,24 @@ export async function handler(event: WorkerEvent = {}) {
     const sourceSummaries: Record<string, unknown>[] = [];
 
     for (const result of results) {
-      const stored = await storeMirrorResult(client, syncRunId, result);
-      const authoritativePrune = await pruneGoogleSheetRecordsAgainstMirror(client, result);
+      let stored: Awaited<ReturnType<typeof storeMirrorResult>>;
+      let authoritativePrune: Awaited<ReturnType<typeof pruneGoogleSheetRecordsAgainstMirror>>;
+
+      if (result.sourceKind === "google_sheet") {
+        await client.query("begin");
+        try {
+          stored = await storeMirrorResult(client, syncRunId, result);
+          authoritativePrune = await pruneGoogleSheetRecordsAgainstMirror(client, result);
+          await client.query("commit");
+        } catch (error) {
+          await client.query("rollback");
+          throw error;
+        }
+      } else {
+        stored = await storeMirrorResult(client, syncRunId, result);
+        authoritativePrune = await pruneGoogleSheetRecordsAgainstMirror(client, result);
+      }
+
       const contentChecksum = googleSheetChecksums.get(result) ?? null;
       counts = addCounts(counts, stored);
       sourceSummaries.push({

@@ -22,7 +22,7 @@ ZCG to replace its current tools first.
 | --- | --- |
 | Source mirroring | GitHub issues and comments, two public ZCG Google Sheet tabs, linked Zcash Community Forum topics, and the Forum's Community Grants Updates category |
 | Source refresh | Signed GitHub and Discourse callbacks feed a buffered, deduplicated targeted-refresh queue; a lightweight public-Sheet checksum check runs every 15 minutes; the existing Admin action and daily full refresh remain the verification and recovery path |
-| Evidence preservation | Checksum-tracked source records in PostgreSQL and optional aggregate JSON snapshots in private S3 |
+| Evidence preservation | Current source projections plus append-only, versioned source observations in PostgreSQL and optional aggregate JSON snapshots in private S3 |
 | Reconciliation | Canonical applications, funded-status grant records, normalized FPF milestone/disbursement ledger rows, stale-grant cleanup when an application leaves a funded status, GitHub label normalization, source links, confidence scores, generated issues, and durable reviewer decisions |
 | Decision history | Meeting-minute topics parsed into decision sources and grant mentions with rationale, speaker notes, provenance, and review status |
 | Knowledge retrieval | PostgreSQL full-text search, pgvector embeddings, hybrid retrieval, citation-grounded answers, and application-scoped evidence packs |
@@ -120,6 +120,7 @@ flowchart LR
     subgraph evidenceStore ["Evidence storage"]
         snapshots[("S3 snapshots and source_snapshots")]
         sourceRecords[("source_records")]
+        sourceObservations[("source_record_observations")]
         runRecords[("sync_runs and audit_events")]
     end
 
@@ -149,6 +150,7 @@ flowchart LR
 
     syncWorker --> snapshots
     syncWorker --> sourceRecords
+    sourceRecords --> sourceObservations
     syncWorker --> runRecords
 
     sourceRecords --> reconcile
@@ -186,7 +188,7 @@ explicit rather than silently treated as complete coverage.
 | --- | --- | --- |
 | GitHub issues | `source_records` as `github_issue` | `grant_applications`; normalized `grant_application_github_labels`; `source_links`; possible `grants` and `reconciliation_issues` |
 | GitHub comments | `source_records` as `github_issue_comment` | Parent-application evidence; discovered Forum URLs can produce linked Forum records |
-| ZCG Google Sheet | `google_sheet_tab` and `google_sheet_row` records for the configured All Grants Tracking and ZCG Grants/milestone-detail tabs | Historical applications, funded-status grants, conservatively matched `grant_milestones` and `grant_disbursements`, source links, and reconciliation issues |
+| ZCG Google Sheet | `google_sheet_tab` and `google_sheet_row` current records plus append-only `source_record_observations`; All Grants rows use normalized `Grant Platform Link` identities while row numbers remain locators | Historical applications, funded-status grants, conservatively matched `grant_milestones` and `grant_disbursements`, source links, and reconciliation issues |
 | Forum topics discovered in GitHub or Sheet data | `source_records` as `forum_link`, including topic metadata, posts, plain text, and rendered post HTML | Primary-thread or supporting-reference `source_links`; knowledge documents |
 | Forum Community Grants Updates category | `forum_meeting_minutes` or `forum_update_topic` source records | Meeting minutes become `grant_decision_sources`, `grant_decision_mentions`, decision links, and review issues; generic update topics currently remain raw evidence |
 | Reviewer judgments | Reconciliation UI/API or portable JSON import into `reconciliation_decisions` | Link/unlink decisions, application relationships, and issue resolutions are replayed after generated reconciliation; field-override decisions are persisted but not yet applied |
@@ -197,6 +199,18 @@ Important boundaries:
 
 - The operational Google Sheet has 24 documented tabs; only two are mirrored by
   default.
+- The configured All Grants dataset derives source identity from the normalized,
+  nonblank `Grant Platform Link` cell. This identity strategy is explicit
+  dataset configuration rather than inferred from a column header. Duplicate
+  identifiers fail the mirror before any database mutation. The legacy `NA`
+  cell is retained as an opaque identifier because it is currently unique; a
+  second `NA` would fail the same duplicate guard. Row number remains mutable
+  locator metadata and does not own the current record.
+- `source_records` remains the current projection used by canonical and
+  retrieval queries. Every inserted, changed, moved, re-keyed, or removed
+  source state appends a new `source_record_observations` version. Identical
+  repeats do not create duplicate versions, and authoritative pruning cannot
+  erase the append-only history.
 - FPF assignment is authoritative for the committee-review stage. An application
   is normalized to `under_review` only when its GitHub issue has both the
   `Grant Application` and `Ready For ZCG Review` labels. A Sheet review value is
