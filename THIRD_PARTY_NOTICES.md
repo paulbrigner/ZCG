@@ -1,7 +1,7 @@
 # Third-party notices
 
-The project licenses cover only material for which this project has the right
-to grant those licenses. They do not replace the licenses, terms, or other
+The project license covers only material for which this project has the right
+to grant that license. It does not replace the licenses, terms, or other
 rights that apply to third-party material.
 
 ## OpenZcash favicon
@@ -10,7 +10,7 @@ rights that apply to third-party material.
 [`Michae2xl/openzcash`](https://github.com/Michae2xl/openzcash/blob/bd36486e94587bec6a3b346cd1c1d44e309c22ca/src/app/favicon.ico).
 It is retained under its
 [upstream MIT license](https://github.com/Michae2xl/openzcash/blob/bd36486e94587bec6a3b346cd1c1d44e309c22ca/LICENSE)
-and is not offered under this project's Apache-2.0 option.
+and is not offered under this project's AGPL-3.0-only license.
 
 MIT License
 
@@ -51,7 +51,7 @@ relicenses that material. It remains subject to the rights and terms of its
 original authors and sources.
 
 For mixed files such as `data/reconciliation-decisions.json`, the project
-licenses apply only to original project-authored portions. Imported text,
+license applies only to original project-authored portions. Imported text,
 source excerpts, and other third-party content retain their original status.
 Generated Committee Briefings and other runtime outputs are likewise not made
 open source merely by this repository's software license; rights in their
@@ -61,5 +61,5 @@ underlying source material remain unaffected.
 
 Third-party packages and bundled components retain their own licenses. Their
 license metadata is recorded in the package lock and upstream package sources;
-the project licenses do not relicense them. Distributors of built artifacts are
+the project license does not relicense them. Distributors of built artifacts are
 responsible for preserving any notices and satisfying the applicable terms.
