@@ -549,22 +549,19 @@ contains the fuller target-system argument and proposed architecture.
 ## License, Contributions, and Security
 
 Except as otherwise noted, original project-authored software, documentation,
-and other original repository materials are available under either of these
-licenses, at your option:
+and other original repository materials are licensed under the
+[GNU Affero General Public License, version 3 only](LICENSE).
 
-- [Apache License, Version 2.0](LICENSE-APACHE)
-- [MIT License](LICENSE-MIT)
+The corresponding SPDX expression is `AGPL-3.0-only`.
 
-The corresponding SPDX expression is `MIT OR Apache-2.0`.
-
-These project licenses do not relicense mirrored or imported records, grant
+This project license does not relicense mirrored or imported records, grant
 materials, source excerpts, applicant content, third-party assets, or names,
 logos, and other marks. See [Third-party notices](THIRD_PARTY_NOTICES.md) for
 the applicable boundaries and the OpenZcash favicon attribution.
 
 Unless you explicitly state otherwise, any contribution intentionally
-submitted for inclusion in this project is licensed under both the Apache-2.0
-and MIT terms above, without additional terms or conditions.
+submitted for inclusion in this project is licensed under `AGPL-3.0-only`,
+without additional terms or conditions.
 
 If you discover a security issue, do not open a public issue containing exploit
 details. Contact the repository owner privately until a formal security policy
