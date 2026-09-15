@@ -6,6 +6,7 @@ function recordFixture(params: {
   title?: string;
   plainText: string;
   fullText?: string;
+  cookedHtml?: string;
   links: Array<{ href: string; text: string }>;
 }) {
   return {
@@ -21,9 +22,11 @@ function recordFixture(params: {
       posts: [
         {
           plainText: params.plainText,
+          cookedHtml: params.cookedHtml,
           links: params.links.map((link) => ({
             ...link,
-            normalizedUrl: link.href
+            normalizedUrl: link.href,
+            ...(params.cookedHtml ? { htmlOffset: params.cookedHtml.indexOf(`<a href="${link.href}">`) } : {})
           }))
         }
       ],
@@ -148,6 +151,123 @@ test("ignores reply text when parsing a meeting decision", () => {
   );
 
   assert.equal(parsed.mentions[0]?.normalizedDecision, "declined");
+});
+
+test("keeps rejection references with their three applications instead of inventing another application", () => {
+  const titles = ["Education Initiative For Latin America", "Auto Failover Toolkit V2", "Monitoring and Observability Platform for Zcash Nodes"];
+  const urls = titles.map((_, i) => `https://forum.zcashcommunity.com/t/proposal/${53010 + i}`);
+  const policy = "https://forum.zcashcommunity.com/t/zcg-use-of-ai-and-enforcement/53408";
+  const plainText = ["ZCG Meeting: November 24, 2025", "Key Takeaways:", "Open Grants",
+    ...titles.flatMap(title => [title, "Declined"]), "Open Grant Proposals",
+    ...titles.flatMap(title => [title, "Project description.", "Rejected, see Forum post"])
+  ].join("\n\n");
+  // Include the same supporting policy reference beneath each real grant.
+  const cookedHtml = `<p>Open Grant Proposals</p><ul>${titles.map((title, i) =>
+    `<li><p><a href="${urls[i]}">${title}</a></p><ul><li>Project description.<ul><li><a href="${policy}">Rejected, see Forum post</a></li></ul></li></ul></li>`
+  ).join("")}</ul>`;
+  const fixture = recordFixture({ plainText, cookedHtml, links: [
+    ...titles.map((text, i) => ({href: urls[i], text})),
+    {href: policy, text: "Rejected, see Forum post"}
+  ] });
+  const originalPayload = fixture.raw_payload;
+  const parsed = hooks.decisionMentionsFromRecord(fixture);
+  assert.deepEqual(parsed.mentions.map(m => [m.candidateTitle, m.normalizedDecision]), titles.map(title => [title, "declined"]));
+  assert.ok(parsed.mentions.every(m => m.rationaleText?.includes("Rejected, see Forum post")));
+  assert.equal(fixture.raw_payload, originalPayload);
+});
+
+test("uses list ancestry to keep arbitrary supporting references inside the grant discussion", () => {
+  const grant = "https://forum.zcashcommunity.com/t/grant/55501";
+  const background = "https://forum.zcashcommunity.com/t/background/55502";
+  const cookedHtml = `\n <p>Open Grant Proposals</p><ul><li><a href="${grant}">Privacy Tool</a><ul><li><a href="${background}">Community feedback</a><p>The committee rejected this proposal.</p></li></ul></li></ul>`;
+  const parsed = hooks.decisionMentionsFromRecord(recordFixture({
+    cookedHtml,
+    plainText: "ZCG Meeting\nOpen Grant Proposals\nPrivacy Tool\nCommunity feedback\nThe committee rejected this proposal.",
+    links: [{href: grant, text: "Privacy Tool"}, {href: background, text: "Community feedback"}]
+  }));
+  assert.equal(parsed.mentions.length, 1);
+  assert.equal(parsed.mentions[0]?.candidateTitle, "Privacy Tool");
+  assert.equal(parsed.mentions[0]?.normalizedDecision, "declined");
+  assert.match(parsed.mentions[0]?.rationaleText ?? "", /Community feedback/);
+});
+
+test("handles decision reference labels in older snapshots without HTML", () => {
+  const parsed = hooks.decisionMentionsFromRecord(recordFixture({
+    plainText: "ZCG Meeting\nOpen Grant Proposals\nPrivacy Tool\nRejected, see Forum post",
+    links: [
+      {href: "https://forum.zcashcommunity.com/t/grant/55501", text: "Privacy Tool"},
+      {href: "https://forum.zcashcommunity.com/t/policy/55502", text: "Rejected, see Forum post"}
+    ]
+  }));
+  assert.deepEqual(parsed.mentions.map(m => [m.candidateTitle, m.normalizedDecision]), [["Privacy Tool", "declined"]]);
+});
+
+test("keeps an async outcome on the application when an older snapshot links the outcome separately", () => {
+  const parsed = hooks.decisionMentionsFromRecord(recordFixture({
+    plainText: "ZCG Meeting\nKey Takeaways:\nOpen Grants\nPrivacy Tool\nDeclined asnyc",
+    links: [
+      {href: "https://forum.zcashcommunity.com/t/grant/55501", text: "Privacy Tool"},
+      {href: "https://forum.zcashcommunity.com/t/grant/55501/2", text: "Declined asnyc"}
+    ]
+  }));
+  assert.deepEqual(parsed.mentions.map(m => [m.candidateTitle, m.normalizedDecision]), [["Privacy Tool", "declined"]]);
+});
+
+test("retains legacy Forum discussion links that identify the application", () => {
+  const parsed = hooks.decisionMentionsFromRecord(recordFixture({
+    plainText: "ZOMG Meeting\nOpen Grant Proposals\nEternity Protocol\nForum discussion\nThe committee rejected this proposal.",
+    links: [{href: "https://forum.zcashcommunity.com/t/proposal-to-fund-eternity-protocol/40822", text: "Forum discussion"}]
+  }));
+  assert.equal(parsed.mentions.length, 1);
+  assert.equal(parsed.mentions[0]?.normalizedDecision, "declined");
+});
+
+test("separates administrative follow-ups without losing real grant amendments or named RFP responses", () => {
+  const titles = ["Main Proposal", "FPF/ZecHub Bounty Grant", "RFP – Node Infrastructure Response", "RFP posted on the forum"];
+  const parsed = hooks.decisionMentionsFromRecord(recordFixture({
+    plainText: ["ZCG Meeting", "Key Takeaways:", "Open Grants", "Main Proposal", "Remains open",
+      "Brainstorm Session Follow-Ups", "FPF/ZecHub Bounty Grant - ZCG approved this proposal.",
+      "Open Grant Proposals", "Main Proposal", "Needs further investigation.",
+      "Brainstorm Session Follow-Ups", "FPF/ZecHub Bounty Grant", "ZCG voted via Signal to approve 550 ZEC.",
+      "RFP – Node Infrastructure Response", "The proposal was approved.",
+      "Community Notetaker", "RFP posted on the forum", "Responses due March 14th", "Three responses received thus far."
+    ].join("\n\n"),
+    links: titles.map((text, i) => ({href: `https://forum.zcashcommunity.com/t/topic/${55600+i}`, text}))
+  }));
+  const byTitle = new Map(parsed.mentions.map(m => [m.candidateTitle, m]));
+  assert.deepEqual([...byTitle.keys()], titles.slice(0, 3));
+  assert.equal(byTitle.get("FPF/ZecHub Bounty Grant")?.normalizedDecision, "approved");
+  assert.equal(byTitle.get("RFP – Node Infrastructure Response")?.normalizedDecision, "approved");
+  assert.equal(byTitle.get("Main Proposal")?.normalizedDecision, "remains_open");
+  assert.doesNotMatch(byTitle.get("Main Proposal")?.rationaleText ?? "", /Brainstorm|550 ZEC|Notetaker/);
+});
+
+test("does not borrow a later administrative rejection or a previous meeting's approval", () => {
+  const parsed = hooks.decisionMentionsFromRecord(recordFixture({
+    plainText: ["ZCG Meeting", "Open Grant Proposals", "UniFFI Library Addendum",
+      "Last meeting, four members of the committee voted to approve this grant.",
+      "The committee will discuss the revised proposal at their next brainstorm meeting.",
+      "Brainstorm Session Follow Ups", "Promotional Merch Request", "The committee rejected this request."
+    ].join("\n\n"),
+    links: [{href: "https://forum.zcashcommunity.com/t/uniffi/44904", text: "UniFFI Library Addendum"}]
+  }));
+  assert.equal(parsed.mentions[0]?.normalizedDecision, "unknown");
+  assert.doesNotMatch(parsed.mentions[0]?.rationaleText ?? "", /Promotional Merch|rejected/);
+});
+
+test("retains grouped title-only proposals when administrative follow-ups are removed", () => {
+  const titles = ["ZecHub 2025: An Education Hub For Zcash", "Zcash Brazil 2025", "Zcash Global en Espanol 2025", "ZK AV Club Community Support"];
+  const parsed = hooks.decisionMentionsFromRecord(recordFixture({
+    title: "Zcash Community Grants Meeting Minutes 12/9/2024",
+    plainText: ["ZCG Meeting", "Key Takeaways:", "Open Grants",
+      "The following grants have been tabled until January 2025:", ...titles,
+      "Open Grant Proposals", "2025 Community Funding Programs Grants - ZCG will table these decisions until the new committee is appointed.",
+      ...titles, "Brainstorm Session Follow-Ups", "GitHub Migration - The submission form is now available."
+    ].join("\n\n"),
+    links: titles.map((text, i) => ({href: `https://forum.zcashcommunity.com/t/proposal/${55700+i}`, text}))
+  }));
+  assert.deepEqual(parsed.mentions.map(m=>m.candidateTitle),titles);
+  assert.ok(parsed.mentions.every(m=>m.normalizedDecision==='unknown' && m.rationaleText===null));
 });
 
 test("takes the meeting date from the title before unrelated body dates", () => {
