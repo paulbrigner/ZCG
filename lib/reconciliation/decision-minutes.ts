@@ -480,19 +480,21 @@ function selectSectionDecision(key: string | null, detail: string | null, title:
 
 function decisionOccurrenceDate(text: string | null, meetingDate: string | null) {
   if (!text || !meetingDate) return meetingDate;
-  if (/\blater (?:that|in the) week\b/i.test(text) && !/\bon\s/i.test(text)) return null;
-  if (!/\b(?:update:|on\s)/i.test(text)) return meetingDate;
   const date = text.match(/\bon\s+(?:[A-Za-z]+,\s+)?(?:(\d{1,2})\/(\d{1,2})(?:\/(\d{4}))?|([A-Za-z]+)\s+(\d{1,2})(?:,?\s+(20\d{2}))?)/i);
-  if (!date) return /^(?:update:|on\s)/i.test(text) ? null : meetingDate;
+  if (!date) {
+    const uncertainTiming = /\b(?:async|asnyc|asynchronous(?:ly)?|via (?:signal|email)|last (?:week|month|meeting)|previous (?:week|meeting)|yesterday|earlier|later (?:that|in the) week)\b/i.test(text);
+    return uncertainTiming || /^(?:update:|on\s)/i.test(text) ? null : meetingDate;
+  }
   const names = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
   const month = date[1] ? Number(date[1]) : names.indexOf(date[4]?.slice(0, 3).toLowerCase()) + 1;
   const day = Number(date[2] ?? date[5]);
   let year = Number(date[3] ?? date[6] ?? meetingDate.slice(0, 4));
   if (!date[3] && !date[6] && meetingDate.slice(5, 7) === "12" && month === 1) year++;
+  if (!date[3] && !date[6] && meetingDate.slice(5, 7) === "01" && month === 12) year--;
   const parsed = new Date(Date.UTC(year, month - 1, day));
   if (parsed.getUTCMonth() !== month - 1 || parsed.getUTCDate() !== day) return null;
   const delta = (parsed.getTime() - new Date(meetingDate).getTime()) / 86400000;
-  return delta >= 0 && delta <= 62 ? parsed.toISOString().slice(0, 10) : null;
+  return delta >= -62 && delta <= 62 ? parsed.toISOString().slice(0, 10) : null;
 }
 
 function extractSpeakerNotes(section: string | null | undefined) {
@@ -522,10 +524,12 @@ function trimRationale(section: string | null | undefined, title: string, decisi
   }
 
   if (decisionText) {
-    const decisionIndex = rationale.toLowerCase().lastIndexOf(decisionText.toLowerCase());
-
-    if (decisionIndex >= 0 && decisionIndex > rationale.length - decisionText.length - 200) {
-      rationale = rationale.slice(0, decisionIndex).trim();
+    const lines = rationale.split("\n");
+    const last = lines.findLastIndex(line => line.trim());
+    // Remove only a repeated complete final decision line. Commentary after
+    // the decision and sentences merely containing its words remain evidence.
+    if (last >= 0 && compactWhitespace(lines[last]).toLowerCase() === compactWhitespace(decisionText).toLowerCase()) {
+      rationale = lines.slice(0, last).join("\n").trim();
     }
   }
 

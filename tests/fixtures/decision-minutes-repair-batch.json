@@ -3235,5 +3235,97 @@
       }
     },
     "metadata": "{\"source\": \"forum_mirror\", \"topicId\": 55555, \"fetchedAt\": \"2026-09-11T07:14:13.149Z\", \"categoryId\": 34, \"mirrorKind\": \"forum_meeting_minutes\", \"coverageCapped\": false, \"postStreamCount\": 1, \"coverageComplete\": true, \"postCountFetched\": 1, \"canonicalTopicUrl\": \"https://forum.zcashcommunity.com/t/zcash-community-grants-meeting-minutes-april-27-2026/55555\", \"categorySourceUrl\": \"https://forum.zcashcommunity.com/c/grants/zomg-updates/34\", \"postCountReported\": 1, \"categorySourceKind\": \"forum_updates_category\", \"referencedPostNumber\": null}"
+  },
+  "50257": {
+    "id": "f48460a2-88f6-4c16-9084-41d0069fc4c6",
+    "source_kind": "forum_meeting_minutes",
+    "source_id": "https://forum.zcashcommunity.com/t/zcash-community-grants-meeting-minutes-2-3-25/50257",
+    "source_url": "https://forum.zcashcommunity.com/t/zcash-community-grants-meeting-minutes-2-3-25/50257",
+    "title": "Zcash Community Grants Meeting Minutes 2/3/25",
+    "summary": null,
+    "source_updated_at": "2025-02-05 14:17:54.558+00",
+    "raw_payload": {
+      "posts": [
+        {
+          "links": [
+            {
+              "href": "https://docs.google.com/spreadsheets/d/1O5fhsMswA6pq9RnamN8I32JSu5DPul9ohBq6UTSJVb0/edit?gid=7542155#gid=7542155",
+              "text": "docs.google.com",
+              "htmlOffset": 198,
+              "normalizedUrl": null
+            },
+            {
+              "href": "https://docs.google.com/spreadsheets/d/1O5fhsMswA6pq9RnamN8I32JSu5DPul9ohBq6UTSJVb0/edit?gid=7542155#gid=7542155",
+              "text": "",
+              "htmlOffset": 421,
+              "normalizedUrl": null
+            },
+            {
+              "href": "https://docs.google.com/spreadsheets/d/1O5fhsMswA6pq9RnamN8I32JSu5DPul9ohBq6UTSJVb0/edit?gid=7542155#gid=7542155",
+              "text": "Zcash Community Grants Dashboard",
+              "htmlOffset": 643,
+              "normalizedUrl": null
+            },
+            {
+              "href": "https://forum.zcashcommunity.com/t/zcash-nigeria-2025/50106",
+              "text": "Zcash Nigeria 2025",
+              "htmlOffset": 1299,
+              "normalizedUrl": "https://forum.zcashcommunity.com/t/zcash-nigeria-2025/50106"
+            },
+            {
+              "href": "https://forum.zcashcommunity.com/t/grant-application-fix-btcpay-zcash-plugin/50204",
+              "text": "Fix BTCPay Zcash Plugin",
+              "htmlOffset": 1470,
+              "normalizedUrl": "https://forum.zcashcommunity.com/t/grant-application-fix-btcpay-zcash-plugin/50204"
+            },
+            {
+              "href": "https://forum.zcashcommunity.com/t/zcash-nigeria-2025/50106",
+              "text": "Zcash Nigeria 2025",
+              "htmlOffset": 1691,
+              "normalizedUrl": "https://forum.zcashcommunity.com/t/zcash-nigeria-2025/50106"
+            },
+            {
+              "href": "https://forum.zcashcommunity.com/t/zcash-community-grants-zcg-meeting-minutes-1-20-25/50132",
+              "text": "last meeting",
+              "htmlOffset": 3105,
+              "normalizedUrl": "https://forum.zcashcommunity.com/t/zcash-community-grants-zcg-meeting-minutes-1-20-25/50132"
+            },
+            {
+              "href": "https://forum.zcashcommunity.com/t/grant-application-fix-btcpay-zcash-plugin/50204",
+              "text": "Fix BTCPay Zcash Plugin",
+              "htmlOffset": 3602,
+              "normalizedUrl": "https://forum.zcashcommunity.com/t/grant-application-fix-btcpay-zcash-plugin/50204"
+            },
+            {
+              "href": "https://forum.zcashcommunity.com/t/zingo-labs-accelerates-zcashd-deprecation/48545/59",
+              "text": "Zingo Grant Amendment",
+              "htmlOffset": 5535,
+              "normalizedUrl": "https://forum.zcashcommunity.com/t/zingo-labs-accelerates-zcashd-deprecation/48545/59"
+            }
+          ],
+          "plainText": "docs.google.com\n\n Zcash Community Grants Dashboard\n\n This Sheet is private\n\n Zcash Community Grants Committee Google Meet Meeting: February 3, 2025\n\n [Minutes taken by Alex]\n\n Attendance:\n\n Artkor\n\n Brian\n\n GGuy\n\n Jason\n\n Zerodartz\n\n Alex (FPF resource, notetaker)\n\n Key Takeaways:\n\n Open Grant Proposals\n\n Zcash Nigeria 2025\n\n Unanimous approval. Monthly updates. Community.\n\n Fix BTCPay Zcash Plugin\n\n Too early to vote.\n\n Open Grant Proposals\n\n Zcash Nigeria 2025\n\n This proposal outlines a project to expand Zcash’s presence in Nigeria by raising awareness, building a community and promoting adoption through educational content. The project aims to tackle the challenges of financial privacy awareness, merchant adoption and misconceptions about privacy coins by creating local resources, organizing meetups and engaging with businesses. Chidi is the lead. He’s a former ambassador and he’s put together a team of four members and they’re all frequent contributors to Zechub. They’re asking for $9,600 for three months to focus on content creation, community management, and hosting events. ZCG members were asked to provide their input and vote.\n\n GGuy: I am still willing to approve this, but I would like to note for the record that if the price does not recover in the near term, this might be something we or I look at being a bit more strict on funding in the future.\n\n Brian: I agree with GGuy.\n\n Artkor: I support this grant because I believe it will be good for Zcash.\n\n Zerodartz: I support this grant because these members have been active already and even though the price is lower at the moment it’s only a three month proposal and I think we should approve it.\n\n Jason: I gave my reasons for why I fully supporting this grant last meeting . I think Nigeria is an important place for Zcash and I have confidence in Chidi and his team members. I agree with what Brian and GGuy said, it’s reasonable to approve this grant for now and then monitor market conditions. If the price stays low then we may have to apply a stricter standard when considering grants.\n\n Grant is unanimously approved.\n\n Fix BTCPay Zcash Plugin\n\n Fix BTCPay Zcash Plugin grant request. Birdcalls is proposing to take over and improve the Zcash module for BTCPay server in order to address issues that prevent users without technical expertise from using it. The team plans to enhance the module and integrate it with the BTCPay Docker setup and add documentation to make it accessible for the majority of current BTCPay merchants. The total grant request is $150,000. The request supports the development work, but doesn’t include ongoing support. They say it is expected to provide significant value to the Zcash ecosystem by increasing merchant adoption. There’s been a vibrant discussion on the forum about this grant with a lot of good questions asked. It’s too early to vote on this request so ZCG members were asked for their initial thoughts.\n\n There was a free flowing discussion that focused on the following points:\n\n There is general ZCG support for funding payment infrastructure projects.\n\n Related to this specific proposal, there is hesitation related to not knowing how much actual market demand there is for this solution and concern that this isn’t the right time to prioritize this project.\n\n There is some interest in pursuing some sort of “salesperson” commission-based role as was proposed on the forum by Hanh (separate to discussing the merits of this specific grant request).\n\n There is concern that this grant only covers the implementation of the fix but does not address ongoing maintenance.\n\n The overall cost of the request seems high when compared to other grant requests.\n\n ZCG will monitor the Forum discussion and discuss further before voting next meeting.\n\n Too early to vote.\n\n Brainstorm Session Follow-Ups\n\n Zingo Grant Amendment\n\n ZCG approved this request async last week. The $4,000 has been paid.\n\n GGuy stated, I think we need to be agile and flexible with grantees so that they are agile and flexible with us.\n\n Least Authority\n\n The Ecosystem Security Lead Agreement has been extended twelve months at the same rate as the previous agreement.\n\n Both the pending invoice and the pending project plan have both been approved.\n\n ZCG members agreed that Least Authority has done a very good job so far.\n\n Community Grants\n\n ZCG’s plan is to review the first month reports from the recent Community Grants cohort and then determine how to best encourage collaboration between the grantees. Next steps in this process will be discussed at future brainstorm meetings.",
+          "cookedHtml": "<aside class=\"onebox googledocs\" data-onebox-src=\"https://docs.google.com/spreadsheets/d/1O5fhsMswA6pq9RnamN8I32JSu5DPul9ohBq6UTSJVb0/edit?gid=7542155#gid=7542155\">\n  <header class=\"source\">\n\n      <a href=\"https://docs.google.com/spreadsheets/d/1O5fhsMswA6pq9RnamN8I32JSu5DPul9ohBq6UTSJVb0/edit?gid=7542155#gid=7542155\" target=\"_blank\" rel=\"noopener\">docs.google.com</a>\n  </header>\n\n  <article class=\"onebox-body\">\n    <a href=\"https://docs.google.com/spreadsheets/d/1O5fhsMswA6pq9RnamN8I32JSu5DPul9ohBq6UTSJVb0/edit?gid=7542155#gid=7542155\" target=\"_blank\" rel=\"noopener\"><span class=\"googledocs-onebox-logo g-sheets-logo\"></span></a>\n\n<h3><a href=\"https://docs.google.com/spreadsheets/d/1O5fhsMswA6pq9RnamN8I32JSu5DPul9ohBq6UTSJVb0/edit?gid=7542155#gid=7542155\" target=\"_blank\" rel=\"noopener\">Zcash Community Grants Dashboard</a></h3>\n\n<p>This Sheet is private</p>\n\n  </article>\n\n  <div class=\"onebox-metadata\">\n    \n    \n  </div>\n\n  <div style=\"clear: both\"></div>\n</aside>\n\n<p>Zcash Community Grants Committee Google Meet Meeting: February 3, 2025</p>\n<p>[Minutes taken by Alex]</p>\n<p>Attendance:</p>\n<ul>\n<li>Artkor</li>\n<li>Brian</li>\n<li>GGuy</li>\n<li>Jason</li>\n<li>Zerodartz</li>\n<li>Alex (FPF resource, notetaker)</li>\n</ul>\n<p>Key Takeaways:</p>\n<ul>\n<li>Open Grant Proposals\n<ul>\n<li><a href=\"https://forum.zcashcommunity.com/t/zcash-nigeria-2025/50106\">Zcash Nigeria 2025</a>\n<ul>\n<li>Unanimous approval. Monthly updates. Community.</li>\n</ul>\n</li>\n<li><a href=\"https://forum.zcashcommunity.com/t/grant-application-fix-btcpay-zcash-plugin/50204\">Fix BTCPay Zcash Plugin</a>\n<ul>\n<li>Too early to vote.</li>\n</ul>\n</li>\n</ul>\n</li>\n</ul>\n<p>Open Grant Proposals</p>\n<ul>\n<li><a href=\"https://forum.zcashcommunity.com/t/zcash-nigeria-2025/50106\">Zcash Nigeria 2025</a>\n<ul>\n<li>This proposal outlines a project to expand Zcash’s presence in Nigeria by raising awareness, building a community and promoting adoption through educational content. The project aims to tackle the challenges of financial privacy awareness, merchant adoption and misconceptions about privacy coins by creating local resources, organizing meetups and engaging with businesses. Chidi is the lead. He’s a former ambassador and he’s put together a team of four members and they’re all frequent contributors to Zechub. They’re asking for $9,600 for three months to focus on content creation, community management, and hosting events. ZCG members were asked to provide their input and vote.</li>\n<li>GGuy: I am still willing to approve this, but I would like to note for the record that if the price does not recover in the near term, this might be something we or I look at being a bit more strict on funding in the future.</li>\n<li>Brian: I agree with GGuy.</li>\n<li>Artkor: I support this grant because I believe it will be good for Zcash.</li>\n<li>Zerodartz: I support this grant because these members have been active already and even though the price is lower at the moment it’s only a three month proposal and I think we should approve it.</li>\n<li>Jason: I gave my reasons for why I fully supporting this grant <a href=\"https://forum.zcashcommunity.com/t/zcash-community-grants-zcg-meeting-minutes-1-20-25/50132\">last meeting</a>. I think Nigeria is an important place for Zcash and I have confidence in Chidi and his team members. I agree with what Brian and GGuy said, it’s reasonable to approve this grant for now and then monitor market conditions. If the price stays low then we may have to apply a stricter standard when considering grants.</li>\n<li>Grant is unanimously approved.</li>\n</ul>\n</li>\n<li><a href=\"https://forum.zcashcommunity.com/t/grant-application-fix-btcpay-zcash-plugin/50204\">Fix BTCPay Zcash Plugin</a>\n<ul>\n<li>Fix BTCPay Zcash Plugin grant request. Birdcalls is proposing to take over and improve the Zcash module for BTCPay server in order to address issues that prevent users without technical expertise from using it. The team plans to enhance the module and integrate it with the BTCPay Docker setup and add documentation to make it accessible for the majority of current BTCPay merchants. The total grant request is $150,000. The request supports the development work, but doesn’t include ongoing support. They say it is expected to provide significant value to the Zcash ecosystem by increasing merchant adoption. There’s been a vibrant discussion on the forum about this grant with a lot of good questions asked. It’s too early to vote on this request so ZCG members were asked for their initial thoughts.</li>\n<li>There was a free flowing discussion that focused on the following points:\n<ul>\n<li>There is general ZCG support for funding payment infrastructure projects.</li>\n<li>Related to this specific proposal, there is hesitation related to not knowing how much actual market demand there is for this solution and concern that this isn’t the right time to prioritize this project.</li>\n<li>There is some interest in pursuing some sort of “salesperson” commission-based role as was proposed on the forum by Hanh (separate to discussing the merits of this specific grant request).</li>\n<li>There is concern that this grant only covers the implementation of the fix but does not address ongoing maintenance.</li>\n<li>The overall cost of the request seems high when compared to other grant requests.</li>\n</ul>\n</li>\n<li>ZCG will monitor the Forum discussion and discuss further before voting next meeting.</li>\n<li>Too early to vote.</li>\n</ul>\n</li>\n</ul>\n<p>Brainstorm Session Follow-Ups</p>\n<ul>\n<li><a href=\"https://forum.zcashcommunity.com/t/zingo-labs-accelerates-zcashd-deprecation/48545/59\">Zingo Grant Amendment</a>\n<ul>\n<li>ZCG approved this request async last week. The $4,000 has been paid.</li>\n<li>GGuy stated, I think we need to be agile and flexible with grantees so that they are agile and flexible with us.</li>\n</ul>\n</li>\n<li>Least Authority\n<ul>\n<li>The Ecosystem Security Lead Agreement has been extended twelve months at the same rate as the previous agreement.</li>\n<li>Both the pending invoice and the pending project plan have both been approved.</li>\n<li>ZCG members agreed that Least Authority has done a very good job so far.</li>\n</ul>\n</li>\n<li>Community Grants\n<ul>\n<li>ZCG’s plan is to review the first month reports from the recent Community Grants cohort and then determine how to best encourage collaboration between the grantees. Next steps in this process will be discussed at future brainstorm meetings.</li>\n</ul>\n</li>\n</ul>"
+        }
+      ],
+      "topic": {
+        "id": 50257,
+        "slug": "zcash-community-grants-meeting-minutes-2-3-25",
+        "tags": [],
+        "title": "Zcash Community Grants Meeting Minutes 2/3/25",
+        "views": 144,
+        "bumpedAt": null,
+        "createdAt": "2025-02-05T14:17:54.496Z",
+        "updatedAt": null,
+        "categoryId": 34,
+        "fancyTitle": "Zcash Community Grants Meeting Minutes 2/3/25",
+        "postsCount": 1,
+        "replyCount": 0,
+        "lastPostedAt": "2025-02-05T14:17:54.558Z",
+        "streamPostIds": [
+          225461
+        ]
+      }
+    },
+    "metadata": "{\"source\": \"forum_mirror\", \"topicId\": 50257, \"fetchedAt\": \"2026-08-27T07:13:10.765Z\", \"categoryId\": 34, \"mirrorKind\": \"forum_meeting_minutes\", \"coverageCapped\": false, \"postStreamCount\": 1, \"coverageComplete\": true, \"postCountFetched\": 1, \"canonicalTopicUrl\": \"https://forum.zcashcommunity.com/t/zcash-community-grants-meeting-minutes-2-3-25/50257\", \"categorySourceUrl\": \"https://forum.zcashcommunity.com/c/grants/zomg-updates/34\", \"postCountReported\": 1, \"categorySourceKind\": \"forum_updates_category\", \"referencedPostNumber\": null}"
   }
 }

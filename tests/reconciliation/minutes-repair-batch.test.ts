@@ -111,3 +111,13 @@ test("supporting and summary links cannot replace an application's own detailed 
   assert.match(english.rationaleText ?? "", /\(101\)/);
   assert.doesNotMatch(english.rationaleText ?? "", /\(102\)/);
 });
+
+test("keeps commentary after a decision and does not invent a date for an earlier async vote", () => {
+  assert.match(mention("46186", "Swapkit").rationaleText ?? "", /Initial impressions/);
+  const zingo = mention("50257", "Zingo");
+  assert.match(zingo.rationaleText ?? "", /agile and flexible/);
+  assert.equal(zingo.metadata.decisionDate, null);
+  assert.equal(hooks.decisionOccurrenceDate("Approved async last week.", "2025-02-03"), null);
+  assert.equal(hooks.decisionOccurrenceDate("Approved async.", "2025-02-03"), null);
+  assert.equal(hooks.decisionOccurrenceDate("On January 30, ZCG approved async.", "2025-02-03"), "2025-01-30");
+});
