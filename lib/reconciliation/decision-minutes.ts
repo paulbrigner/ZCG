@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import { query } from "@/lib/db";
 
 const generatedBy = "grant_decision_minutes_v1";
-const parserVersion = "zcg_minutes_parser_v2";
+const parserVersion = "zcg_minutes_parser_v3";
 const sourceRecordBatchSize = 20;
 const maxRationaleLength = 12000;
 
@@ -277,6 +277,10 @@ function titleSections(sectionText: string, titles: string[]) {
 function normalizeDecisionLine(value: string) {
   const normalized = compactWhitespace(value).toLowerCase().replace(/\basnyc\b/g, "async");
 
+  if (/^(?:last|previous) meeting\b/.test(normalized)) {
+    return null;
+  }
+
   if (/^(?:approve|decline|reject|abstain)\s*:/.test(normalized)) {
     return null;
   }
@@ -542,6 +546,41 @@ function mentionKey(sourceRecordId: string, linkedSourceUrl: string | null, cand
   return `decision_minutes:${digest}`;
 }
 
+type MinuteLink = { url: string; title: string; htmlOffset: number | null };
+
+function nestedSupportingLinkOffsets(cookedHtml: string, links: MinuteLink[]) {
+  const candidates = new Set(links.flatMap((link) =>
+    link.htmlOffset !== null && cookedHtml.slice(link.htmlOffset, link.htmlOffset + 2).toLowerCase() === "<a"
+      ? [link.htmlOffset]
+      : []
+  ));
+  const supporting = new Set<number>();
+  const items: Array<{ start: number; hasApplicationLink: boolean }> = [];
+
+  // The mirror supplies anchor offsets into cookedHtml. Retain list ancestry
+  // while visiting those anchors, before plain-text conversion loses nesting.
+  for (const tag of cookedHtml.matchAll(/<\/?li\b[^>]*>|<a\b[^>]*>/gi)) {
+    if (/^<\/li\b/i.test(tag[0])) {
+      items.pop();
+    } else if (/^<li\b/i.test(tag[0])) {
+      items.push({ start: tag.index + tag[0].length, hasApplicationLink: false });
+    } else if (candidates.has(tag.index)) {
+      if (items.some((item) => item.hasApplicationLink)) {
+        supporting.add(tag.index);
+        continue;
+      }
+
+      const item = items.at(-1);
+      const prefix = item ? cookedHtml.slice(item.start, tag.index).replace(/<[^>]*>/g, "").trim() : null;
+      if (item && prefix === "") {
+        item.hasApplicationLink = true;
+      }
+    }
+  }
+
+  return supporting;
+}
+
 function linksFromRawPayload(raw: Record<string, unknown>) {
   const posts = Array.isArray(raw.posts) ? raw.posts : [];
   const firstPost = posts[0] && typeof posts[0] === "object" && !Array.isArray(posts[0])
@@ -560,10 +599,17 @@ function linksFromRawPayload(raw: Record<string, unknown>) {
       const text = stringValue(record.text);
 
       return url && text && isForumTopicUrl(url)
-        ? { url, title: text }
+        ? { url, title: text, htmlOffset: numberValue(record.htmlOffset) }
         : null;
     })
-    .filter((entry): entry is { url: string; title: string } => Boolean(entry));
+    .filter((entry): entry is MinuteLink => Boolean(entry));
+}
+
+function isSupportingReferenceTitle(title: string) {
+  // Older snapshots may lack HTML/offsets. An outcome plus a reference is
+  // supporting evidence even when it occupies its own plain-text line.
+  return /^(?:approved|declined|rejected|withdrawn|cancelled|canceled)(?:\s+(?:async|asnyc))?(?:\s*[,.:;\-–—]?\s+(?:see|refer to|as per)\b.*)?[.!]?$/i.test(title.trim()) ||
+    /^(?:rfp|request for proposals?)(?: (?:has been|was|is))? (?:posted|published|available|open)\b/i.test(title.trim());
 }
 
 function plainTextFromRawPayload(raw: Record<string, unknown>) {
@@ -595,6 +641,18 @@ function meetingGrantSections(plainText: string) {
     : grantHeadings;
   const summaryHeading = headingsAfterKeyTakeaways[0] ?? null;
   const detailHeading = headingsAfterKeyTakeaways[1] ?? (keyTakeawaysHeading ? null : grantHeadings.at(-1) ?? null);
+  const isFollowUpHeading = (text: string) =>
+    /^(?:brainstorm(?: session)?(?: follow ups?)?|other business|administrative updates|action items|adjournment)$/.test(normalizeTitle(text));
+  const followUpHeading = lines.find((line) =>
+    line.start >= (detailHeading?.end ?? summaryHeading?.end ?? 0) && isFollowUpHeading(line.text)
+  );
+  const followUpText = followUpHeading ? plainText.slice(followUpHeading.end).trim() : "";
+  const grantSection = (start: number, end = plainText.length) => {
+    const nextSection = lines.find((line) => line.start >= start && line.start < end &&
+      isFollowUpHeading(line.text)
+    );
+    return plainText.slice(start, nextSection?.start ?? end).trim();
+  };
 
   if (
     keyTakeawaysHeading &&
@@ -604,27 +662,31 @@ function meetingGrantSections(plainText: string) {
   ) {
     return {
       keyTakeaways: plainText.slice(summaryHeading.end, detailHeading.start).trim(),
-      detailedText: plainText.slice(detailHeading.end).trim()
+      detailedText: grantSection(detailHeading.end),
+      followUpText
     };
   }
 
   if (summaryHeading && keyTakeawaysHeading) {
     return {
       keyTakeaways: plainText.slice(summaryHeading.end).trim(),
-      detailedText: ""
+      detailedText: "",
+      followUpText
     };
   }
 
   if (detailHeading) {
     return {
       keyTakeaways: "",
-      detailedText: plainText.slice(detailHeading.end).trim()
+      detailedText: grantSection(detailHeading.end),
+      followUpText
     };
   }
 
   return {
     keyTakeaways: keyTakeawaysHeading ? plainText.slice(keyTakeawaysHeading.end).trim() : "",
-    detailedText: plainText
+    detailedText: grantSection(0),
+    followUpText
   };
 }
 
@@ -680,9 +742,17 @@ function decisionMentionsFromRecord(
       const topicId = discourseTopicId(link.url);
       return !topicId || !excludedForumTopicIds.has(topicId);
     });
+  const firstPost = Array.isArray(raw.posts) ? raw.posts[0] : null;
+  const cookedHtml = firstPost && typeof firstPost === "object" && typeof firstPost.cookedHtml === "string"
+    ? firstPost.cookedHtml
+    : "";
+  const supportingOffsets = nestedSupportingLinkOffsets(cookedHtml, links);
   const uniqueLinks = new Map<string, { url: string; title: string }>();
 
   for (const link of links) {
+    if (isSupportingReferenceTitle(link.title) || (link.htmlOffset !== null && supportingOffsets.has(link.htmlOffset))) {
+      continue;
+    }
     if (!uniqueLinks.has(link.url)) {
       uniqueLinks.set(link.url, link);
     }
@@ -690,13 +760,18 @@ function decisionMentionsFromRecord(
 
   const grantLinks = [...uniqueLinks.values()];
   const titles = grantLinks.map((link) => link.title);
-  const { keyTakeaways, detailedText } = meetingGrantSections(plainText);
+  const { keyTakeaways, detailedText, followUpText } = meetingGrantSections(plainText);
   const keySections = titleSections(keyTakeaways, titles);
   const detailedSections = titleSections(detailedText, titles);
+  const followUpSections = titleSections(followUpText, titles);
   const mentions = grantLinks
     .map((link): ParsedDecisionMention | null => {
       const keySection = keySections.get(link.title) ?? null;
-      const detailSection = detailedSections.get(link.title) ?? null;
+      const proposalSection = detailedSections.get(link.title) ?? null;
+      const followUpSection = followUpSections.get(link.title) ?? null;
+      // Follow-ups can include real grant amendments. Keep their own section
+      // instead of allowing it to supply an outcome for the preceding grant.
+      const detailSection = proposalSection ?? followUpSection;
 
       if (!keySection && !detailSection) {
         return null;

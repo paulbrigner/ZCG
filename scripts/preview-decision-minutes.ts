@@ -59,6 +59,7 @@ async function fetchRecords() {
               jsonb_build_object(
                 'posts', jsonb_build_array(jsonb_build_object(
                   'plainText', raw_payload->'posts'->0->'plainText',
+                  'cookedHtml', raw_payload->'posts'->0->'cookedHtml',
                   'links', raw_payload->'posts'->0->'links'
                 )),
                 'topic', raw_payload->'topic'
