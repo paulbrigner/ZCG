@@ -132,26 +132,58 @@ test("PostgreSQL full and targeted reconciliation link #378 without replacing it
     const decisionBefore = (await client.query("select to_jsonb(d) as data from reconciliation_decisions d")).rows;
     const reviewBody = { title, html_url: issueUrl, labels: [{ name: "Grant Application" }, { name: "Ready For ZCG Review" }] };
     const reviewSheet = { ...JSON.parse(sheet.raw_payload), "Grant Status": "ZCG to discuss" };
-    for (const disappearance of ["missing", "tombstoned", "both_sources_missing"]) {
+    for (const disappearance of ["missing", "tombstoned", "both_sources_missing", "both_sources_missing_full", "registry_missing_targeted", "registry_missing_full"]) {
       await client.query(`insert into source_records(id,source_kind,source_id,source_url,title,raw_payload,metadata)
         values ($1,'github_issue',$2,$3,$4,$5::jsonb,'{"number":378,"state":"open"}')
         on conflict (id) do update set raw_payload=excluded.raw_payload,metadata=excluded.metadata`,
       [issue.id, sourceId, issueUrl, title, JSON.stringify(reviewBody)]);
-      await client.query("update source_records set raw_payload=$2::jsonb where id=$1", [sheet.id, JSON.stringify(reviewSheet)]);
+      await client.query(`insert into source_records(id,source_kind,source_id,source_url,title,raw_payload,metadata)
+        values ($1,'google_sheet_row',$2,$3,$4,$5::jsonb,$6::jsonb)
+        on conflict (id) do update set raw_payload=excluded.raw_payload`,
+      [sheet.id, sheet.source_id, sheet.source_url, title, JSON.stringify(reviewSheet), sheet.metadata]);
       await runTargetedGitHubReconciliation({ githubSourceId: sourceId });
       assert.equal((await client.query("select normalized_status from grant_applications where id=$1", [applicationId])).rows[0].normalized_status, "under_review");
 
+      if (disappearance.startsWith("registry_missing")) {
+        await client.query("delete from source_records where id=$1", [sheet.id]);
+        for (let repeat = 0; repeat < 3; repeat += 1) {
+          if (repeat === 1) await client.query("update source_records set raw_payload=$2::jsonb,metadata=$3::jsonb where id=$1", [issue.id, issue.raw_payload, issue.metadata]);
+          if (disappearance.endsWith("full")) await runGrantReconciliation();
+          else {
+            const result = await runTargetedGitHubReconciliation({ githubSourceId: sourceId });
+            assert.equal(result.requiresFullReconciliation, false);
+            assert.deepEqual(result.applicationIds, [applicationId]);
+          }
+          assert.deepEqual((await client.query("select id,canonical_key,normalized_status from grant_applications where github_issue_number=378")).rows,
+            [{ id: applicationId, canonical_key: canonicalKey, normalized_status: repeat === 0 ? "under_review" : "filtered" }]);
+        }
+        assert.deepEqual((await client.query("select to_jsonb(d) as data from reconciliation_decisions d")).rows, decisionBefore);
+        // The registry can return after GitHub has disappeared: its identity
+        // must still resolve to the same owner after the intervening gap.
+        await client.query("delete from source_records where id=$1", [issue.id]);
+        await client.query(`insert into source_records(id,source_kind,source_id,source_url,title,raw_payload,metadata)
+          values ($1,'google_sheet_row',$2,$3,$4,$5::jsonb,$6::jsonb)`,
+        [sheet.id, sheet.source_id, sheet.source_url, title, JSON.stringify(reviewSheet), sheet.metadata]);
+        await runGrantReconciliation();
+        assert.deepEqual((await client.query("select id,canonical_key,normalized_status from grant_applications where github_issue_number=378")).rows,
+          [{ id: applicationId, canonical_key: canonicalKey, normalized_status: "submitted" }]);
+        continue;
+      }
       if (disappearance === "tombstoned") await client.query("update source_records set metadata=metadata || '{\"tombstone\":true}'::jsonb where id=$1", [issue.id]);
       else await client.query("delete from source_records where id=$1", [issue.id]);
-      if (disappearance === "both_sources_missing") await client.query("delete from source_records where id=$1", [sheet.id]);
-      const retired = await runTargetedGitHubReconciliation({ githubSourceId: sourceId });
-      assert.equal(retired.requiresFullReconciliation, true);
-      assert.deepEqual(retired.applicationIds, [applicationId]);
+      const bothMissing = disappearance.startsWith("both_sources_missing");
+      if (bothMissing) await client.query("delete from source_records where id=$1", [sheet.id]);
+      if (disappearance.endsWith("full")) await runGrantReconciliation();
+      else {
+        const retired = await runTargetedGitHubReconciliation({ githubSourceId: sourceId });
+        assert.equal(retired.requiresFullReconciliation, true);
+        assert.deepEqual(retired.applicationIds, [applicationId]);
+      }
       assert.deepEqual((await client.query("select id,canonical_key,normalized_status,github_state from grant_applications where id=$1", [applicationId])).rows,
-        [{ id: applicationId, canonical_key: canonicalKey, normalized_status: disappearance === "both_sources_missing" ? "unknown" : "submitted", github_state: null }]);
+        [{ id: applicationId, canonical_key: canonicalKey, normalized_status: bothMissing ? "unknown" : "submitted", github_state: null }]);
       assert.equal((await client.query("select count(*)::int as n from grant_application_github_labels where application_id=$1", [applicationId])).rows[0].n, 0);
       assert.deepEqual((await client.query("select to_jsonb(d) as data from reconciliation_decisions d")).rows, decisionBefore);
-      if (disappearance !== "both_sources_missing") {
+      if (!bothMissing) {
         assert.equal((await client.query("select count(*)::int as n from source_links where canonical_id=$1 and source_record_id=$2", [applicationId, sheet.id])).rows[0].n, 1);
         // Full reconciliation must agree, including a tombstone with retained old title/labels.
         await runGrantReconciliation();

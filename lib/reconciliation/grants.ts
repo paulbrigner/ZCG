@@ -1255,7 +1255,8 @@ function githubLabelDetails(raw: Record<string, unknown>, metadata: Record<strin
 
 function parseGitHubApplication(
   record: RawSourceRecord,
-  historicalByIssueUrl: ReadonlyMap<string, HistoricalApplicationGroup> = new Map()
+  historicalByIssueUrl: ReadonlyMap<string, HistoricalApplicationGroup> = new Map(),
+  existingRegistryOwners: ReadonlyMap<string, string> = new Map()
 ): GitHubApplication | null {
   if (isTombstonedGitHubSource(record)) return null;
   const raw = parseJsonRecord(record.raw_payload);
@@ -1270,7 +1271,7 @@ function parseGitHubApplication(
 
   // Registry identity remains valid after a title edit or a terminal label
   // replaces the intake labels. Check it before the legacy title/label heuristic.
-  if (!normalized || (!explicitlyRegistered && !title.toLowerCase().includes("grant") &&
+  if (!normalized || (!explicitlyRegistered && !existingRegistryOwners.has(record.source_id) && !title.toLowerCase().includes("grant") &&
     !labels.some((label) => label.includes("Grant")))) {
     return null;
   }
@@ -2230,10 +2231,11 @@ async function fetchGeneratedGitHubApplicationsForRetirement(options: {
   canonicalKey?: string;
   activeCanonicalKeys?: readonly string[];
   preservedRegistrySourceId?: string;
+  preservedRegistryOwners?: boolean;
 }) {
   const targeted = options.canonicalKey !== undefined;
-  const preservedRegistry = options.preservedRegistrySourceId !== undefined;
-  const scopePredicate = preservedRegistry
+  const preservedRegistry = options.preservedRegistrySourceId !== undefined || options.preservedRegistryOwners === true;
+  const scopePredicate = options.preservedRegistrySourceId !== undefined
     ? "and ga.source_summary->>'githubSourceId' = $2"
     : targeted
     ? "and ga.canonical_key = $2"
@@ -2242,7 +2244,7 @@ async function fetchGeneratedGitHubApplicationsForRetirement(options: {
            from jsonb_array_elements_text($2::jsonb) as active(canonical_key)
           where active.canonical_key = ga.canonical_key
        )`;
-  const scopeValue = preservedRegistry
+  const scopeValue = options.preservedRegistrySourceId !== undefined
     ? options.preservedRegistrySourceId
     : targeted
     ? options.canonicalKey
@@ -2262,6 +2264,7 @@ async function fetchGeneratedGitHubApplicationsForRetirement(options: {
        from grant_applications ga
       where ga.canonical_key like '${preservedRegistry ? "sheet-all-grants:%" : "github:%"}'
         and ga.source_summary->>'generatedBy' = $1
+        ${preservedRegistry ? "and ga.source_summary->>'githubSourceId' is not null" : ""}
         ${scopePredicate}
       order by ga.canonical_key`,
     [generatedBy, scopeValue]
@@ -2378,7 +2381,9 @@ async function deleteLegacySheetOnlyApplications() {
 async function fetchExistingHistoricalApplicationKeys() {
   const result = await query<ExistingHistoricalApplicationIdentity>(
     `select ga.canonical_key,
-            ga.source_summary->>'historicalRegistryGrantPlatformLink' as platform_link,
+            coalesce(ga.source_summary->>'historicalRegistryGrantPlatformLink',
+              case when ga.source_summary->>'githubSourceId' is not null then ga.github_issue_url end
+            ) as platform_link,
             ga.created_at::text,
             ga.updated_at::text,
             (select count(*)::text
@@ -2393,11 +2398,24 @@ async function fetchExistingHistoricalApplicationKeys() {
   return existingHistoricalKeysByPlatform(result.rows);
 }
 
-async function fetchExistingGitHubCanonicalKeys() {
-  const result = await query<{ canonical_key: string }>(
-    `select canonical_key from grant_applications where canonical_key like 'github:%'`
+async function fetchExistingGitHubOwners() {
+  const result = await query<{ canonical_key: string; github_source_id: string | null }>(
+    `select canonical_key, source_summary->>'githubSourceId' as github_source_id
+       from grant_applications
+      where canonical_key like 'github:%'
+         or (canonical_key like 'sheet-all-grants:%' and source_summary->>'githubSourceId' is not null)`
   );
-  return new Set(result.rows.map((row) => row.canonical_key));
+  const nativeKeys = new Set(result.rows.filter((row) => row.canonical_key.startsWith("github:")).map((row) => row.canonical_key));
+  const registryOwners = new Map<string, string>();
+  for (const row of result.rows) {
+    if (!row.canonical_key.startsWith("sheet-all-grants:") || !row.github_source_id) continue;
+    const existing = registryOwners.get(row.github_source_id);
+    if (existing && existing !== row.canonical_key) {
+      throw new Error(`GitHub source ${row.github_source_id} has multiple preserved registry owners; reconcile those identities before rebuilding.`);
+    }
+    registryOwners.set(row.github_source_id, row.canonical_key);
+  }
+  return { nativeKeys, registryOwners };
 }
 
 function planGitHubApplication(params: {
@@ -2408,6 +2426,7 @@ function planGitHubApplication(params: {
   paymentDetailGroups: Map<string, SheetProjectGroup>;
   hasHistoricalRegistry: boolean;
   existingGitHubCanonicalKeys?: ReadonlySet<string>;
+  existingRegistryOwners?: ReadonlyMap<string, string>;
 }): PlannedGitHubApplicationResult {
   const {
     app,
@@ -2435,9 +2454,10 @@ function planGitHubApplication(params: {
   // Existing GitHub applications keep their established owner and saved history.
   const exactRegistryMatch = normalizedGitHubIssueUrl(app.issueUrl) !== null &&
     normalizedGitHubIssueUrl(app.issueUrl) === normalizedGitHubIssueUrl(historicalMatch?.group.githubIssueUrl ?? null);
-  const canonicalKey = !params.existingGitHubCanonicalKeys?.has(githubCanonicalKey) && exactRegistryMatch
-    ? historicalMatch?.group.existingCanonicalKey ?? githubCanonicalKey
-    : githubCanonicalKey;
+  const canonicalKey = params.existingGitHubCanonicalKeys?.has(githubCanonicalKey)
+    ? githubCanonicalKey
+    : params.existingRegistryOwners?.get(app.sourceRecord.source_id) ??
+      (exactRegistryMatch ? historicalMatch?.group.existingCanonicalKey : undefined) ?? githubCanonicalKey;
   const planned: PlannedApplication = {
     application: {
       canonicalKey,
@@ -2709,13 +2729,13 @@ async function performGrantReconciliation(
     [...githubRecords, ...githubCommentRecords, ...sheetRecords].map((record) => [record.id, record])
   );
 
-  const [existingHistoricalKeys, existingGitHubCanonicalKeys] = await Promise.all([
-    fetchExistingHistoricalApplicationKeys(), fetchExistingGitHubCanonicalKeys()
+  const [existingHistoricalKeys, existingOwners] = await Promise.all([
+    fetchExistingHistoricalApplicationKeys(), fetchExistingGitHubOwners()
   ]);
   const historicalGroups = buildHistoricalApplicationGroups(sheetRecords, existingHistoricalKeys);
   const historicalByGitHubIssueUrl = buildHistoricalApplicationsByGitHubIssue(historicalGroups.values());
   const githubApplications = githubRecords
-    .map((record) => parseGitHubApplication(record, historicalByGitHubIssueUrl))
+    .map((record) => parseGitHubApplication(record, historicalByGitHubIssueUrl, existingOwners.registryOwners))
     .filter((app): app is GitHubApplication => Boolean(app));
   const githubCommentsByIssue = buildGitHubCommentsByIssue(githubCommentRecords);
   const paymentDetailGroups = buildPaymentDetailGroups(sheetRecords);
@@ -2763,13 +2783,24 @@ async function performGrantReconciliation(
     (application) => `github:${application.sourceRecord.source_id}`
   );
   const mirroredGitHubSourceIds = new Set(githubRecords.map((record) => record.source_id));
+  const [nativeRetirements, registryRetirements] = await Promise.all([
+    fetchGeneratedGitHubApplicationsForRetirement({ activeCanonicalKeys: activeGitHubCanonicalKeys }),
+    fetchGeneratedGitHubApplicationsForRetirement({
+      preservedRegistryOwners: true,
+      activeCanonicalKeys: [
+        ...[...historicalGroups.values()].map((group) => group.canonicalKey),
+        ...githubApplications.flatMap((app) => {
+          const owner = existingOwners.registryOwners.get(app.sourceRecord.source_id);
+          return owner ? [owner] : [];
+        })
+      ]
+    })
+  ]);
   const retiredApplications = await retireGeneratedGitHubApplications(
-    await fetchGeneratedGitHubApplicationsForRetirement({
-      activeCanonicalKeys: activeGitHubCanonicalKeys
-    }),
+    [...nativeRetirements, ...registryRetirements],
     context,
     (row) =>
-      mirroredGitHubSourceIds.has(row.canonical_key.slice("github:".length))
+      mirroredGitHubSourceIds.has(stringValue(parseJsonRecord(row.source_summary).githubSourceId) ?? row.canonical_key.slice("github:".length))
         ? "source_is_not_grant_application"
         : "missing_or_tombstoned_source"
   );
@@ -2786,7 +2817,8 @@ async function performGrantReconciliation(
       historicalByGitHubIssueUrl,
       paymentDetailGroups,
       hasHistoricalRegistry,
-      existingGitHubCanonicalKeys
+      existingGitHubCanonicalKeys: existingOwners.nativeKeys,
+      existingRegistryOwners: existingOwners.registryOwners
     });
     if (result.matchedHistoricalKey) matchedHistoricalKeys.add(result.matchedHistoricalKey);
     if (result.matchedPaymentDetailKey) matchedPaymentDetailKeys.add(result.matchedPaymentDetailKey);
@@ -3140,15 +3172,15 @@ async function performTargetedGitHubReconciliation(
     );
   }
 
-  const [githubComments, sheetRecords, existingHistoricalKeys, existingGitHubCanonicalKeys] = await Promise.all([
+  const [githubComments, sheetRecords, existingHistoricalKeys, existingOwners] = await Promise.all([
     fetchTargetedGitHubCommentRecords(githubSourceId),
     fetchSourceRecords("google_sheet_row"),
     fetchExistingHistoricalApplicationKeys(),
-    fetchExistingGitHubCanonicalKeys()
+    fetchExistingGitHubOwners()
   ]);
   const historicalGroups = buildHistoricalApplicationGroups(sheetRecords, existingHistoricalKeys);
   const historicalByGitHubIssueUrl = buildHistoricalApplicationsByGitHubIssue(historicalGroups.values());
-  const app = parseGitHubApplication(sourceRecord, historicalByGitHubIssueUrl);
+  const app = parseGitHubApplication(sourceRecord, historicalByGitHubIssueUrl, existingOwners.registryOwners);
 
   if (!app) {
     return retireTargetedGitHubApplication(
@@ -3166,7 +3198,8 @@ async function performTargetedGitHubReconciliation(
     historicalByGitHubIssueUrl,
     paymentDetailGroups,
     hasHistoricalRegistry: historicalGroups.size > 0,
-    existingGitHubCanonicalKeys
+    existingGitHubCanonicalKeys: existingOwners.nativeKeys,
+    existingRegistryOwners: existingOwners.registryOwners
   });
   const { planned } = planResult;
   const sourceRecordsById = new Map(
