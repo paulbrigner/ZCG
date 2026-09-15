@@ -803,7 +803,10 @@ function decisionMentionsFromRecord(
     ? firstPost.cookedHtml
     : "";
   const supportingOffsets = nestedSupportingLinkOffsets(cookedHtml, links);
-  const structured = structuredAgendaSections(cookedHtml, links);
+  const { keyTakeaways, detailedText, followUpText } = meetingGrantSections(plainText);
+  const structured = structuredAgendaSections(cookedHtml, links.filter(link =>
+    !isSupportingReferenceTitle(link.title) && (link.htmlOffset === null || !supportingOffsets.has(link.htmlOffset))
+  ), plainText, [detailedText, followUpText]);
   const uniqueLinks = new Map<string, { url: string; title: string }>();
 
   for (const link of links) {
@@ -817,7 +820,6 @@ function decisionMentionsFromRecord(
 
   const grantLinks = [...uniqueLinks.values()];
   const titles = grantLinks.map((link) => link.title);
-  const { keyTakeaways, detailedText, followUpText } = meetingGrantSections(plainText);
   const originalTitles = links.filter(link => !isSupportingReferenceTitle(link.title) && (link.htmlOffset === null || !supportingOffsets.has(link.htmlOffset))).map(link => link.title);
   const originalSections = [keyTakeaways, detailedText, followUpText].map(text => titleSections(text, originalTitles));
   const keySections = titleSections(keyTakeaways, titles);
@@ -832,7 +834,7 @@ function decisionMentionsFromRecord(
       // Follow-ups can include real grant amendments. Keep their own section
       // instead of allowing it to supply an outcome for the preceding grant.
       const detailSection = proposalSection || followUpSection
-        ? agenda?.sections.at(-1) ?? proposalSection ?? followUpSection
+        ? agenda?.sections.find(section => normalizeTitle(section.title) === normalizeTitle(link.title))?.text ?? proposalSection ?? followUpSection
         : null;
 
       // Recover the title of an existing generic-label candidate without
@@ -1541,7 +1543,16 @@ async function recordExactDecisionStatusAssertion(
        $1, $2, 'historical_assertion', $3, 'exact', $4::date,
        coalesce($5::timestamptz, clock_timestamp()), $6,
        $7, $8, $9, $10, $11, 'decision_date',
-       $12::uuid, $13::uuid, $14, $15, $16, $17::jsonb
+       $12::uuid, $13::uuid, $14, $15,
+       $16::text || coalesce((
+         select ':' || correction.id::text
+         from grant_application_status_events prior
+         join grant_application_status_events correction on correction.corrects_event_id = prior.id
+         where (prior.idempotency_key = $16::text or starts_with(prior.idempotency_key, $16::text || ':'))
+           and correction.event_type = 'retraction'
+         order by correction.created_at desc, correction.id desc
+         limit 1
+       ), ''), $17::jsonb
      )
      on conflict (idempotency_key) do nothing`,
     [
@@ -1911,6 +1922,7 @@ export const decisionMinutesTestHooks = {
   meetingGrantSections,
   normalizeDecisionLine,
   retireObsoleteMinuteEvidence,
+  recordExactDecisionStatusAssertion,
   partialDecisionConflict,
   terminalDecisionConflict,
   titleSections

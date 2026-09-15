@@ -93,3 +93,21 @@ test("reviewed mention links cannot reassign another meeting in a reused topic",
   const conflict = hooks.buildDirectMatchIndexes([...rows, reviewed, { ...reviewed, application_id: "new", canonical_key: "new" }], apps);
   assert.equal(hooks.matchMention(earlier, conflict, apps).reviewStatus, "needs_review");
 });
+
+test("supporting and summary links cannot replace an application's own detailed rationale", () => {
+  const fpoc = mention("55349", "F-PoC:");
+  assert.match(fpoc.rationaleText ?? "", /Research prototype integrating/);
+  assert.match(fpoc.rationaleText ?? "", /Gguy:/);
+  const zinfra = mention("56384", "Zinfra");
+  for (const speaker of ["Hanh", "Gguy", "Zerodartz"]) assert.ok(zinfra.rationaleText?.includes(speaker));
+  const uniffi = mention("45307", "UniFFI");
+  assert.match(uniffi.rationaleText ?? "", /Jason gave the background/);
+  assert.doesNotMatch(uniffi.rationaleText ?? "", /Administration|Administrative|Brainstorm/);
+  assert.match(mention("55555", "ChainSafe").rationaleText ?? "", /second year of maintenance/);
+  assert.match(mention("48729", "eZcash").rationaleText ?? "", /Brian provided background/);
+  const english = mention("52476", "Professional Development, English");
+  // The source itself has reversed language descriptions; keep the exact
+  // English heading's (101) section rather than the later Spanish (102) item.
+  assert.match(english.rationaleText ?? "", /\(101\)/);
+  assert.doesNotMatch(english.rationaleText ?? "", /\(102\)/);
+});

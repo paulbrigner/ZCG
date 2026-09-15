@@ -48,6 +48,28 @@ test("retires obsolete derived ownership and retracts superseded assertions with
     assert.equal((await client.query("select count(*)::int as n from grant_application_status_events")).rows[0].n, 8);
     assert.equal((await client.query("select count(*)::int as n from source_records")).rows[0].n, 1);
     assert.equal((await client.query("select count(*)::int as n from grant_applications where normalized_status='approved'")).rows[0].n, 3);
+
+    // Restore the same source evidence after an identity correction. A fresh
+    // assertion must be visible, and a repeated unchanged pass must be inert.
+    const sourceInput = { sourceRecordId: source, forumTopicId: 123, topicUrl: "url", title: "meeting", meetingDate: "2023-01-23", contentHash: "hash", metadata: {} };
+    const record = { id: source, source_kind: "forum_meeting_minutes", source_id: "meeting-source", source_url: "url", title: "meeting", summary: null, source_updated_at: null, raw_payload: "{}", metadata: "{}" };
+    const applyOwner = async (appId: string) => {
+      await client.query("update grant_decision_mentions set application_id=$1 where id=$2", [appId, mention]);
+      await hooks.recordExactDecisionStatusAssertion(
+        { id: appId, canonical_key: appId, title: "Example", normalized_status: "approved", github_issue_number: null, github_issue_url: null },
+        { mentionKey: "mention", candidateTitle: "Example", linkedSourceUrl: null, normalizedDecision: "approved", decisionText: "Approved", rationaleText: null, speakerNotes: [], contentHash: "same-content", metadata: { decisionSection: "key_takeaways", decisionDate: "2023-01-25" }, applicationId: appId, linkedSourceRecordId: null, matchMethod: "reviewed_minutes_mention", confidence: 1, reviewStatus: "accepted" },
+        mention, sourceInput, record, {}
+      );
+      await hooks.retireObsoleteMinuteEvidence();
+    };
+    await applyOwner(oldApp);
+    await applyOwner(currentApp);
+    await applyOwner(oldApp);
+    const visible = await client.query("select e.application_id::text from grant_application_status_events e where e.idempotency_key like 'decision-mention:%' and not exists(select 1 from grant_application_status_events c where c.corrects_event_id=e.id)");
+    assert.deepEqual(visible.rows, [{ application_id: oldApp }]);
+    const count = (await client.query("select count(*)::int as n from grant_application_status_events")).rows[0].n;
+    await applyOwner(oldApp);
+    assert.equal((await client.query("select count(*)::int as n from grant_application_status_events")).rows[0].n, count);
   } finally {
     t.mock.restoreAll();
     await client.query(`drop schema "${schema}" cascade`);
