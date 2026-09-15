@@ -1,8 +1,9 @@
 import crypto from "node:crypto";
 import { query } from "@/lib/db";
+import { structuredAgendaSections } from "./minute-sections";
 
 const generatedBy = "grant_decision_minutes_v1";
-const parserVersion = "zcg_minutes_parser_v3";
+const parserVersion = "zcg_minutes_parser_v4";
 // Historical minutes contain large mirrored payloads. Keep each response below
 // the Data API's aggregate size limit when reconciliation runs through SSR.
 const sourceRecordBatchSize = 1;
@@ -45,6 +46,8 @@ type SourceLinkIndexRow = {
 };
 
 type DirectMatchIndexes = {
+  byMentionKey?: Map<string, SourceLinkIndexRow>;
+  ambiguousMentionKeys?: Set<string>;
   byUrl: Map<string, SourceLinkIndexRow>;
   ambiguousUrls: Set<string>;
   byPrimaryForumTopicId: Map<string, SourceLinkIndexRow>;
@@ -277,7 +280,13 @@ function titleSections(sectionText: string, titles: string[]) {
   return sections;
 }
 
-function normalizeDecisionLine(value: string) {
+function normalizeDecisionLine(value: string): { decision: string; text: string } | null {
+  // A dated, explicit later update supersedes a preceding summary of the meeting.
+  const update = value.match(/(?:\.\s+)(?:(?:update:\s*)?on\s+(?:\d{1,2}\/\d{1,2}|(?:[A-Za-z]+,?\s+)?(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d)|later (?:that|in the) week)[\s\S]*/i);
+  if (update) {
+    const later = normalizeDecisionLine(update[0].replace(/^\.\s+/, ""));
+    if (later && !/\b(?:would|should|could|might|may|if|unless|will (?:vote|approve|reject))\b/i.test(update[0])) return later;
+  }
   const normalized = compactWhitespace(value).toLowerCase().replace(/\basnyc\b/g, "async");
 
   if (/^(?:last|previous) meeting\b/.test(normalized)) {
@@ -288,6 +297,12 @@ function normalizeDecisionLine(value: string) {
     return null;
   }
 
+  if (/^(?:unanimous(?:ly)?\s+(?:approval|approved|rejection)|approved)(?:[.!](?:\s+(?:community|infrastructure|integration|dedicated resource)[.!]?)?)?$/.test(normalized)) {
+    return { decision: normalized.includes("rejection") ? "declined" : "approved", text: value };
+  }
+  if (/^(?:all (?:committee )?members|the committee)\b.*\bagreed\b.*\bdenial response\b/.test(normalized)) {
+    return { decision: "declined", text: value };
+  }
   const approvedTally = normalized.match(/\bapprove(?:d)?\s+(\d+)\b/);
   const declinedTally = normalized.match(/\b(?:decline(?:d)?|reject(?:ed)?)\s+(\d+)\b/);
 
@@ -385,7 +400,7 @@ function normalizeDecisionLine(value: string) {
     /^(?:the\s+)?(?:(?:grant|proposal|application|request|milestone(?:\s+\d+)?)\s+)?approved?(?:\s+async)?[.!]?$/i.test(
       normalized
     ) ||
-    /\b(?:zcg|committee|members?|majority|we|they)\b.{0,100}\b(?:voted?\s+to\s+approve|unanimously\s+approved|approved)\b/.test(
+    /\b(?:zcg|committee|members?|majority|we|they)\b.{0,100}\b(?:vote(?:d|s)?\s+to\s+approve|unanimously\s+approved|approved)\b/.test(
       normalized
     ) ||
     /\b(?:grant|proposal|application|request|milestone(?:\s+\d+)?)\b.{0,40}\b(?:was|is|has been|were)\s+(?:unanimously\s+)?approved\b/.test(
@@ -440,6 +455,44 @@ function extractDecision(
   }
 
   return { decision: "unknown", text: null as string | null };
+}
+
+function selectSectionDecision(key: string | null, detail: string | null, title: string) {
+  const withoutTitle = (section: string | null) => section?.toLowerCase().startsWith(title.toLowerCase()) && /^[ \t]*[-:–—]/.test(section.slice(title.length))
+    ? section.slice(title.length).replace(/^[ \t]*[-:–—][ \t]*/, "").trim() : section;
+  const summary = extractDecision(withoutTitle(key), "forward", 3);
+  if (!key) return { ...extractDecision(withoutTitle(detail), "reverse"), section: "detailed_minutes" };
+  // Only a recorded collective outcome or an explicit proposal disposition can
+  // supply a missing summary decision. Individual opinions and technical words
+  // such as accepting/rejecting transactions are not committee decisions.
+  const lines = (withoutTitle(detail) ?? "").split(/\n+/).map(line => line.trim()).filter(Boolean);
+  let detailed = { decision: "unknown", text: null as string | null };
+  for (const line of [...lines].reverse()) {
+    if (!/^(?:(?:update:\s*)?on\b|update:|(?:this|the) (?:grant|proposal|application|request|committee)\b|(?:all |present |the (?:four|five) )?(?:committee )?members\b|zcg\b|unanimous|approved\b|grant (?:will |remains? )|this portion of the grant)/i.test(line)) continue;
+    if (/\b(?:would|should|could|might|may|if|unless|will (?:vote|approve|reject))\b/i.test(line) && !/\bremains? open\b/i.test(line)) continue;
+    const outcome = normalizeDecisionLine(line);
+    if (outcome) { detailed = outcome; break; }
+  }
+  if (summary.decision === "unknown") return { ...detailed, section: "detailed_minutes" };
+  if (detailed.text && /^(?:update:|on\s)/i.test(detailed.text) && detailed.decision !== "unknown") return { ...detailed, section: "detailed_minutes" };
+  return { ...summary, section: "key_takeaways" };
+}
+
+function decisionOccurrenceDate(text: string | null, meetingDate: string | null) {
+  if (!text || !meetingDate) return meetingDate;
+  if (/\blater (?:that|in the) week\b/i.test(text) && !/\bon\s/i.test(text)) return null;
+  if (!/\b(?:update:|on\s)/i.test(text)) return meetingDate;
+  const date = text.match(/\bon\s+(?:[A-Za-z]+,\s+)?(?:(\d{1,2})\/(\d{1,2})(?:\/(\d{4}))?|([A-Za-z]+)\s+(\d{1,2})(?:,?\s+(20\d{2}))?)/i);
+  if (!date) return /^(?:update:|on\s)/i.test(text) ? null : meetingDate;
+  const names = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+  const month = date[1] ? Number(date[1]) : names.indexOf(date[4]?.slice(0, 3).toLowerCase()) + 1;
+  const day = Number(date[2] ?? date[5]);
+  let year = Number(date[3] ?? date[6] ?? meetingDate.slice(0, 4));
+  if (!date[3] && !date[6] && meetingDate.slice(5, 7) === "12" && month === 1) year++;
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+  if (parsed.getUTCMonth() !== month - 1 || parsed.getUTCDate() !== day) return null;
+  const delta = (parsed.getTime() - new Date(meetingDate).getTime()) / 86400000;
+  return delta >= 0 && delta <= 62 ? parsed.toISOString().slice(0, 10) : null;
 }
 
 function extractSpeakerNotes(section: string | null | undefined) {
@@ -750,39 +803,44 @@ function decisionMentionsFromRecord(
     ? firstPost.cookedHtml
     : "";
   const supportingOffsets = nestedSupportingLinkOffsets(cookedHtml, links);
+  const structured = structuredAgendaSections(cookedHtml, links);
   const uniqueLinks = new Map<string, { url: string; title: string }>();
 
   for (const link of links) {
-    if (isSupportingReferenceTitle(link.title) || (link.htmlOffset !== null && supportingOffsets.has(link.htmlOffset))) {
+    if (isSupportingReferenceTitle(link.title) || (link.htmlOffset !== null && (supportingOffsets.has(link.htmlOffset) || structured.excludedOffsets.has(link.htmlOffset)))) {
       continue;
     }
     if (!uniqueLinks.has(link.url)) {
-      uniqueLinks.set(link.url, link);
+      uniqueLinks.set(link.url, { ...link, title: /^(?:forum discussion|forum post|discussion)$/i.test(link.title) ? structured.sections.get(link.url)?.title ?? link.title : link.title });
     }
   }
 
   const grantLinks = [...uniqueLinks.values()];
   const titles = grantLinks.map((link) => link.title);
   const { keyTakeaways, detailedText, followUpText } = meetingGrantSections(plainText);
+  const originalTitles = links.filter(link => !isSupportingReferenceTitle(link.title) && (link.htmlOffset === null || !supportingOffsets.has(link.htmlOffset))).map(link => link.title);
+  const originalSections = [keyTakeaways, detailedText, followUpText].map(text => titleSections(text, originalTitles));
   const keySections = titleSections(keyTakeaways, titles);
   const detailedSections = titleSections(detailedText, titles);
   const followUpSections = titleSections(followUpText, titles);
   const mentions = grantLinks
     .map((link): ParsedDecisionMention | null => {
+      const agenda = structured.sections.get(link.url);
       const keySection = keySections.get(link.title) ?? null;
       const proposalSection = detailedSections.get(link.title) ?? null;
       const followUpSection = followUpSections.get(link.title) ?? null;
       // Follow-ups can include real grant amendments. Keep their own section
       // instead of allowing it to supply an outcome for the preceding grant.
-      const detailSection = proposalSection ?? followUpSection;
+      const detailSection = proposalSection || followUpSection
+        ? agenda?.sections.at(-1) ?? proposalSection ?? followUpSection
+        : null;
 
-      if (!keySection && !detailSection) {
-        return null;
-      }
+      // Recover the title of an existing generic-label candidate without
+      // broadening the meeting formats eligible for this repair.
+      if (!links.some(original => original.url === link.url && originalSections.some(sections => sections.has(original.title)))) return null;
+      if (!keySection && !detailSection) return null;
 
-      const decision = keySection
-        ? extractDecision(keySection, "forward", 3)
-        : extractDecision(detailSection, "reverse");
+      const decision = selectSectionDecision(keySection, detailSection, link.title);
       const rationaleText = trimRationale(detailSection, link.title, decision.text);
       // Grouped proposals can be listed in both the summary and the detailed
       // grant section without individual commentary. Keep that real listing
@@ -792,7 +850,9 @@ function decisionMentionsFromRecord(
       }
       const speakerNotes = extractSpeakerNotes(detailSection);
       const linkedSourceUrl = normalizeUrl(link.url);
+      const decisionDate = decisionOccurrenceDate(decision.text, source.meetingDate);
       const contentHash = hashContent({
+        decisionDate,
         sourceRecordId: record.id,
         linkedSourceUrl,
         candidateTitle: link.title,
@@ -814,7 +874,8 @@ function decisionMentionsFromRecord(
           generatedBy,
           parserVersion,
           keyTakeawayExcerpt: keySection,
-          decisionSection: keySection ? "key_takeaways" : "detailed_minutes",
+          decisionSection: decision.section,
+          decisionDate,
           hasDetailedRationale: Boolean(rationaleText),
           sourceRecordId: record.id
         }
@@ -1007,6 +1068,7 @@ function buildDirectMatchIndexes(
   sourceLinks: SourceLinkIndexRow[],
   applications: GrantApplicationIndexRow[]
 ): DirectMatchIndexes {
+  const candidatesByMention = new Map<string, SourceLinkIndexRow[]>();
   const candidatesByUrl = new Map<string, SourceLinkIndexRow[]>();
   const primaryCandidatesByTopicId = new Map<string, SourceLinkIndexRow[]>();
 
@@ -1039,6 +1101,11 @@ function buildDirectMatchIndexes(
   }
 
   for (const row of sourceLinks) {
+    if (row.source_kind === "decision_minutes_mention") {
+      const rows = candidatesByMention.get(row.source_id) ?? [];
+      rows.push(row); candidatesByMention.set(row.source_id, rows);
+      continue;
+    }
     addUrlCandidate(row.source_url, row);
     addUrlCandidate(row.source_id, row);
     addPrimaryTopicCandidate(row.source_url, row);
@@ -1093,7 +1160,14 @@ function buildDirectMatchIndexes(
     }
   }
 
-  return { byUrl, ambiguousUrls, byPrimaryForumTopicId };
+  const byMentionKey = new Map<string, SourceLinkIndexRow>();
+  const ambiguousMentionKeys = new Set<string>();
+  for (const [key, rows] of candidatesByMention) {
+    const selected = chooseUniqueBestSourceLink(rows);
+    if (selected.row) byMentionKey.set(key, selected.row);
+    else if (selected.ambiguous) ambiguousMentionKeys.add(key);
+  }
+  return { byUrl, ambiguousUrls, byPrimaryForumTopicId, byMentionKey, ambiguousMentionKeys };
 }
 
 function bestTitleMatch(mention: ParsedDecisionMention, applications: GrantApplicationIndexRow[]) {
@@ -1115,6 +1189,13 @@ function matchMention(
   directIndexes: DirectMatchIndexes,
   applications: GrantApplicationIndexRow[]
 ): MatchedDecisionMention {
+  const reviewed = directIndexes.byMentionKey?.get(mention.mentionKey);
+  if (directIndexes.ambiguousMentionKeys?.has(mention.mentionKey)) {
+    return { ...mention, applicationId: null, linkedSourceRecordId: null, matchMethod: "ambiguous_reviewed_mention", confidence: 0, reviewStatus: "needs_review" };
+  }
+  if (reviewed) {
+    return { ...mention, applicationId: reviewed.application_id, linkedSourceRecordId: null, matchMethod: "reviewed_minutes_mention", confidence: Number(reviewed.confidence), reviewStatus: "accepted" };
+  }
   const direct = mention.linkedSourceUrl ? directIndexes.byUrl.get(mention.linkedSourceUrl) : null;
 
   if (direct) {
@@ -1302,6 +1383,62 @@ async function linkDecisionSourceToApplication(sourceRecordId: string, applicati
   );
 }
 
+// Retire only derived associations after the complete minutes pass succeeds.
+// Original source records, manual decisions and historical assertions remain
+// available; obsolete assertions receive an append-only retraction.
+async function retireObsoleteMinuteEvidence() {
+  await query(
+    `delete from source_links sl
+      using source_records sr
+      where sr.id = sl.source_record_id
+        and sr.source_kind = 'forum_meeting_minutes'
+        and sl.canonical_type = 'grant_application'
+        and sl.relationship_role = 'decision_minutes'
+        and not exists (
+          select 1 from reconciliation_decisions d
+          join grant_applications ga on ga.canonical_key = d.canonical_key
+          where d.status = 'active' and d.decision_type = 'link_source'
+            and d.canonical_type = 'grant_application'
+            and ga.id = sl.canonical_id
+            and d.source_kind = sr.source_kind and d.source_id = sr.source_id
+        )
+        and not exists (
+          select 1 from grant_decision_mentions dm
+          join grant_decision_sources ds on ds.id = dm.decision_source_id
+          where ds.source_record_id = sl.source_record_id
+            and dm.application_id = sl.canonical_id
+            and dm.review_status = 'accepted'
+        )`
+  );
+  await query(
+    `insert into grant_application_status_events (
+       application_id, application_canonical_key, event_type, to_status,
+       provenance, source_record_id, source_kind, source_id, source_url,
+       evidence_locator, evidence_fingerprint, corrects_event_id, idempotency_key, evidence
+     )
+     select e.application_id, e.application_canonical_key, 'retraction', e.to_status,
+            'observed', e.source_record_id, e.source_kind, e.source_id, e.source_url,
+            e.evidence_locator, e.evidence_fingerprint, e.id,
+            'minutes-retraction:' || e.id::text,
+            jsonb_build_object('basis', 'superseded_decision_minutes', 'parserVersion', $1::text)
+       from grant_application_status_events e
+      where e.event_type = 'historical_assertion'
+        and e.evidence->>'basis' = 'accepted_decision_minutes'
+        and not exists (select 1 from grant_application_status_events c where c.corrects_event_id = e.id)
+        and not exists (
+          select 1 from grant_decision_mentions dm
+          join grant_decision_sources ds on ds.id = dm.decision_source_id
+          where dm.id::text = e.evidence->>'mentionId'
+            and dm.application_id = e.application_id
+            and dm.review_status = 'accepted'
+            and (case when dm.normalized_decision = 'approved_async' then 'approved' else dm.normalized_decision end) = e.to_status
+            and (case when dm.metadata ? 'decisionDate' then dm.metadata->>'decisionDate' else ds.meeting_date::text end) = e.effective_date::text
+        )
+     on conflict do nothing`,
+    [parserVersion]
+  );
+}
+
 function normalizedTerminalStatus(decision: string) {
   if (decision === "approved_async") {
     return "approved";
@@ -1322,6 +1459,7 @@ function exactDecisionStatusAssertion(
   if (
     !toStatus ||
     !source.meetingDate ||
+    (mention.metadata.decisionDate === null) ||
     mention.reviewStatus !== "accepted" ||
     mention.confidence < 0.86 ||
     !isHighConfidenceDecisionMention(mention)
@@ -1333,7 +1471,7 @@ function exactDecisionStatusAssertion(
     applicationId: application.id,
     applicationCanonicalKey: application.canonical_key,
     toStatus,
-    effectiveDate: source.meetingDate,
+    effectiveDate: typeof mention.metadata.decisionDate === "string" ? mention.metadata.decisionDate : source.meetingDate,
     observedAt: null as string | null,
     confidence: mention.confidence,
     sourceRecordId: record.id,
@@ -1341,9 +1479,9 @@ function exactDecisionStatusAssertion(
     sourceId: record.source_id,
     sourceUrl: source.topicUrl,
     sourceChecksumSha256: record.checksum_sha256 ?? null,
-    evidenceLocator: `decision-mention:${mentionId}:meeting-date`,
+    evidenceLocator: `decision-mention:${mentionId}:decision-date`,
     evidenceFingerprint: mention.contentHash,
-    idempotencyKey: `decision-mention:${mentionId}:${mention.contentHash}`,
+    idempotencyKey: `decision-mention:${mentionId}:${application.id}:${mention.contentHash}`,
     evidence: {
       basis: "accepted_decision_minutes",
       mentionId,
@@ -1351,6 +1489,7 @@ function exactDecisionStatusAssertion(
       normalizedDecision: mention.normalizedDecision,
       decisionText: mention.decisionText,
       meetingDate: source.meetingDate,
+      decisionDate: mention.metadata.decisionDate,
       meetingTitle: source.title,
       matchMethod: mention.matchMethod,
       reviewStatus: mention.reviewStatus,
@@ -1401,7 +1540,7 @@ async function recordExactDecisionStatusAssertion(
      values (
        $1, $2, 'historical_assertion', $3, 'exact', $4::date,
        coalesce($5::timestamptz, clock_timestamp()), $6,
-       $7, $8, $9, $10, $11, 'meeting_date',
+       $7, $8, $9, $10, $11, 'decision_date',
        $12::uuid, $13::uuid, $14, $15, $16, $17::jsonb
      )
      on conflict (idempotency_key) do nothing`,
@@ -1468,7 +1607,7 @@ function isHighConfidenceDecisionMention(mention: MatchedDecisionMention) {
 }
 
 function mentionChronologyDate(mention: LinkedMentionForReview) {
-  return mention.source.meetingDate ?? mention.sourceUpdatedAt?.slice(0, 10) ?? "0000-00-00";
+  return (typeof mention.matched.metadata.decisionDate === "string" ? mention.matched.metadata.decisionDate : mention.source.meetingDate) ?? mention.sourceUpdatedAt?.slice(0, 10) ?? "0000-00-00";
 }
 
 function latestMentionGroups(mentions: LinkedMentionForReview[]) {
@@ -1643,6 +1782,8 @@ export async function reconcileGrantDecisionMinutes(
     }
   }
 
+  await retireObsoleteMinuteEvidence();
+
   for (const group of latestMentionGroups(linkedMentionsForReview)) {
     const representative = group[0];
 
@@ -1758,6 +1899,7 @@ export const decisionMinutesTestHooks = {
   discourseTopicId,
   exactDecisionStatusAssertion,
   extractDecision,
+  decisionOccurrenceDate,
   extractMeetingDate,
   fetchApplications,
   fetchDecisionMinuteRecords,
@@ -1768,6 +1910,7 @@ export const decisionMinutesTestHooks = {
   matchMention,
   meetingGrantSections,
   normalizeDecisionLine,
+  retireObsoleteMinuteEvidence,
   partialDecisionConflict,
   terminalDecisionConflict,
   titleSections

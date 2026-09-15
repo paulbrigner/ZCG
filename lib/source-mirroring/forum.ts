@@ -232,7 +232,7 @@ function decodeHtmlEntities(value: string) {
   });
 }
 
-function htmlToPlainText(value: string | null | undefined) {
+export function htmlToPlainText(value: string | null | undefined) {
   if (!value) {
     return "";
   }

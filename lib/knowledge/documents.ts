@@ -107,6 +107,7 @@ type GrantKnowledgeDecisionMention = {
   id: string;
   source_record_id: string;
   meeting_date: string | null;
+  decision_date?: string | null;
   meeting_title: string;
   topic_url: string;
   candidate_title: string;
@@ -499,6 +500,7 @@ function buildDecisionDocument(
     `Status: ${row.normalized_status}`,
     `Decision evidence: ZCG meeting minutes`,
     mention.meeting_date ? `Meeting date: ${mention.meeting_date}` : null,
+    mention.decision_date ? `Decision date: ${mention.decision_date}` : null,
     `Meeting title: ${mention.meeting_title}`,
     `Referenced proposal: ${mention.candidate_title}`,
     `Normalized decision: ${mention.normalized_decision}`,
@@ -530,6 +532,7 @@ function buildDecisionDocument(
       decisionMentionId: mention.id,
       normalizedDecision: mention.normalized_decision,
       meetingDate: mention.meeting_date,
+      decisionDate: mention.decision_date ?? null,
       canonicalKey: row.canonical_key
     }
   };
@@ -1314,6 +1317,7 @@ async function fetchDecisionRowsForApplication(applicationId: string) {
     `select gdm.id::text,
             gds.source_record_id::text,
             gds.meeting_date::text,
+            gdm.metadata->>'decisionDate' as decision_date,
             gds.title as meeting_title,
             gds.topic_url,
             gdm.candidate_title,
