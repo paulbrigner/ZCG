@@ -21,7 +21,7 @@ test("retires obsolete derived ownership and retracts superseded assertions with
     }
     t.mock.method(pool, "query", (text: string, values: unknown[]) => client.query(text, values));
     const oldApp = randomUUID(), currentApp = randomUUID(), manualApp = randomUUID(), source = randomUUID(), ds = randomUUID(), mention = randomUUID();
-    for (const id of [oldApp, currentApp, manualApp]) await client.query("insert into grant_applications(id,canonical_key,title,normalized_status) values($1,$1,'Example','approved')", [id]);
+    for (const id of [oldApp, currentApp, manualApp]) await client.query("insert into grant_applications(id,canonical_key,title,normalized_status) values($1::uuid,$1::text,'Example','approved')", [id]);
     await client.query("insert into source_records(id,source_kind,source_id,raw_payload) values($1,'forum_meeting_minutes','meeting-source','{}')", [source]);
     for (const id of [oldApp, currentApp, manualApp]) await client.query("insert into source_links(source_record_id,canonical_type,canonical_id,relationship_role) values($1,'grant_application',$2,'decision_minutes')", [source, id]);
     await client.query("insert into reconciliation_decisions(decision_key,decision_type,source_kind,source_id,canonical_key,rationale) values('manual','link_source','forum_meeting_minutes','meeting-source',$1,'Explicit whole-source link')", [manualApp]);
@@ -37,7 +37,7 @@ test("retires obsolete derived ownership and retracts superseded assertions with
     ]) {
       const id = randomUUID(); events.push(id);
       await client.query(`insert into grant_application_status_events(id,application_id,application_canonical_key,event_type,to_status,provenance,effective_date,evidence_locator,evidence_fingerprint,idempotency_key,evidence)
-        values($1,$2,$2,'historical_assertion','approved','exact',$3,'locator','hash',$1,jsonb_build_object('basis',$4::text,'mentionId',$5::text))`, [id, app, date, basis, mentionId]);
+        values($1::uuid,$2::uuid,$2::text,'historical_assertion','approved','exact',$3,'locator','hash',$1::text,jsonb_build_object('basis',$4::text,'mentionId',$5::text))`, [id, app, date, basis, mentionId]);
     }
     await hooks.retireObsoleteMinuteEvidence();
     assert.deepEqual((await client.query("select canonical_id::text from source_links order by canonical_id")).rows.map(r => r.canonical_id).sort(), [currentApp, manualApp].sort());
