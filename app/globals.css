@@ -676,6 +676,10 @@ button:disabled {
   overflow-wrap: anywhere;
 }
 
+.application-evaluation-facts dd + dt {
+  margin-top: 14px;
+}
+
 .application-evaluation-facts small {
   color: var(--muted);
   display: block;
