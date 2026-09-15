@@ -206,6 +206,15 @@ Important boundaries:
   cell is retained as an opaque identifier because it is currently unique; a
   second `NA` would fail the same duplicate guard. Row number remains mutable
   locator metadata and does not own the current record.
+- Canonical application matching also uses the platform identifier, rather than
+  title, applicant, or JSON field order. GitHub issue links are compared by
+  owner/repository/issue, with comment fragments identifying the same application.
+  Submission dates are read from `Date Submitted`. Existing historical keys and
+  IDs are reused by their stored primary platform link; an active manual-decision
+  owner takes precedence over an unreviewed duplicate. Conflicting reviewed
+  owners stop reconciliation before generated data is changed. Older duplicate
+  records are retained for separate, reviewed cleanup rather than deleted during
+  matching. Full and targeted reconciliation share the same GitHub planning code.
 - `source_records` remains the current projection used by canonical and
   retrieval queries. Every inserted, changed, moved, re-keyed, or removed
   source state appends a new `source_record_observations` version. Identical

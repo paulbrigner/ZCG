@@ -13,6 +13,13 @@ import {
 } from "./decisions";
 import { reconcileGrantDecisionMinutes } from "./decision-minutes";
 import { syncGrantMilestoneProjections } from "./milestones";
+import {
+  applicationPlatformIdentity,
+  existingHistoricalKeysByPlatform,
+  historicalIdentityKey,
+  normalizedGitHubIssueUrl,
+  type ExistingHistoricalApplicationIdentity
+} from "./application-identity";
 
 type RawSourceRecord = {
   id: string;
@@ -74,6 +81,7 @@ type SheetProjectGroup = {
 
 type HistoricalApplicationGroup = {
   key: string;
+  canonicalKey: string;
   titleKey: string;
   title: string;
   applicantName: string | null;
@@ -1291,11 +1299,6 @@ function sheetFieldAny(row: Record<string, unknown>, fields: string[]) {
   return null;
 }
 
-function firstSheetColumnValue(row: Record<string, unknown>) {
-  const firstEntry = Object.entries(row)[0];
-  return firstEntry ? stringValue(firstEntry[1]) : null;
-}
-
 function sheetMetadata(record: RawSourceRecord) {
   return parseJsonRecord(record.metadata);
 }
@@ -1317,37 +1320,17 @@ function isAllGrantsTrackingRecord(record: RawSourceRecord) {
 }
 
 function parseGitHubIssueReference(value: string | null) {
-  if (!value) {
+  const issueUrl = normalizedGitHubIssueUrl(value);
+  if (!issueUrl) {
     return { issueNumber: null, issueUrl: null };
   }
-
-  try {
-    const parsed = new URL(value);
-    const segments = parsed.pathname.split("/").filter(Boolean);
-    const issueIndex = segments.indexOf("issues");
-    const issueNumber = issueIndex >= 0 ? numberValue(segments[issueIndex + 1]) : null;
-
-    if (parsed.hostname !== "github.com" || issueNumber === null || issueIndex < 2) {
-      return { issueNumber: null, issueUrl: null };
-    }
-
-    return {
-      issueNumber,
-      issueUrl: `https://github.com/${segments[0]}/${segments[1]}/issues/${issueNumber}`
-    };
-  } catch {
-    return { issueNumber: null, issueUrl: null };
-  }
+  return { issueNumber: Number(issueUrl.split("/").at(-1)), issueUrl };
 }
 
-function historicalApplicationKey(title: string, applicantName: string | null, submittedDate: string | null) {
-  return [normalizeTitle(title), normalizeTitle(applicantName), normalizeTitle(submittedDate)]
-    .filter(Boolean)
-    .join(":")
-    .slice(0, 240);
-}
-
-function buildHistoricalApplicationGroups(records: RawSourceRecord[]) {
+function buildHistoricalApplicationGroups(
+  records: RawSourceRecord[],
+  existingKeys: Map<string, string> = new Map()
+) {
   const groups = new Map<string, HistoricalApplicationGroup>();
 
   for (const record of records) {
@@ -1363,14 +1346,9 @@ function buildHistoricalApplicationGroups(records: RawSourceRecord[]) {
     }
 
     const applicantName = sheetFieldAny(raw, ["Applicant(s)", "Applicant", "Grantee"]);
-    const submittedDate = firstSheetColumnValue(raw);
-    const key = historicalApplicationKey(title, applicantName, submittedDate);
-
-    if (!key) {
-      continue;
-    }
-
+    const submittedDate = sheetField(raw, "Date Submitted");
     const grantPlatformLink = sheetField(raw, "Grant Platform Link");
+    const key = historicalIdentityKey(grantPlatformLink, record.source_id);
     const { issueNumber, issueUrl } = parseGitHubIssueReference(grantPlatformLink);
     const current = groups.get(key);
 
@@ -1387,6 +1365,7 @@ function buildHistoricalApplicationGroups(records: RawSourceRecord[]) {
 
     groups.set(key, {
       key,
+      canonicalKey: existingKeys.get(applicationPlatformIdentity(grantPlatformLink) ?? "") ?? `sheet-all-grants:${key}`,
       titleKey: normalizeTitle(title),
       title,
       applicantName,
@@ -1502,24 +1481,26 @@ function bestPaymentDetailMatchForHistoricalApplication(
 }
 
 function buildHistoricalApplicationsByGitHubIssue(groups: Iterable<HistoricalApplicationGroup>) {
-  const byIssueNumber = new Map<number, HistoricalApplicationGroup>();
+  const byIssueUrl = new Map<string, HistoricalApplicationGroup>();
 
   for (const group of groups) {
-    if (group.githubIssueNumber !== null) {
-      byIssueNumber.set(group.githubIssueNumber, group);
+    const issueUrl = normalizedGitHubIssueUrl(group.githubIssueUrl);
+    if (issueUrl) {
+      byIssueUrl.set(issueUrl, group);
     }
   }
 
-  return byIssueNumber;
+  return byIssueUrl;
 }
 
 function bestHistoricalApplicationMatch(
   app: GitHubApplication,
   historicalGroups: Map<string, HistoricalApplicationGroup>,
-  historicalByIssueNumber: Map<number, HistoricalApplicationGroup>
+  historicalByIssueUrl: Map<string, HistoricalApplicationGroup>
 ) {
-  if (app.issueNumber !== null) {
-    const explicit = historicalByIssueNumber.get(app.issueNumber);
+  const issueUrl = normalizedGitHubIssueUrl(app.issueUrl);
+  if (issueUrl) {
+    const explicit = historicalByIssueUrl.get(issueUrl);
 
     if (explicit) {
       return { group: explicit, confidence: 1 };
@@ -1529,6 +1510,9 @@ function bestHistoricalApplicationMatch(
   let best: { group: HistoricalApplicationGroup; confidence: number } | null = null;
 
   for (const group of historicalGroups.values()) {
+    // An explicit link to another issue is stronger than title similarity,
+    // including when another repository happens to use the same issue number.
+    if (normalizedGitHubIssueUrl(group.githubIssueUrl)) continue;
     const confidence = Math.max(jaccard(app.displayTitle, group.title), jaccard(app.title, group.title));
 
     if (!best || confidence > best.confidence) {
@@ -2365,49 +2349,29 @@ async function deleteLegacySheetOnlyApplications() {
   await query(`delete from grant_applications where canonical_key like 'sheet:%' or canonical_key like 'sheet-detail-unmatched:%'`);
 }
 
-async function deleteMatchedHistoricalRegistryApplications(matchedHistoricalKeys: Set<string>) {
-  if (!matchedHistoricalKeys.size) {
-    return;
-  }
-
-  const payload = [...matchedHistoricalKeys].map((key) => ({
-    canonical_key: `sheet-all-grants:${key}`
-  }));
-
-  await query(
-    `delete from source_links sl
-      using grant_applications ga,
-            jsonb_to_recordset($1::jsonb) as stale(canonical_key text)
-      where sl.canonical_type = 'grant_application'
-        and sl.canonical_id = ga.id
-        and ga.canonical_key = stale.canonical_key`,
-    [JSON.stringify(payload)]
+async function fetchExistingHistoricalApplicationKeys() {
+  const result = await query<ExistingHistoricalApplicationIdentity>(
+    `select ga.canonical_key,
+            ga.source_summary->>'historicalRegistryGrantPlatformLink' as platform_link,
+            ga.created_at::text,
+            ga.updated_at::text,
+            (select count(*)::text
+               from reconciliation_decisions d
+              where d.status = 'active'
+                and (d.canonical_key = ga.canonical_key or d.related_canonical_key = ga.canonical_key)
+            ) as manual_decisions
+       from grant_applications ga
+      where ga.canonical_key like 'sheet-all-grants:%'
+      order by ga.canonical_key`
   );
-
-  await query(
-    `delete from grants
-      where application_id in (
-        select ga.id
-          from grant_applications ga
-          join jsonb_to_recordset($1::jsonb) as stale(canonical_key text)
-            on stale.canonical_key = ga.canonical_key
-      )`,
-    [JSON.stringify(payload)]
-  );
-
-  await query(
-    `delete from grant_applications ga
-      using jsonb_to_recordset($1::jsonb) as stale(canonical_key text)
-      where ga.canonical_key = stale.canonical_key`,
-    [JSON.stringify(payload)]
-  );
+  return existingHistoricalKeysByPlatform(result.rows);
 }
 
 function planGitHubApplication(params: {
   app: GitHubApplication;
   githubComments: RawSourceRecord[];
   historicalGroups: Map<string, HistoricalApplicationGroup>;
-  historicalByGitHubIssueNumber: Map<number, HistoricalApplicationGroup>;
+  historicalByGitHubIssueUrl: Map<string, HistoricalApplicationGroup>;
   paymentDetailGroups: Map<string, SheetProjectGroup>;
   hasHistoricalRegistry: boolean;
 }): PlannedGitHubApplicationResult {
@@ -2415,12 +2379,12 @@ function planGitHubApplication(params: {
     app,
     githubComments,
     historicalGroups,
-    historicalByGitHubIssueNumber,
+    historicalByGitHubIssueUrl,
     paymentDetailGroups,
     hasHistoricalRegistry
   } = params;
   const historicalMatch = hasHistoricalRegistry
-    ? bestHistoricalApplicationMatch(app, historicalGroups, historicalByGitHubIssueNumber)
+    ? bestHistoricalApplicationMatch(app, historicalGroups, historicalByGitHubIssueUrl)
     : null;
   const paymentMatch = historicalMatch
     ? bestPaymentDetailMatchForHistoricalApplication(historicalMatch.group, paymentDetailGroups)
@@ -2611,8 +2575,8 @@ async function performGrantReconciliation(
     .map(parseGitHubApplication)
     .filter((app): app is GitHubApplication => Boolean(app));
   const githubCommentsByIssue = buildGitHubCommentsByIssue(githubCommentRecords);
-  const historicalGroups = buildHistoricalApplicationGroups(sheetRecords);
-  const historicalByGitHubIssueNumber = buildHistoricalApplicationsByGitHubIssue(historicalGroups.values());
+  const historicalGroups = buildHistoricalApplicationGroups(sheetRecords, await fetchExistingHistoricalApplicationKeys());
+  const historicalByGitHubIssueUrl = buildHistoricalApplicationsByGitHubIssue(historicalGroups.values());
   const paymentDetailGroups = buildPaymentDetailGroups(sheetRecords);
   const hasHistoricalRegistry = historicalGroups.size > 0;
   const manualSourceLinkKeys = await getActiveManualSourceLinkKeys();
@@ -2674,183 +2638,24 @@ async function performGrantReconciliation(
   const orphanIssues: ReconciliationIssueInput[] = [];
 
   for (const app of githubApplications) {
-    const historicalMatch = hasHistoricalRegistry
-      ? bestHistoricalApplicationMatch(app, historicalGroups, historicalByGitHubIssueNumber)
-      : null;
-    const paymentMatch = historicalMatch
-      ? bestPaymentDetailMatchForHistoricalApplication(historicalMatch.group, paymentDetailGroups)
-      : bestPaymentDetailMatch(app, paymentDetailGroups);
-    const githubComments = githubCommentsByIssue.get(app.sourceRecord.source_id) ?? [];
-    const sourceStatus = historicalMatch?.group.status ?? paymentMatch?.group.status ?? null;
-    const sheetStatus = sourceStatus ? statusFromSheet(sourceStatus) : null;
-    const normalizedStatus = resolveCanonicalStatus(sheetStatus, statusFromGitHub(app));
-    const requestedAmountUsd =
-      app.requestedAmountUsd ??
-      paymentMatch?.group.requestedAmountUsd ??
-      historicalMatch?.group.amountFunded2021 ??
-      null;
-    const matchConfidence = Math.max(historicalMatch?.confidence ?? 0, paymentMatch?.confidence ?? 0);
-    const planned: PlannedApplication = {
-      application: {
-        canonicalKey: `github:${app.sourceRecord.source_id}`,
-        title: app.displayTitle,
-        applicantName: app.applicantName ?? historicalMatch?.group.applicantName ?? paymentMatch?.group.grantee ?? null,
-        githubIssueNumber: app.issueNumber,
-        githubIssueUrl: app.issueUrl,
-        githubState: app.state,
-        normalizedStatus,
-        requestedAmountUsd,
-        matchConfidence,
-        sourceSummary: {
-          generatedBy,
-          githubSourceId: app.sourceRecord.source_id,
-          githubLabels: app.labels,
-          githubCommentCount: githubComments.length,
-          historicalRegistryProject: historicalMatch?.group.title ?? null,
-          historicalRegistryApplicant: historicalMatch?.group.applicantName ?? null,
-          historicalRegistryStatus: historicalMatch?.group.status ?? null,
-          historicalRegistrySubmittedDate: historicalMatch?.group.submittedDate ?? null,
-          historicalRegistryDecisionDate: historicalMatch?.group.decisionDate ?? null,
-          historicalRegistryGrantPlatformLink: historicalMatch?.group.grantPlatformLink ?? null,
-          historicalRegistryLegacyProposalUrl: historicalMatch?.group.legacyProposalUrl ?? null,
-          historicalRegistryForumUrl: historicalMatch?.group.forumUrl ?? null,
-          historicalRegistryRowCount: historicalMatch?.group.rows.length ?? 0,
-          sheetProject: paymentMatch?.group.project ?? null,
-          sheetRowCount: paymentMatch?.group.rows.length ?? 0,
-          sheetCategory: paymentMatch?.group.category ?? null,
-          sheetPaidAmountUsd: paymentMatch?.group.paidAmountUsd ?? null
-        }
-      },
-      links: [
-        { sourceRecordId: app.sourceRecord.id, confidence: 1 },
-        ...githubComments.map((record) => ({ sourceRecordId: record.id, confidence: 1 }))
-      ],
-      githubLabels: githubLabelsFromApplication(app),
-      forumLinks: mergeForumLinks([app.sourceRecord, ...githubComments]),
-      grant: null,
-      issues: []
-    };
-
+    const result = planGitHubApplication({
+      app,
+      githubComments: githubCommentsByIssue.get(app.sourceRecord.source_id) ?? [],
+      historicalGroups,
+      historicalByGitHubIssueUrl,
+      paymentDetailGroups,
+      hasHistoricalRegistry
+    });
+    if (result.matchedHistoricalKey) matchedHistoricalKeys.add(result.matchedHistoricalKey);
+    if (result.matchedPaymentDetailKey) matchedPaymentDetailKeys.add(result.matchedPaymentDetailKey);
+    counts.matchedApplications += Number(result.matchedHistoricalApplication);
+    counts.unmatchedGitHubApplications += result.unmatchedGitHubApplications;
     counts.applicationsCreatedOrUpdated += 1;
-    const assignmentConflict = sheetReviewAssignmentConflictIssue(app, sheetStatus, sourceStatus);
-
-    if (assignmentConflict) {
-      planned.issues.push(assignmentConflict);
-    }
-
-    if (historicalMatch) {
-      matchedHistoricalKeys.add(historicalMatch.group.key);
-      counts.matchedApplications += 1;
-
-      for (const row of historicalMatch.group.rows) {
-        planned.links.push({ sourceRecordId: row.id, confidence: historicalMatch.confidence });
-      }
-
-      planned.forumLinks = mergeForumLinks([app.sourceRecord, ...githubComments, ...historicalMatch.group.rows]);
-
-      if (historicalMatch.confidence < 0.92) {
-        planned.issues.push({
-          issueType: "low_confidence_historical_registry_match",
-          severity: "warning",
-          sourceRecordId: app.sourceRecord.id,
-          summary: `Review possible All Grants registry match for ${app.displayTitle}`,
-          details: {
-            githubTitle: app.title,
-            historicalRegistryTitle: historicalMatch.group.title,
-            confidence: historicalMatch.confidence
-          }
-        });
-      }
-    } else if (hasHistoricalRegistry) {
-      counts.unmatchedGitHubApplications += 1;
-      planned.issues.push({
-        issueType: "missing_historical_registry_match",
-        severity: "warning",
-        sourceRecordId: app.sourceRecord.id,
-        summary: `No All Grants registry match found for ${app.displayTitle}`,
-        details: {
-          githubTitle: app.title,
-          issueNumber: app.issueNumber,
-          issueUrl: app.issueUrl
-        }
-      });
-    }
-
-    if (paymentMatch) {
-      matchedPaymentDetailKeys.add(paymentMatch.group.key);
-      planned.forumLinks = mergeForumLinks([
-        app.sourceRecord,
-        ...githubComments,
-        ...(historicalMatch?.group.rows ?? []),
-        ...paymentMatch.group.rows
-      ]);
-
-      for (const row of paymentMatch.group.rows) {
-        planned.links.push({ sourceRecordId: row.id, confidence: paymentMatch.confidence });
-      }
-
-      if (isFundedGrantStatus(normalizedStatus)) {
-        planned.grant = {
-          title: app.displayTitle,
-          granteeName: paymentMatch.group.grantee ?? historicalMatch?.group.applicantName ?? app.applicantName,
-          status: normalizedStatus,
-          approvedAmountUsd: paymentMatch.group.requestedAmountUsd ?? historicalMatch?.group.amountFunded2021 ?? null
-        };
-      }
-
-      if (paymentMatch.confidence < 0.92) {
-        planned.issues.push({
-          issueType: "low_confidence_payment_detail_match",
-          severity: "warning",
-          sourceRecordId: app.sourceRecord.id,
-          summary: `Review possible payment/detail Sheet match for ${app.displayTitle}`,
-          details: {
-            githubTitle: app.title,
-            sheetProject: paymentMatch.group.project,
-            confidence: paymentMatch.confidence
-          }
-        });
-      }
-    } else if (historicalMatch && isFundedGrantStatus(normalizedStatus)) {
-      planned.grant = {
-        title: app.displayTitle,
-        granteeName: historicalMatch.group.applicantName ?? app.applicantName,
-        status: normalizedStatus,
-        approvedAmountUsd: historicalMatch.group.amountFunded2021
-      };
-    } else if (!hasHistoricalRegistry) {
-      counts.unmatchedGitHubApplications += 1;
-      planned.issues.push({
-        issueType: "missing_sheet_match",
-        severity: "info",
-        sourceRecordId: app.sourceRecord.id,
-        summary: `No Sheet project match found for ${app.displayTitle}`,
-        details: {
-          githubTitle: app.title,
-          issueNumber: app.issueNumber,
-          issueUrl: app.issueUrl
-        }
-      });
-    }
-
-    if (app.state === "open" && ["completed", "cancelled", "declined", "withdrawn", "filtered"].includes(normalizedStatus)) {
-      planned.issues.push({
-        issueType: "status_conflict",
-        severity: "warning",
-        sourceRecordId: app.sourceRecord.id,
-        summary: `GitHub is open but source status is ${sourceStatus}`,
-        details: {
-          githubState: app.state,
-          sourceStatus,
-          normalizedStatus
-        }
-      });
-    }
-
-    plannedApplications.push(planned);
+    plannedApplications.push(result.planned);
   }
 
-  await deleteMatchedHistoricalRegistryApplications(matchedHistoricalKeys);
+  // Keep historical IDs and saved reviewer decisions intact. Identity matching
+  // is not authorization to delete older duplicate application records.
 
   for (const group of historicalGroups.values()) {
     if (matchedHistoricalKeys.has(group.key)) {
@@ -2868,7 +2673,7 @@ async function performGrantReconciliation(
 
     const planned: PlannedApplication = {
       application: {
-        canonicalKey: `sheet-all-grants:${group.key}`,
+        canonicalKey: group.canonicalKey,
         title: group.title,
         applicantName: group.applicantName,
         githubIssueNumber: group.githubIssueNumber,
@@ -3259,7 +3064,7 @@ async function performTargetedGitHubReconciliation(
     app,
     githubComments,
     historicalGroups,
-    historicalByGitHubIssueNumber: buildHistoricalApplicationsByGitHubIssue(historicalGroups.values()),
+    historicalByGitHubIssueUrl: buildHistoricalApplicationsByGitHubIssue(historicalGroups.values()),
     paymentDetailGroups,
     hasHistoricalRegistry: historicalGroups.size > 0
   });
@@ -3381,6 +3186,13 @@ export async function runTargetedGitHubReconciliation(options: {
 }
 
 export const grantReconciliationTestHooks = {
+  buildHistoricalApplicationGroups,
+  buildHistoricalApplicationsByGitHubIssue,
+  bestHistoricalApplicationMatch,
+  buildPaymentDetailGroups,
+  fetchExistingHistoricalApplicationKeys,
+  parseGitHubApplication,
+  planGitHubApplication,
   acquireGrantReconciliationLease,
   clearTargetedGeneratedState,
   deleteGrantsForUnfundedProcessedApplications,
