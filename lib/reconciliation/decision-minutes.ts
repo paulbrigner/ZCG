@@ -6,6 +6,7 @@ const parserVersion = "zcg_minutes_parser_v3";
 // Historical minutes contain large mirrored payloads. Keep each response below
 // the Data API's aggregate size limit when reconciliation runs through SSR.
 const sourceRecordBatchSize = 1;
+const sourceLinkBatchSize = 500;
 const maxRationaleLength = 12000;
 
 type RawSourceRecord = {
@@ -874,24 +875,34 @@ async function fetchApplications() {
 }
 
 async function fetchSourceLinkIndex() {
-  const result = await query<SourceLinkIndexRow>(
-    `select ga.id::text as application_id,
-            ga.canonical_key,
-            ga.title,
-            ga.normalized_status,
-            sr.id::text as source_record_id,
-            sr.source_kind,
-            sr.source_id,
-            sr.source_url,
-            sl.confidence::text,
-            sl.relationship_role
-       from source_links sl
-       join source_records sr on sr.id = sl.source_record_id
-       join grant_applications ga on ga.id = sl.canonical_id
-      where sl.canonical_type = 'grant_application'`
-  );
+  const rows: SourceLinkIndexRow[] = [];
 
-  return result.rows;
+  for (let offset = 0; ; offset += sourceLinkBatchSize) {
+    const result = await query<SourceLinkIndexRow>(
+      `select ga.id::text as application_id,
+              ga.canonical_key,
+              ga.title,
+              ga.normalized_status,
+              sr.id::text as source_record_id,
+              sr.source_kind,
+              sr.source_id,
+              sr.source_url,
+              sl.confidence::text,
+              sl.relationship_role
+         from source_links sl
+         join source_records sr on sr.id = sl.source_record_id
+         join grant_applications ga on ga.id = sl.canonical_id
+        where sl.canonical_type = 'grant_application'
+        order by sl.id
+        limit $1 offset $2`,
+      [sourceLinkBatchSize, offset]
+    );
+    rows.push(...result.rows);
+
+    if (result.rows.length < sourceLinkBatchSize) {
+      return rows;
+    }
+  }
 }
 
 async function fetchManualSourceLinkIndex() {
@@ -1748,7 +1759,10 @@ export const decisionMinutesTestHooks = {
   exactDecisionStatusAssertion,
   extractDecision,
   extractMeetingDate,
+  fetchApplications,
   fetchDecisionMinuteRecords,
+  fetchManualSourceLinkIndex,
+  fetchSourceLinkIndex,
   isHighConfidenceDecisionMention,
   latestMentionGroups,
   matchMention,
