@@ -1,4 +1,6 @@
 import { query } from "../db";
+import { compatiblePaymentTitles } from "./payment-identity";
+import { summarizeLedgerFunding, type FundingMilestone } from "./payment-funding";
 
 type QueryResultLike = {
   rows?: Array<Record<string, unknown>>;
@@ -14,6 +16,7 @@ type EligibleMilestoneSourceRow = {
   applicationId: string;
   applicationKey: string;
   applicationTitle: string;
+  applicationStatus?: string;
   sourceRecordId: string;
   sourceId: string;
   sourceUrl: string | null;
@@ -65,6 +68,7 @@ export type GrantMilestoneProjectionSyncResult = {
   milestonesDeleted: number;
   disbursementsDeleted: number;
   ambiguousSourceLinks: number;
+  affectedApplicationIds: string[];
 };
 
 const writeBatchSize = 100;
@@ -376,6 +380,7 @@ function sourceRowFromQuery(row: Record<string, unknown>): EligibleMilestoneSour
     applicationId: String(row.application_id),
     applicationKey: String(row.application_key),
     applicationTitle: String(row.application_title),
+    applicationStatus: cellText(row.application_status) ?? undefined,
     sourceRecordId: String(row.source_record_id),
     sourceId: String(row.source_id),
     sourceUrl: cellText(row.source_url),
@@ -417,7 +422,8 @@ function emptySyncResult(): GrantMilestoneProjectionSyncResult {
     disbursementsUpserted: 0,
     milestonesDeleted: 0,
     disbursementsDeleted: 0,
-    ambiguousSourceLinks: 0
+    ambiguousSourceLinks: 0,
+    affectedApplicationIds: []
   };
 }
 
@@ -445,15 +451,22 @@ function selectMilestoneSources(sourceRows: EligibleMilestoneSourceRow[]) {
     );
     const reviewedCandidates = orderedCandidates.filter((candidate) => candidate.manuallyLinked);
 
-    if (orderedCandidates.length === 1) {
-      selected.push(orderedCandidates[0]);
-      continue;
-    }
-
     if (reviewedCandidates.length === 1) {
       selected.push(reviewedCandidates[0]);
       continue;
     }
+
+    const automaticCandidates = orderedCandidates.filter((candidate) => {
+      if (["declined", "withdrawn", "filtered", "retired"].includes(candidate.applicationStatus ?? "")) return false;
+      const parsed = parseGrantMilestoneSheetRow(candidate.rawPayload);
+      if (parsed?.project && !compatiblePaymentTitles(candidate.applicationTitle, parsed.project)) return false;
+      return true;
+    });
+    if (reviewedCandidates.length === 0 && automaticCandidates.length === 1) {
+      selected.push(automaticCandidates[0]);
+      continue;
+    }
+    if (reviewedCandidates.length === 0 && automaticCandidates.length === 0) continue;
 
     const source = orderedCandidates[0];
     const project = cellText(sheetField(source.rawPayload, "Project"));
@@ -621,16 +634,101 @@ async function syncAmbiguousMilestoneIssues(options: {
   );
 }
 
+
+async function syncFundingTotals(executeQuery: ProjectionQueryRunner, applicationScope: string[] | null, ambiguousApplicationIds: string[] = []) {
+  const result = await executeQuery(
+    `/* grant_funding_projection_sources */
+     select ga.id::text as application_id,
+            ga.normalized_status,
+            coalesce(ga.source_summary->'ledgerFunding', '{}'::jsonb)::text as previous_funding,
+            (select count(*) from source_links sl join source_records sr on sr.id = sl.source_record_id
+              where sl.canonical_type = 'grant_application' and sl.canonical_id = ga.id
+                and sr.source_kind = 'google_sheet_row'
+                and lower(coalesce(sr.metadata->>'tabName', '')) = 'milestone_details')::text as candidate_count,
+            coalesce((select jsonb_agg(jsonb_build_object(
+              'sourceRecordId', gm.source_record_id, 'milestoneLabel', gm.milestone_label,
+              'amountUsd', gm.amount_usd) order by gm.source_record_id)
+              from grant_milestones gm where gm.application_id = ga.id), '[]'::jsonb)::text as milestones
+       from grant_applications ga
+      where ($1::jsonb is null and exists (
+               select 1 from source_links sl where sl.canonical_type = 'grant_application' and sl.canonical_id = ga.id)
+             or exists (select 1 from jsonb_array_elements_text($1::jsonb) scoped(application_id)
+                         where scoped.application_id::uuid = ga.id))`,
+    [applicationScope === null ? null : JSON.stringify(applicationScope)]
+  );
+  const payload = (result.rows ?? []).filter((row) => Number(row.candidate_count) > 0 || String(row.milestones ?? "[]") !== "[]" || Object.keys(jsonObject(row.previous_funding)).length > 0).map((row) => {
+    const milestones = JSON.parse(String(row.milestones ?? "[]")) as FundingMilestone[];
+    const funding = summarizeLedgerFunding(milestones, ambiguousApplicationIds.includes(String(row.application_id)));
+    return {
+      application_id: String(row.application_id),
+      funding,
+      replace_amount: milestones.length > 0 || Number(row.candidate_count) > 0 || Object.keys(jsonObject(row.previous_funding)).length > 0,
+      approved_amount_usd: funding.confirmedScheduleAmountUsd
+    };
+  });
+  for (const batch of chunks(payload, writeBatchSize)) {
+    await executeQuery(
+      `/* grant_funding_projection_upsert */
+       with input as (select * from jsonb_to_recordset($1::jsonb) as x(
+         application_id uuid, funding jsonb, replace_amount boolean, approved_amount_usd numeric)),
+       updated_grants as (
+         update grants g set approved_amount_usd = input.approved_amount_usd, updated_at = now()
+           from input where g.application_id = input.application_id and input.replace_amount
+       )
+       update grant_applications ga
+          set source_summary = coalesce(ga.source_summary, '{}'::jsonb) || jsonb_build_object('ledgerFunding', input.funding),
+              updated_at = now()
+         from input where ga.id = input.application_id`,
+      [JSON.stringify(batch)]
+    );
+  }
+  return payload.map((row) => row.application_id);
+}
+
+async function connectedApplicationScope(applicationIds: string[], executeQuery: ProjectionQueryRunner) {
+  if (!applicationIds.length) return [];
+  const expanded = await executeQuery(
+    `/* grant_milestone_application_scope */
+         with recursive edges as (
+           select sl.canonical_id as application_id, sl.source_record_id
+             from source_links sl join source_records sr on sr.id = sl.source_record_id
+            where sl.canonical_type = 'grant_application'
+              and sr.source_kind = 'google_sheet_row'
+              and lower(coalesce(sr.metadata->>'tabName', '')) = 'milestone_details'
+           union select application_id, source_record_id from grant_milestones
+           union select application_id, source_record_id from grant_disbursements
+         ), connected(application_id) as (
+           select value::uuid from jsonb_array_elements_text($1::jsonb)
+           union
+           select other.application_id from connected
+             join edges own on own.application_id = connected.application_id
+             join edges other on other.source_record_id = own.source_record_id
+         ) select application_id::text from connected`,
+    [JSON.stringify(applicationIds)]
+  );
+  return [...new Set([...applicationIds, ...(expanded.rows ?? []).map((row) => String(row.application_id))])];
+}
+
+// Capture this before replacing links too: a previously ambiguous source has
+// no milestone owner, and deleting its final link would otherwise lose the edge.
+export function loadMilestoneApplicationScope(applicationIds: string[]) {
+  return connectedApplicationScope(applicationIds, executeProjectionQuery);
+}
+
 function createSyncGrantMilestoneProjections(executeQuery: ProjectionQueryRunner) {
   return async function sync(
     options: { applicationIds?: string[] } = {}
   ): Promise<GrantMilestoneProjectionSyncResult> {
-    const applicationScope = normalizeApplicationScope(options.applicationIds);
+    let applicationScope = normalizeApplicationScope(options.applicationIds);
 
     if (applicationScope?.length === 0) {
       return emptySyncResult();
     }
 
+    // Include every source for both current and previous competing owners.
+    if (applicationScope !== null) {
+      applicationScope = await connectedApplicationScope(applicationScope, executeQuery);
+    }
     const scopePayload = applicationScope === null ? null : JSON.stringify(applicationScope);
     const eligibleResult = await executeQuery(
       `/* grant_milestone_projection_sources */
@@ -638,6 +736,7 @@ function createSyncGrantMilestoneProjections(executeQuery: ProjectionQueryRunner
          select sl.canonical_id as application_id,
                 linked_application.canonical_key as application_key,
                 linked_application.title as application_title,
+                linked_application.normalized_status as application_status,
                 sr.id as source_record_id,
                 sr.source_id,
                 sr.source_url,
@@ -671,6 +770,7 @@ function createSyncGrantMilestoneProjections(executeQuery: ProjectionQueryRunner
        select candidate.application_id::text as application_id,
               candidate.application_key,
               candidate.application_title,
+              candidate.application_status,
               candidate.source_record_id::text as source_record_id,
               candidate.source_id,
               candidate.source_url,
@@ -683,10 +783,8 @@ function createSyncGrantMilestoneProjections(executeQuery: ProjectionQueryRunner
           $1::jsonb is null
           or exists (
             select 1
-              from eligible scoped_candidate
-              join jsonb_array_elements_text($1::jsonb) scoped(application_id)
-                on scoped.application_id::uuid = scoped_candidate.application_id
-             where scoped_candidate.source_record_id = candidate.source_record_id
+              from jsonb_array_elements_text($1::jsonb) scoped(application_id)
+             where scoped.application_id::uuid = candidate.application_id
           )
         )
         order by candidate.source_record_id, candidate.application_key`,
@@ -880,12 +978,8 @@ function createSyncGrantMilestoneProjections(executeQuery: ProjectionQueryRunner
     const currentMilestoneSourceIds = projections.map((projection) => projection.sourceRecordId);
     const currentDisbursementSourceIds = disbursements.map((projection) => projection.sourceRecordId);
     const ambiguousSourceIds = ambiguous.map((issue) => issue.sourceRecordId);
-    // A targeted query deliberately pulls every candidate for a source that
-    // touches the requested application so ambiguity can be evaluated safely.
-    // Those additional candidates do not widen the cleanup scope: doing so
-    // could delete unrelated projections for another candidate application
-    // whose other sources were not loaded by this targeted run. Ambiguous
-    // source IDs are handled explicitly below regardless of attachment.
+    // The expanded scope loads every source for every affected application,
+    // so cleanup cannot erase a competing application's unrelated installments.
     const cleanupScopePayload = applicationScope === null
       ? null
       : JSON.stringify(applicationScope);
@@ -952,6 +1046,7 @@ function createSyncGrantMilestoneProjections(executeQuery: ProjectionQueryRunner
       ]
     );
 
+    const affectedApplicationIds = await syncFundingTotals(executeQuery, applicationScope, ambiguous.flatMap((issue) => issue.details.candidateApplicationIds as string[]));
     return {
       ok: true,
       sourceRowsSeen: sourceRows.length,
@@ -960,7 +1055,8 @@ function createSyncGrantMilestoneProjections(executeQuery: ProjectionQueryRunner
       disbursementsUpserted: disbursements.length,
       milestonesDeleted: deletedMilestones.rowCount ?? 0,
       disbursementsDeleted: deletedDisbursements.rowCount ?? 0,
-      ambiguousSourceLinks: ambiguous.length
+      ambiguousSourceLinks: ambiguous.length,
+      affectedApplicationIds: [...new Set([...(applicationScope ?? []), ...affectedApplicationIds])]
     };
   };
 }
@@ -974,6 +1070,10 @@ export const syncGrantMilestoneProjections = createSyncGrantMilestoneProjections
 
 export const milestoneProjectionTestHooks = {
   createSyncGrantMilestoneProjections,
+  selectMilestoneSources,
+  sourceRowFromQuery,
+  syncFundingTotals,
+  connectedApplicationScope,
   rowSpecificSheetUrl,
   sourceRowNumber
 };

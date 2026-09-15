@@ -236,6 +236,18 @@ Important boundaries:
   require a strong reconciliation match; reviewer-confirmed links are also
   eligible. Ambiguous rows remain reconciliation issues rather than being
   silently attached.
+- Payment ownership preserves phase, quarter, year, and revised-proposal markers.
+  Declined or withdrawn resubmissions do not receive automatic ledger links.
+  A unique reviewer-confirmed owner takes precedence; competing eligible owners
+  remain unresolved. Targeted updates load the connected applications, including
+  previous owners, and recompute and reindex all affected applications.
+- Requested amounts come from proposal evidence, never the largest ledger row.
+  Funding totals sum uniquely owned ledger installments, including startup funding
+  and split payments. The schedule can represent a partial approval (for example,
+  milestone 1 only), so it is kept separate from the full request and disbursements.
+  Refunds and reimbursements are recorded separately; missing amounts, unresolved
+  ownership, and negative ordinary milestone adjustments leave the total
+  unconfirmed. The detail page and retrieval summary expose this basis.
 - The Sheet's `Amount (USD)` row value is not treated as a disbursement. A disbursement row
   is created only when the Sheet explicitly records a paid date, ZEC amount, or
   USD-disbursed amount. No payment-request, approval, progress-update, or

@@ -314,6 +314,7 @@ function buildApplicationSummaryDocument(row: GrantKnowledgeApplicationRow): Kno
     `Status: ${row.normalized_status}`,
     githubLabelValues.length ? `GitHub labels: ${githubLabelValues.join(" | ")}` : null,
     row.requested_amount_usd ? `Requested amount USD: ${row.requested_amount_usd}` : null,
+    sourceSummary.ledgerFunding ? `Payment ledger funding (separate from requested funding): ${JSON.stringify(sourceSummary.ledgerFunding)}` : null,
     row.github_issue_number ? `GitHub issue: ${row.github_issue_number}` : null,
     row.github_issue_url ? `GitHub URL: ${row.github_issue_url}` : null,
     ...collectStringValues(sourceSummary)
