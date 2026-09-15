@@ -12,7 +12,8 @@ import {
   manualSourceLinkKey
 } from "./decisions";
 import { reconcileGrantDecisionMinutes } from "./decision-minutes";
-import { syncGrantMilestoneProjections } from "./milestones";
+import { loadMilestoneApplicationScope, syncGrantMilestoneProjections } from "./milestones";
+import { compatiblePaymentTitles } from "./payment-identity";
 import {
   applicationPlatformIdentity,
   existingHistoricalKeysByPlatform,
@@ -74,8 +75,6 @@ type SheetProjectGroup = {
   grantee: string | null;
   status: string | null;
   category: string | null;
-  requestedAmountUsd: number | null;
-  paidAmountUsd: number | null;
   rows: RawSourceRecord[];
 };
 
@@ -1409,14 +1408,10 @@ function buildPaymentDetailGroups(records: RawSourceRecord[]) {
       continue;
     }
 
-    const amount = numberValue(sheetField(raw, "Amount (USD)"));
-    const paid = numberValue(sheetField(raw, "USD Disbursed"));
     const current = groups.get(key);
 
     if (current) {
       current.rows.push(record);
-      current.requestedAmountUsd = Math.max(current.requestedAmountUsd ?? 0, amount ?? 0) || current.requestedAmountUsd;
-      current.paidAmountUsd = (current.paidAmountUsd ?? 0) + (paid ?? 0);
       current.status ||= sheetField(raw, "Grant Status");
       current.category ||= sheetField(raw, "Category \n(as determined by ZCG)");
       continue;
@@ -1428,8 +1423,6 @@ function buildPaymentDetailGroups(records: RawSourceRecord[]) {
       grantee: sheetField(raw, "Grantee"),
       status: sheetField(raw, "Grant Status"),
       category: sheetField(raw, "Category \n(as determined by ZCG)"),
-      requestedAmountUsd: amount,
-      paidAmountUsd: paid,
       rows: [record]
     });
   }
@@ -1447,6 +1440,7 @@ function bestPaymentDetailMatch(app: GitHubApplication, sheetGroups: Map<string,
   let best: { group: SheetProjectGroup; confidence: number } | null = null;
 
   for (const group of sheetGroups.values()) {
+    if (!compatiblePaymentTitles(app.displayTitle, group.project)) continue;
     const confidence = Math.max(jaccard(app.displayTitle, group.project), jaccard(app.title, group.project));
 
     if (!best || confidence > best.confidence) {
@@ -1470,6 +1464,7 @@ function bestPaymentDetailMatchForHistoricalApplication(
   let best: { group: SheetProjectGroup; confidence: number } | null = null;
 
   for (const group of sheetGroups.values()) {
+    if (!compatiblePaymentTitles(historical.title, group.project)) continue;
     const confidence = Math.max(jaccard(historical.title, group.project), jaccard(`${historical.title} ${historical.applicantName ?? ""}`, `${group.project} ${group.grantee ?? ""}`));
 
     if (!best || confidence > best.confidence) {
@@ -2386,17 +2381,15 @@ function planGitHubApplication(params: {
   const historicalMatch = hasHistoricalRegistry
     ? bestHistoricalApplicationMatch(app, historicalGroups, historicalByGitHubIssueUrl)
     : null;
-  const paymentMatch = historicalMatch
+  const paymentCandidate = historicalMatch
     ? bestPaymentDetailMatchForHistoricalApplication(historicalMatch.group, paymentDetailGroups)
     : bestPaymentDetailMatch(app, paymentDetailGroups);
-  const sourceStatus = historicalMatch?.group.status ?? paymentMatch?.group.status ?? null;
+  const sourceStatus = historicalMatch?.group.status ?? paymentCandidate?.group.status ?? null;
   const sheetStatus = sourceStatus ? statusFromSheet(sourceStatus) : null;
   const normalizedStatus = resolveCanonicalStatus(sheetStatus, statusFromGitHub(app));
-  const requestedAmountUsd =
-    app.requestedAmountUsd ??
-    paymentMatch?.group.requestedAmountUsd ??
-    historicalMatch?.group.amountFunded2021 ??
-    null;
+  const paymentMatch = ["declined", "withdrawn", "filtered"].includes(normalizedStatus) ? null : paymentCandidate;
+  // Requested funding comes from the proposal, never from a payment installment.
+  const requestedAmountUsd = app.requestedAmountUsd;
   const matchConfidence = Math.max(historicalMatch?.confidence ?? 0, paymentMatch?.confidence ?? 0);
   const planned: PlannedApplication = {
     application: {
@@ -2425,8 +2418,7 @@ function planGitHubApplication(params: {
         historicalRegistryRowCount: historicalMatch?.group.rows.length ?? 0,
         sheetProject: paymentMatch?.group.project ?? null,
         sheetRowCount: paymentMatch?.group.rows.length ?? 0,
-        sheetCategory: paymentMatch?.group.category ?? null,
-        sheetPaidAmountUsd: paymentMatch?.group.paidAmountUsd ?? null
+        sheetCategory: paymentMatch?.group.category ?? null
       }
     },
     links: [
@@ -2497,7 +2489,7 @@ function planGitHubApplication(params: {
         title: app.displayTitle,
         granteeName: paymentMatch.group.grantee ?? historicalMatch?.group.applicantName ?? app.applicantName,
         status: normalizedStatus,
-        approvedAmountUsd: paymentMatch.group.requestedAmountUsd ?? historicalMatch?.group.amountFunded2021 ?? null
+        approvedAmountUsd: historicalMatch?.group.amountFunded2021 ?? null
       };
     }
 
@@ -2662,9 +2654,10 @@ async function performGrantReconciliation(
       continue;
     }
 
-    const paymentMatch = bestPaymentDetailMatchForHistoricalApplication(group, paymentDetailGroups);
     const sheetStatus = statusFromSheet(group.status);
     const normalizedStatus = statusFromSheetWithoutOfficialAssignment(group.status);
+    const paymentMatch = ["declined", "withdrawn", "filtered"].includes(normalizedStatus)
+      ? null : bestPaymentDetailMatchForHistoricalApplication(group, paymentDetailGroups);
     const sourceRows = [...group.rows, ...(paymentMatch?.group.rows ?? [])];
 
     if (paymentMatch) {
@@ -2680,7 +2673,7 @@ async function performGrantReconciliation(
         githubIssueUrl: group.githubIssueUrl,
         githubState: null,
         normalizedStatus,
-        requestedAmountUsd: paymentMatch?.group.requestedAmountUsd ?? group.amountFunded2021,
+        requestedAmountUsd: null,
         matchConfidence: paymentMatch?.confidence ?? 1,
         sourceSummary: {
           generatedBy,
@@ -2698,8 +2691,7 @@ async function performGrantReconciliation(
           historicalRegistryRowCount: group.rows.length,
           sheetProject: paymentMatch?.group.project ?? null,
           sheetRowCount: paymentMatch?.group.rows.length ?? 0,
-          sheetCategory: paymentMatch?.group.category ?? null,
-          sheetPaidAmountUsd: paymentMatch?.group.paidAmountUsd ?? null
+          sheetCategory: paymentMatch?.group.category ?? null
         }
       },
       links: sourceRows.map((row) => ({ sourceRecordId: row.id, confidence: row.id === group.rows[0]?.id ? 1 : paymentMatch?.confidence ?? 1 })),
@@ -2710,7 +2702,7 @@ async function performGrantReconciliation(
             title: group.title,
             granteeName: group.applicantName ?? paymentMatch?.group.grantee ?? null,
             status: normalizedStatus,
-            approvedAmountUsd: paymentMatch?.group.requestedAmountUsd ?? group.amountFunded2021
+            approvedAmountUsd: group.amountFunded2021
           }
         : null,
       issues: []
@@ -2778,14 +2770,13 @@ async function performGrantReconciliation(
           githubIssueUrl: null,
           githubState: null,
           normalizedStatus,
-          requestedAmountUsd: group.requestedAmountUsd,
+          requestedAmountUsd: null,
           matchConfidence: 0,
           sourceSummary: {
             generatedBy,
             sheetProject: group.project,
             sheetRowCount: group.rows.length,
-            sheetCategory: group.category,
-            sheetPaidAmountUsd: group.paidAmountUsd
+            sheetCategory: group.category
           }
         },
         links: group.rows.map((row) => ({ sourceRecordId: row.id, confidence: 1 })),
@@ -2796,7 +2787,7 @@ async function performGrantReconciliation(
               title: group.project,
               granteeName: group.grantee,
               status: normalizedStatus,
-              approvedAmountUsd: group.requestedAmountUsd
+              approvedAmountUsd: null
             }
           : null,
         issues: [
@@ -2991,17 +2982,17 @@ async function retireTargetedGitHubApplication(
   context: ReconciliationContext,
   reason: GitHubApplicationRetirementReason
 ): Promise<TargetedGitHubReconciliationResult> {
-  const retired = await retireGeneratedGitHubApplications(
-    await fetchGeneratedGitHubApplicationsForRetirement({
-      canonicalKey: `github:${githubSourceId}`
-    }),
-    context,
-    () => reason
-  );
+  const candidates = await fetchGeneratedGitHubApplicationsForRetirement({
+    canonicalKey: `github:${githubSourceId}`
+  });
+  const priorMilestoneScope = await loadMilestoneApplicationScope(candidates.map((row) => row.id));
+  const retired = await retireGeneratedGitHubApplications(candidates, context, () => reason);
 
+  let affectedApplicationIds = retired.applicationIds;
   if (retired.applicationIds.length) {
     await applyManualSourceLinkDecisions();
-    await syncGrantMilestoneProjections({ applicationIds: retired.applicationIds });
+    const milestones = await syncGrantMilestoneProjections({ applicationIds: priorMilestoneScope });
+    affectedApplicationIds = [...new Set([...retired.applicationIds, ...milestones.affectedApplicationIds])];
 
     for (const applicationId of retired.applicationIds) {
       await query(
@@ -3025,7 +3016,7 @@ async function retireTargetedGitHubApplication(
     requiresFullReconciliation: true,
     reason,
     githubSourceId,
-    applicationIds: retired.applicationIds,
+    applicationIds: affectedApplicationIds,
     discoveredForumUrls: []
   };
 }
@@ -3082,6 +3073,7 @@ async function performTargetedGitHubReconciliation(
   }
 
   const forumSourceIds = await bulkUpsertForumSourceRecords(planned.forumLinks);
+  const priorMilestoneScope = await loadMilestoneApplicationScope([applicationId]);
   await clearTargetedGeneratedState(applicationId);
 
   if (planned.grant) {
@@ -3121,10 +3113,10 @@ async function performTargetedGitHubReconciliation(
     }))
   );
   await applyManualSourceLinkDecisions();
-  await syncGrantMilestoneProjections({ applicationIds: [applicationId] });
+  const milestoneResult = await syncGrantMilestoneProjections({ applicationIds: priorMilestoneScope });
 
   const discoveredForumUrls = [...new Set(planned.forumLinks.map((link) => link.url))].sort();
-  const applicationIds = [applicationId];
+  const applicationIds = [...new Set([applicationId, ...milestoneResult.affectedApplicationIds])];
 
   await query(
     `insert into audit_events (action, target_type, target_id, metadata)
@@ -3190,6 +3182,7 @@ export const grantReconciliationTestHooks = {
   buildHistoricalApplicationsByGitHubIssue,
   bestHistoricalApplicationMatch,
   buildPaymentDetailGroups,
+  bestPaymentDetailMatchForHistoricalApplication,
   fetchExistingHistoricalApplicationKeys,
   parseGitHubApplication,
   planGitHubApplication,

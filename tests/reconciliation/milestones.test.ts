@@ -99,6 +99,8 @@ test("syncs reviewed and high-confidence projections and deletes stale rows in s
   let disbursementPayload: Array<Record<string, unknown>> = [];
 
   const sync = hooks.createSyncGrantMilestoneProjections(async (text, values = []) => {
+    if (text.includes("grant_milestone_application_scope")) return { rows: [] };
+    if (text.includes("grant_funding_projection_sources")) return { rows: [] };
     calls.push({ text, values });
 
     if (text.includes("grant_milestone_projection_sources")) {
@@ -206,7 +208,8 @@ test("syncs reviewed and high-confidence projections and deletes stale rows in s
     disbursementsUpserted: 1,
     milestonesDeleted: 2,
     disbursementsDeleted: 1,
-    ambiguousSourceLinks: 0
+    ambiguousSourceLinks: 0,
+    affectedApplicationIds: [applicationOne, applicationTwo]
   });
   assert.match(calls[0].text, /match_confidence >= 0\.92/);
   assert.match(calls[0].text, /rd\.decision_type = \$2/);
@@ -269,6 +272,8 @@ test("quarantines duplicate exact links and maintains one ambiguity issue", asyn
     manually_linked: false
   };
   const sync = hooks.createSyncGrantMilestoneProjections(async (text, values = []) => {
+    if (text.includes("grant_milestone_application_scope")) return { rows: [] };
+    if (text.includes("grant_funding_projection_sources")) return { rows: [] };
     calls.push({ text, values });
 
     if (text.includes("grant_milestone_projection_sources")) {
@@ -317,7 +322,7 @@ test("quarantines duplicate exact links and maintains one ambiguity issue", asyn
   assert.equal(result.sourceRowsSeen, 2);
   assert.equal(result.sourceRowsSkipped, 2);
   assert.equal(calls.some((call) => call.text.includes("grant_milestones_upsert")), false);
-  assert.match(calls[0].text, /scoped_candidate\.source_record_id = candidate\.source_record_id/);
+  assert.match(calls[0].text, /scoped\.application_id::uuid = candidate\.application_id/);
   assert.equal(issuePayload.length, 1);
   assert.equal(issuePayload[0].source_record_id, sourceRecordId);
   assert.match(issuePayload[0].summary, /Ambiguous grant \(Sheet row 767\)/);
@@ -372,6 +377,8 @@ test("a single reviewed link wins an otherwise duplicate source", async () => {
     metadata: JSON.stringify({ tabName: "milestone_details", rowNumber: 21 })
   };
   const sync = hooks.createSyncGrantMilestoneProjections(async (text, values = []) => {
+    if (text.includes("grant_milestone_application_scope")) return { rows: [] };
+    if (text.includes("grant_funding_projection_sources")) return { rows: [] };
     calls.push({ text, values });
 
     if (text.includes("grant_milestone_projection_sources")) {
@@ -471,6 +478,7 @@ test("an explicitly empty application scope is a no-op", async () => {
     disbursementsUpserted: 0,
     milestonesDeleted: 0,
     disbursementsDeleted: 0,
-    ambiguousSourceLinks: 0
+    ambiguousSourceLinks: 0,
+    affectedApplicationIds: []
   });
 });

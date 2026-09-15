@@ -88,6 +88,7 @@ export type GrantApplicationRow = {
   applicant_name: string | null;
   normalized_status: string;
   requested_amount_usd: string | null;
+  ledger_funding?: string | null;
   match_confidence: string;
   source_profile: "matched" | "github_only" | "sheet_github_linked" | "sheet_only" | "unknown";
   github_issue_number: string | null;
@@ -975,6 +976,7 @@ export async function getGrantApplicationDetail(id: string) {
               ga.applicant_name,
               ga.normalized_status,
               ga.requested_amount_usd::text,
+              (ga.source_summary->'ledgerFunding')::text as ledger_funding,
               ga.match_confidence::text,
               ${sourceProfileSql()} as source_profile,
               ga.github_issue_number::text,
