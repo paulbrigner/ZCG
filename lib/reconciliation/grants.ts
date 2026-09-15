@@ -81,6 +81,7 @@ type SheetProjectGroup = {
 type HistoricalApplicationGroup = {
   key: string;
   canonicalKey: string;
+  existingCanonicalKey?: string;
   titleKey: string;
   title: string;
   applicantName: string | null;
@@ -855,6 +856,15 @@ function classifyGitHubLabel(labelName: string) {
     };
   }
 
+  if (workflowLabel === "closed_did_not_follow_process") {
+    return {
+      labelCategory: "terminal",
+      labelStatus: "did_not_follow_process",
+      milestoneNumber: null,
+      labelOrder: 93
+    };
+  }
+
   if (normalized.includes("cancelled")) {
     return {
       labelCategory: "terminal",
@@ -915,6 +925,10 @@ function statusFromGitHub(app: GitHubApplication) {
 
   if (labelStatuses.includes("grant_complete")) {
     return "completed";
+  }
+
+  if (labelStatuses.includes("did_not_follow_process")) {
+    return "filtered";
   }
 
   if (hasOfficialZcgAssignmentLabels(app.labels)) {
@@ -1239,15 +1253,24 @@ function githubLabelDetails(raw: Record<string, unknown>, metadata: Record<strin
   return [...labels.values()];
 }
 
-function parseGitHubApplication(record: RawSourceRecord): GitHubApplication | null {
+function parseGitHubApplication(
+  record: RawSourceRecord,
+  historicalByIssueUrl: ReadonlyMap<string, HistoricalApplicationGroup> = new Map()
+): GitHubApplication | null {
   const raw = parseJsonRecord(record.raw_payload);
   const metadata = parseJsonRecord(record.metadata);
   const title = stringValue(raw.title) ?? record.title ?? "";
   const normalized = normalizeTitle(title);
   const labelDetails = githubLabelDetails(raw, metadata);
   const labels = labelDetails.map((label) => label.name);
+  const issueUrl = stringValue(raw.html_url) ?? record.source_url;
+  const normalizedIssueUrl = normalizedGitHubIssueUrl(issueUrl);
+  const explicitlyRegistered = normalizedIssueUrl !== null && historicalByIssueUrl.has(normalizedIssueUrl);
 
-  if (!normalized || (!title.toLowerCase().includes("grant") && !labels.some((label) => label.includes("Grant")))) {
+  // Registry identity remains valid after a title edit or a terminal label
+  // replaces the intake labels. Check it before the legacy title/label heuristic.
+  if (!normalized || (!explicitlyRegistered && !title.toLowerCase().includes("grant") &&
+    !labels.some((label) => label.includes("Grant")))) {
     return null;
   }
 
@@ -1266,7 +1289,7 @@ function parseGitHubApplication(record: RawSourceRecord): GitHubApplication | nu
     displayTitle: title.replace(/^Grant Application\s+(?:\u2014|-|:)\s*/i, "").trim() || title,
     applicantName,
     issueNumber: typeof metadata.number === "number" ? metadata.number : numberValue(metadata.number),
-    issueUrl: stringValue(raw.html_url) ?? record.source_url,
+    issueUrl,
     state: stringValue(metadata.state),
     requestedAmountUsd,
     labels,
@@ -1365,6 +1388,7 @@ function buildHistoricalApplicationGroups(
     groups.set(key, {
       key,
       canonicalKey: existingKeys.get(applicationPlatformIdentity(grantPlatformLink) ?? "") ?? `sheet-all-grants:${key}`,
+      existingCanonicalKey: existingKeys.get(applicationPlatformIdentity(grantPlatformLink) ?? ""),
       titleKey: normalizeTitle(title),
       title,
       applicantName,
@@ -2362,6 +2386,13 @@ async function fetchExistingHistoricalApplicationKeys() {
   return existingHistoricalKeysByPlatform(result.rows);
 }
 
+async function fetchExistingGitHubCanonicalKeys() {
+  const result = await query<{ canonical_key: string }>(
+    `select canonical_key from grant_applications where canonical_key like 'github:%'`
+  );
+  return new Set(result.rows.map((row) => row.canonical_key));
+}
+
 function planGitHubApplication(params: {
   app: GitHubApplication;
   githubComments: RawSourceRecord[];
@@ -2369,6 +2400,7 @@ function planGitHubApplication(params: {
   historicalByGitHubIssueUrl: Map<string, HistoricalApplicationGroup>;
   paymentDetailGroups: Map<string, SheetProjectGroup>;
   hasHistoricalRegistry: boolean;
+  existingGitHubCanonicalKeys?: ReadonlySet<string>;
 }): PlannedGitHubApplicationResult {
   const {
     app,
@@ -2391,9 +2423,17 @@ function planGitHubApplication(params: {
   // Requested funding comes from the proposal, never from a payment installment.
   const requestedAmountUsd = app.requestedAmountUsd;
   const matchConfidence = Math.max(historicalMatch?.confidence ?? 0, paymentMatch?.confidence ?? 0);
+  const githubCanonicalKey = `github:${app.sourceRecord.source_id}`;
+  // Attach newly recognized issues to their existing registry application.
+  // Existing GitHub applications keep their established owner and saved history.
+  const exactRegistryMatch = normalizedGitHubIssueUrl(app.issueUrl) !== null &&
+    normalizedGitHubIssueUrl(app.issueUrl) === normalizedGitHubIssueUrl(historicalMatch?.group.githubIssueUrl ?? null);
+  const canonicalKey = !params.existingGitHubCanonicalKeys?.has(githubCanonicalKey) && exactRegistryMatch
+    ? historicalMatch?.group.existingCanonicalKey ?? githubCanonicalKey
+    : githubCanonicalKey;
   const planned: PlannedApplication = {
     application: {
-      canonicalKey: `github:${app.sourceRecord.source_id}`,
+      canonicalKey,
       title: app.displayTitle,
       applicantName: app.applicantName ?? historicalMatch?.group.applicantName ?? paymentMatch?.group.grantee ?? null,
       githubIssueNumber: app.issueNumber,
@@ -2563,12 +2603,15 @@ async function performGrantReconciliation(
     [...githubRecords, ...githubCommentRecords, ...sheetRecords].map((record) => [record.id, record])
   );
 
+  const [existingHistoricalKeys, existingGitHubCanonicalKeys] = await Promise.all([
+    fetchExistingHistoricalApplicationKeys(), fetchExistingGitHubCanonicalKeys()
+  ]);
+  const historicalGroups = buildHistoricalApplicationGroups(sheetRecords, existingHistoricalKeys);
+  const historicalByGitHubIssueUrl = buildHistoricalApplicationsByGitHubIssue(historicalGroups.values());
   const githubApplications = githubRecords
-    .map(parseGitHubApplication)
+    .map((record) => parseGitHubApplication(record, historicalByGitHubIssueUrl))
     .filter((app): app is GitHubApplication => Boolean(app));
   const githubCommentsByIssue = buildGitHubCommentsByIssue(githubCommentRecords);
-  const historicalGroups = buildHistoricalApplicationGroups(sheetRecords, await fetchExistingHistoricalApplicationKeys());
-  const historicalByGitHubIssueUrl = buildHistoricalApplicationsByGitHubIssue(historicalGroups.values());
   const paymentDetailGroups = buildPaymentDetailGroups(sheetRecords);
   const hasHistoricalRegistry = historicalGroups.size > 0;
   const manualSourceLinkKeys = await getActiveManualSourceLinkKeys();
@@ -2636,7 +2679,8 @@ async function performGrantReconciliation(
       historicalGroups,
       historicalByGitHubIssueUrl,
       paymentDetailGroups,
-      hasHistoricalRegistry
+      hasHistoricalRegistry,
+      existingGitHubCanonicalKeys
     });
     if (result.matchedHistoricalKey) matchedHistoricalKeys.add(result.matchedHistoricalKey);
     if (result.matchedPaymentDetailKey) matchedPaymentDetailKeys.add(result.matchedPaymentDetailKey);
@@ -3035,7 +3079,15 @@ async function performTargetedGitHubReconciliation(
     );
   }
 
-  const app = parseGitHubApplication(sourceRecord);
+  const [githubComments, sheetRecords, existingHistoricalKeys, existingGitHubCanonicalKeys] = await Promise.all([
+    fetchTargetedGitHubCommentRecords(githubSourceId),
+    fetchSourceRecords("google_sheet_row"),
+    fetchExistingHistoricalApplicationKeys(),
+    fetchExistingGitHubCanonicalKeys()
+  ]);
+  const historicalGroups = buildHistoricalApplicationGroups(sheetRecords, existingHistoricalKeys);
+  const historicalByGitHubIssueUrl = buildHistoricalApplicationsByGitHubIssue(historicalGroups.values());
+  const app = parseGitHubApplication(sourceRecord, historicalByGitHubIssueUrl);
 
   if (!app) {
     return retireTargetedGitHubApplication(
@@ -3045,19 +3097,15 @@ async function performTargetedGitHubReconciliation(
     );
   }
 
-  const [githubComments, sheetRecords] = await Promise.all([
-    fetchTargetedGitHubCommentRecords(githubSourceId),
-    fetchSourceRecords("google_sheet_row")
-  ]);
-  const historicalGroups = buildHistoricalApplicationGroups(sheetRecords);
   const paymentDetailGroups = buildPaymentDetailGroups(sheetRecords);
   const planResult = planGitHubApplication({
     app,
     githubComments,
     historicalGroups,
-    historicalByGitHubIssueUrl: buildHistoricalApplicationsByGitHubIssue(historicalGroups.values()),
+    historicalByGitHubIssueUrl,
     paymentDetailGroups,
-    hasHistoricalRegistry: historicalGroups.size > 0
+    hasHistoricalRegistry: historicalGroups.size > 0,
+    existingGitHubCanonicalKeys
   });
   const { planned } = planResult;
   const sourceRecordsById = new Map(
