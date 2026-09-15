@@ -3,7 +3,9 @@ import { query } from "@/lib/db";
 
 const generatedBy = "grant_decision_minutes_v1";
 const parserVersion = "zcg_minutes_parser_v3";
-const sourceRecordBatchSize = 20;
+// Historical minutes contain large mirrored payloads. Keep each response below
+// the Data API's aggregate size limit when reconciliation runs through SSR.
+const sourceRecordBatchSize = 1;
 const maxRationaleLength = 12000;
 
 type RawSourceRecord = {
@@ -1746,6 +1748,7 @@ export const decisionMinutesTestHooks = {
   exactDecisionStatusAssertion,
   extractDecision,
   extractMeetingDate,
+  fetchDecisionMinuteRecords,
   isHighConfidenceDecisionMention,
   latestMentionGroups,
   matchMention,

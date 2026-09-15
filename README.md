@@ -193,6 +193,7 @@ explicit rather than silently treated as complete coverage.
 | Forum Community Grants Updates category | `forum_meeting_minutes` or `forum_update_topic` source records | Meeting minutes become `grant_decision_sources`, `grant_decision_mentions`, decision links, and review issues; generic update topics currently remain raw evidence |
 | Reviewer judgments | Reconciliation UI/API or portable JSON import into `reconciliation_decisions` | Link/unlink decisions, application relationships, and issue resolutions are replayed after generated reconciliation; field-override decisions are persisted but not yet applied |
 | Canonical, linked-source, accepted decision, and open reconciliation evidence | Derived from the rows above | `grant_knowledge_documents` with full-text vectors and optional embeddings; `grant_knowledge_queries` and `grant_knowledge_answer_jobs`; versioned `grant_analysis_reports` with exact `grant_analysis_report_evidence` snapshots |
+| Website, Jotform, KYC/agreement files, and payment/custody systems | Not ingested | No current tables or connectors |
 
 Meeting-minute parsing retains list ancestry from the mirrored HTML so supporting
 links stay within the application discussion. Decision-reference labels and RFP
@@ -200,7 +201,6 @@ publication notices do not create separate application mentions. Proposal and
 follow-up sections are parsed separately, preserving real grant amendments and
 milestone decisions while keeping administrative discussion out of the preceding
 proposal. Older snapshots without HTML continue to use plain-text parsing.
-| Website, Jotform, KYC/agreement files, and payment/custody systems | Not ingested | No current tables or connectors |
 
 Important boundaries:
 
