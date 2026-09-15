@@ -449,6 +449,13 @@ npm run check
 
 ## Deployment
 
+Every change requires an independent agent review before merging or triggering
+any deployment, including an automatic deployment from a push to `main`. Follow
+the [review and release workflow in AGENTS.md](AGENTS.md#independent-review-before-merge-or-deployment):
+review immutable base/head commits, resolve blocking findings, and verify the
+final revisions and validation results before release. This is an agent workflow
+requirement; GitHub and AWS enforcement are not configured by this guidance.
+
 The current public deployment combines:
 
 - `amplify.yml` for the Amplify SSR web tier at `zcg.pgpz.org`;
