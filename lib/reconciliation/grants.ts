@@ -82,6 +82,7 @@ type HistoricalApplicationGroup = {
   key: string;
   canonicalKey: string;
   existingCanonicalKey?: string;
+  establishedGitHubSourceId?: string;
   titleKey: string;
   title: string;
   applicantName: string | null;
@@ -1353,9 +1354,11 @@ function parseGitHubIssueReference(value: string | null) {
 
 function buildHistoricalApplicationGroups(
   records: RawSourceRecord[],
-  existingKeys: Map<string, string> = new Map()
+  existingKeys: Map<string, string> = new Map(),
+  existingRegistryOwners: ReadonlyMap<string, string> = new Map()
 ) {
   const groups = new Map<string, HistoricalApplicationGroup>();
+  const githubSourcesByOwner = new Map([...existingRegistryOwners].map(([sourceId, key]) => [key, sourceId]));
 
   for (const record of records) {
     if (!isAllGrantsTrackingRecord(record)) {
@@ -1387,10 +1390,13 @@ function buildHistoricalApplicationGroups(
       continue;
     }
 
+    const existingCanonicalKey = existingKeys.get(applicationPlatformIdentity(grantPlatformLink) ?? "");
+    const canonicalKey = existingCanonicalKey ?? `sheet-all-grants:${key}`;
     groups.set(key, {
       key,
-      canonicalKey: existingKeys.get(applicationPlatformIdentity(grantPlatformLink) ?? "") ?? `sheet-all-grants:${key}`,
-      existingCanonicalKey: existingKeys.get(applicationPlatformIdentity(grantPlatformLink) ?? ""),
+      canonicalKey,
+      existingCanonicalKey,
+      establishedGitHubSourceId: githubSourcesByOwner.get(canonicalKey),
       titleKey: normalizeTitle(title),
       title,
       applicantName,
@@ -2642,6 +2648,9 @@ function planHistoricalApplication(
       matchConfidence: paymentMatch?.confidence ?? 1,
       sourceSummary: {
         generatedBy,
+        // Preserve established identity across source gaps, independently of
+        // current GitHub state, labels, or evidence links.
+        githubSourceId: group.establishedGitHubSourceId,
         historicalRegistryProject: group.title,
         historicalRegistryApplicant: group.applicantName,
         historicalRegistryStatus: group.status,
@@ -2732,7 +2741,7 @@ async function performGrantReconciliation(
   const [existingHistoricalKeys, existingOwners] = await Promise.all([
     fetchExistingHistoricalApplicationKeys(), fetchExistingGitHubOwners()
   ]);
-  const historicalGroups = buildHistoricalApplicationGroups(sheetRecords, existingHistoricalKeys);
+  const historicalGroups = buildHistoricalApplicationGroups(sheetRecords, existingHistoricalKeys, existingOwners.registryOwners);
   const historicalByGitHubIssueUrl = buildHistoricalApplicationsByGitHubIssue(historicalGroups.values());
   const githubApplications = githubRecords
     .map((record) => parseGitHubApplication(record, historicalByGitHubIssueUrl, existingOwners.registryOwners))
@@ -3082,10 +3091,10 @@ async function retireTargetedGitHubApplication(
   const discoveredForumUrls: string[] = [];
 
   if (registryCandidates.length) {
-    const [sheetRecords, existingKeys, manualSourceLinkKeys] = await Promise.all([
-      fetchSourceRecords("google_sheet_row"), fetchExistingHistoricalApplicationKeys(), getActiveManualSourceLinkKeys()
+    const [sheetRecords, existingKeys, manualSourceLinkKeys, existingOwners] = await Promise.all([
+      fetchSourceRecords("google_sheet_row"), fetchExistingHistoricalApplicationKeys(), getActiveManualSourceLinkKeys(), fetchExistingGitHubOwners()
     ]);
-    const historicalGroups = buildHistoricalApplicationGroups(sheetRecords, existingKeys);
+    const historicalGroups = buildHistoricalApplicationGroups(sheetRecords, existingKeys, existingOwners.registryOwners);
     const paymentDetailGroups = buildPaymentDetailGroups(sheetRecords);
     const sourceRecordsById = new Map(sheetRecords.map((record) => [record.id, record]));
 
@@ -3178,7 +3187,7 @@ async function performTargetedGitHubReconciliation(
     fetchExistingHistoricalApplicationKeys(),
     fetchExistingGitHubOwners()
   ]);
-  const historicalGroups = buildHistoricalApplicationGroups(sheetRecords, existingHistoricalKeys);
+  const historicalGroups = buildHistoricalApplicationGroups(sheetRecords, existingHistoricalKeys, existingOwners.registryOwners);
   const historicalByGitHubIssueUrl = buildHistoricalApplicationsByGitHubIssue(historicalGroups.values());
   const app = parseGitHubApplication(sourceRecord, historicalByGitHubIssueUrl, existingOwners.registryOwners);
 

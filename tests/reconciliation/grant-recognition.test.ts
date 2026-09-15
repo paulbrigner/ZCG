@@ -167,6 +167,7 @@ test("PostgreSQL full and targeted reconciliation link #378 without replacing it
         await runGrantReconciliation();
         assert.deepEqual((await client.query("select id,canonical_key,normalized_status from grant_applications where github_issue_number=378")).rows,
           [{ id: applicationId, canonical_key: canonicalKey, normalized_status: "submitted" }]);
+        assert.equal((await client.query("select source_summary->>'githubSourceId' as owner from grant_applications where id=$1", [applicationId])).rows[0].owner, sourceId);
         continue;
       }
       if (disappearance === "tombstoned") await client.query("update source_records set metadata=metadata || '{\"tombstone\":true}'::jsonb where id=$1", [issue.id]);
@@ -190,6 +191,20 @@ test("PostgreSQL full and targeted reconciliation link #378 without replacing it
         assert.equal((await client.query("select normalized_status from grant_applications where id=$1", [applicationId])).rows[0].normalized_status, "submitted");
       }
     }
+    // Both disappearing after an intervening Sheet-only projection must still
+    // retire the established owner; a returning GitHub issue must reuse it.
+    await client.query("delete from source_records where id=$1", [sheet.id]);
+    await runGrantReconciliation();
+    assert.equal((await client.query("select normalized_status from grant_applications where id=$1", [applicationId])).rows[0].normalized_status, "unknown");
+    await client.query(`insert into source_records(id,source_kind,source_id,source_url,title,raw_payload,metadata)
+      values ($1,'github_issue',$2,$3,$4,$5::jsonb,$6::jsonb)`, [issue.id, sourceId, issueUrl, title, issue.raw_payload, issue.metadata]);
+    const returning = await runTargetedGitHubReconciliation({ githubSourceId: sourceId });
+    assert.equal(returning.requiresFullReconciliation, false);
+    assert.deepEqual(returning.applicationIds, [applicationId]);
+    await runGrantReconciliation();
+    assert.deepEqual((await client.query("select id,canonical_key,normalized_status from grant_applications where github_issue_number=378")).rows,
+      [{ id: applicationId, canonical_key: canonicalKey, normalized_status: "filtered" }]);
+    assert.deepEqual((await client.query("select to_jsonb(d) as data from reconciliation_decisions d")).rows, decisionBefore);
   } finally {
     if (previousDriver === undefined) delete process.env.DATABASE_DRIVER;
     else process.env.DATABASE_DRIVER = previousDriver;
