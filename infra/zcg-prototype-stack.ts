@@ -142,7 +142,7 @@ export class ZcgPrototypeStack extends Stack {
     const knowledgeEmbeddingTimeoutMs = contextNumber(this, "knowledgeEmbeddingTimeoutMs", 60000);
     const knowledgeCommitteeBriefingModel =
       (this.node.tryGetContext("knowledgeCommitteeBriefingModel") as string | undefined) ??
-      "openai-gpt-56-terra-pro";
+      "openai-gpt-6-astra";
     const forumMaxTopics = contextNumber(this, "forumMaxTopics", 2000);
     const forumMaxPostsPerLinkedTopic = contextNumber(this, "forumMaxPostsPerLinkedTopic", 1000);
     const forumMaxPostsPerUpdatesTopic = contextNumber(this, "forumMaxPostsPerUpdatesTopic", 20);
@@ -653,7 +653,8 @@ export class ZcgPrototypeStack extends Stack {
         entry: path.join(__dirname, "..", "workers", "knowledge-answer-worker.ts"),
         handler: "handler",
         runtime: lambda.Runtime.NODEJS_24_X,
-        timeout: Duration.minutes(5),
+        // Four minutes for the model, plus evidence retrieval and durable completion.
+        timeout: Duration.minutes(7),
         memorySize: 1024,
         environment: {
           APP_ENV: environmentName,

@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   committeeBriefingAiModel,
   grantAnalysisAiModel,
+  grantAnalysisGenerationOptions,
   knowledgeAiModel
 } from "../../lib/knowledge/config";
 
@@ -44,13 +45,23 @@ function withModelEnvironment(
   }
 }
 
-test("uses Terra Pro only for committee briefings by default", { concurrency: false }, () => {
+test("uses standard Astra only for committee briefings by default", { concurrency: false }, () => {
   withModelEnvironment({}, () => {
     assert.equal(knowledgeAiModel(), "openai-gpt-55");
-    assert.equal(committeeBriefingAiModel(), "openai-gpt-56-terra-pro");
-    assert.equal(grantAnalysisAiModel("committee_briefing"), "openai-gpt-56-terra-pro");
+    assert.equal(committeeBriefingAiModel(), "openai-gpt-6-astra");
+    assert.equal(grantAnalysisAiModel("committee_briefing"), "openai-gpt-6-astra");
     assert.equal(grantAnalysisAiModel("custom"), "openai-gpt-55");
   });
+});
+
+test("gives medium-reasoning briefings a separate completion budget and timeout", () => {
+  assert.deepEqual(grantAnalysisGenerationOptions("committee_briefing"), {
+    reasoningEffort: "medium", maxTokens: 25_000, timeoutMs: 240_000
+  });
+  const custom = grantAnalysisGenerationOptions("custom");
+  assert.equal(custom.reasoningEffort, undefined);
+  assert.equal(custom.temperature, 0.15);
+  assert.equal(custom.maxTokens, 2_200);
 });
 
 test("keeps committee and custom model overrides independent", { concurrency: false }, () => {

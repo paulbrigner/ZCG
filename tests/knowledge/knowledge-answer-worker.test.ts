@@ -13,6 +13,19 @@ import {
 import type { GrantAnalysisReportEvidenceInput } from "../../lib/knowledge/reports";
 import { knowledgeAnswerWorkerTestHooks } from "../../workers/knowledge-answer-worker";
 
+test("model requests leave time for durable completion before Lambda exits", () => {
+  const timeout = knowledgeAnswerWorkerTestHooks.analysisRequestTimeout;
+  assert.equal(timeout(240_000, 400_000), 240_000);
+  assert.equal(timeout(240_000, 100_000), 70_000);
+  assert.equal(timeout(240_000), 240_000);
+  assert.throws(() => timeout(240_000, 30_500), /Insufficient worker time/);
+});
+
+test("committee storage rejects oversized complete output instead of silently clipping it", () => {
+  assert.throws(() => knowledgeAnswerWorkerTestHooks.committeeBriefingForStorage("a".repeat(24_001), []), /stored-answer safety limit/);
+  assert.match(knowledgeAnswerWorkerTestHooks.committeeBriefingForStorage("A complete answer [1].", [evidenceFixture(1)]), /A complete answer \[1\]\./);
+});
+
 function evidenceFixture(
   citationNumber: number,
   overrides: Partial<GrantAnalysisReportEvidenceInput> = {}

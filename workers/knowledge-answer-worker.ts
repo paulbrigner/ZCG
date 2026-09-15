@@ -20,9 +20,10 @@ import {
   validateCommitteeBriefingSourceListCitations,
   validateEvidenceCitations
 } from "../lib/knowledge/briefing";
-import { composeGroundedGrantAnalysis } from "../lib/knowledge/compose";
+import { composeGroundedGrantAnalysisResult } from "../lib/knowledge/compose";
 import {
   grantAnalysisAiModel,
+  grantAnalysisGenerationOptions,
   knowledgeAiBaseUrl,
   knowledgeProviderStatus
 } from "../lib/knowledge/config";
@@ -194,6 +195,14 @@ function grantAnalysisReportEvidence(
   });
 }
 
+function committeeBriefingForStorage(answer: string, evidence: GrantAnalysisReportEvidenceInput[]) {
+  const completed = ensureCommitteeBriefingSourceList(answer, evidence);
+  if (Buffer.byteLength(completed, "utf8") > 24_000) {
+    throw new Error("Committee briefing exceeded the stored-answer safety limit. Regenerate a shorter briefing.");
+  }
+  return completed;
+}
+
 async function configureKnowledgeApiKeys() {
   if (
     (process.env.ZCG_KNOWLEDGE_AI_API_KEY || process.env.VENICE_API_KEY) &&
@@ -228,7 +237,19 @@ async function recordAnalysisAudit(input: Parameters<typeof recordAuditEvent>[0]
   });
 }
 
-async function runApplicationAnalysis(job: NonNullable<Awaited<ReturnType<typeof claimGrantKnowledgeAnswerJob>>>) {
+function analysisRequestTimeout(configuredMs: number, remainingMs?: number) {
+  // Leave time to persist success/failure before Lambda's hard execution cutoff.
+  const timeoutMs = remainingMs === undefined ? configuredMs : Math.min(configuredMs, remainingMs - 30_000);
+  if (timeoutMs < 1_000) {
+    throw new Error("Insufficient worker time remains to generate and save the analysis. Regenerate the report.");
+  }
+  return timeoutMs;
+}
+
+async function runApplicationAnalysis(
+  job: NonNullable<Awaited<ReturnType<typeof claimGrantKnowledgeAnswerJob>>>,
+  remainingTimeMs?: () => number
+) {
   const applicationId = job.request.applicationId;
 
   if (!applicationId) {
@@ -302,19 +323,18 @@ async function runApplicationAnalysis(job: NonNullable<Awaited<ReturnType<typeof
     purpose,
     customPrompt: job.request.customPrompt
   });
-  const configuredTimeoutMs = Number(process.env.ZCG_KNOWLEDGE_AI_TIMEOUT_MS);
-  const composedAnswer = await composeGroundedGrantAnalysis({
+  const generationOptions = grantAnalysisGenerationOptions(purpose);
+  generationOptions.timeoutMs = analysisRequestTimeout(generationOptions.timeoutMs, remainingTimeMs?.());
+  const completion = await composeGroundedGrantAnalysisResult({
     systemPrompt: prompt.systemPrompt,
     userPrompt: prompt.userPrompt,
     model: generationModel,
-    temperature: 0.15,
-    timeoutMs: Number.isFinite(configuredTimeoutMs) ? Math.max(90_000, configuredTimeoutMs) : 90_000,
-    maxTokens: purpose === "committee_briefing" ? 5_000 : 2_200
+    ...generationOptions
   });
   const sourceListEvidence = grantAnalysisReportEvidence(evidencePack);
   const answerText = purpose === "committee_briefing"
-    ? boundedCommitteeBriefingAnswer(composedAnswer, sourceListEvidence, 24_000)
-    : boundedGeneratedAnswer(composedAnswer, 14_000);
+    ? committeeBriefingForStorage(completion.text, sourceListEvidence)
+    : boundedGeneratedAnswer(completion.text, 14_000);
   const committeeBody = purpose === "committee_briefing"
     ? committeeBriefingBody(answerText)
     : answerText;
@@ -415,10 +435,18 @@ async function runApplicationAnalysis(job: NonNullable<Awaited<ReturnType<typeof
       provider: new URL(knowledgeAiBaseUrl()).hostname,
       model: generationModel,
       latencyMs: Date.now() - startedAt,
+      inputTokens: completion.inputTokens,
+      outputTokens: completion.outputTokens,
       evidence,
       generationMetadata: {
         purpose,
         model: generationModel,
+        modelConfiguration: generationOptions,
+        completion: {
+          finishReason: completion.finishReason,
+          reasoningTokens: completion.reasoningTokens,
+          latencyMs: completion.latencyMs
+        },
         retrievalMode: evidencePack.retrievalMode,
         evidenceCount: evidencePack.evidence.length,
         candidateEvidenceCount: evidencePack.candidates.length,
@@ -446,6 +474,14 @@ async function runApplicationAnalysis(job: NonNullable<Awaited<ReturnType<typeof
       purpose,
       model: generationModel,
       evidenceCount: evidencePack.evidence.length,
+      modelConfiguration: generationOptions,
+      completion: {
+        finishReason: completion.finishReason,
+        inputTokens: completion.inputTokens,
+        outputTokens: completion.outputTokens,
+        reasoningTokens: completion.reasoningTokens,
+        latencyMs: completion.latencyMs
+      },
       candidateEvidenceCount: evidencePack.candidates.length,
       promptPacking: {
         configVersion: evidencePack.packing.configVersion,
@@ -477,6 +513,8 @@ async function runApplicationAnalysis(job: NonNullable<Awaited<ReturnType<typeof
 }
 
 export const knowledgeAnswerWorkerTestHooks = {
+  analysisRequestTimeout,
+  committeeBriefingForStorage,
   boundedGeneratedAnswer,
   boundedCommitteeBriefingAnswer,
   committeeBriefingBody,
@@ -485,7 +523,7 @@ export const knowledgeAnswerWorkerTestHooks = {
   sourceListEntry
 };
 
-export async function handler(event: WorkerEvent = {}) {
+export async function handler(event: WorkerEvent = {}, context?: { getRemainingTimeInMillis(): number }) {
   const jobId = stringValue(event.jobId);
 
   if (!jobId) {
@@ -504,7 +542,7 @@ export async function handler(event: WorkerEvent = {}) {
     const applicationAnalysis =
       job.request.purpose === "committee_briefing" || job.request.purpose === "custom_analysis";
     const result = applicationAnalysis
-      ? await runApplicationAnalysis(job)
+      ? await runApplicationAnalysis(job, context ? () => context.getRemainingTimeInMillis() : undefined)
       : await runGrantKnowledgeSearch({
           searchText: job.request.searchText,
           limit: job.request.limit,

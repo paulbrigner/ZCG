@@ -19,6 +19,17 @@ test("synthesizes a DST-aware staged corpus refresh pipeline", () => {
   });
   const template = Template.fromStack(stack);
 
+  template.hasResourceProperties("AWS::Lambda::Function", {
+    Handler: "index.handler",
+    Timeout: 420,
+    Environment: {
+      Variables: Match.objectLike({
+        ZCG_KNOWLEDGE_COMMITTEE_BRIEFING_MODEL: "openai-gpt-6-astra",
+        ZCG_KNOWLEDGE_AI_TIMEOUT_MS: "120000"
+      })
+    }
+  });
+
   template.hasResourceProperties("AWS::Scheduler::Schedule", {
     ScheduleExpression: "cron(0 3 * * ? *)",
     ScheduleExpressionTimezone: "America/New_York",
