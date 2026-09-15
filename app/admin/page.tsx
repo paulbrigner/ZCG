@@ -1030,23 +1030,25 @@ export default async function AdminPage({
                         <span title={timeline.title}>{timeline.primary}</span>
                         {timeline.secondary ? <span className="subtle">{timeline.secondary}</span> : null}
                       </td>
-                      <td className="application-briefing">
-                        {application.latest_briefing_id ? (
-                          <>
-                            <Link className="under-review-link primary" href={`/briefings/${application.latest_briefing_id}`}>
-                              Open briefing
-                            </Link>
-                            <span className={`briefing-evidence-state ${application.latest_briefing_evidence_status ?? "unknown"}`}>
-                              {application.latest_briefing_evidence_status === "changed"
-                                ? "Evidence changed"
-                                : application.latest_briefing_evidence_status === "current"
-                                  ? "Evidence current"
-                                  : "Freshness unknown"}
-                            </span>
-                          </>
-                        ) : (
-                          <span className="under-review-unavailable">No briefing yet</span>
-                        )}
+                      <td>
+                        <div className="application-briefing">
+                          {application.latest_briefing_id ? (
+                            <>
+                              <Link className="under-review-link primary" href={`/briefings/${application.latest_briefing_id}`}>
+                                Open briefing
+                              </Link>
+                              <span className={`briefing-evidence-state ${application.latest_briefing_evidence_status ?? "unknown"}`}>
+                                {application.latest_briefing_evidence_status === "changed"
+                                  ? "Evidence changed"
+                                  : application.latest_briefing_evidence_status === "current"
+                                    ? "Evidence current"
+                                    : "Freshness unknown"}
+                              </span>
+                            </>
+                          ) : (
+                            <span className="under-review-unavailable">No briefing yet</span>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );
