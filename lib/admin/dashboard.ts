@@ -180,7 +180,6 @@ export type SourceEvidenceRow = {
   summary: string | null;
   confidence: string;
   relationship_role: string;
-  raw_payload: string;
   metadata: string;
 };
 
@@ -1091,6 +1090,8 @@ export async function getGrantApplicationDetail(id: string) {
         order by gds.meeting_date desc nulls last, gdm.updated_at desc`,
       [id]
     ),
+    // The page uses source summaries and metadata, not raw payloads. Full forum
+    // payloads can exceed the RDS Data API response limit for a single grant.
     query<SourceEvidenceRow>(
       `select sr.id::text,
               sr.source_kind,
@@ -1100,7 +1101,6 @@ export async function getGrantApplicationDetail(id: string) {
               sr.summary,
               sl.confidence::text,
               sl.relationship_role,
-              sr.raw_payload::text,
               sr.metadata::text
          from source_links sl
          join source_records sr on sr.id = sl.source_record_id
