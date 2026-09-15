@@ -781,6 +781,12 @@ function decisionMentionsFromRecord(
         ? extractDecision(keySection, "forward", 3)
         : extractDecision(detailSection, "reverse");
       const rationaleText = trimRationale(detailSection, link.title, decision.text);
+      // Grouped proposals can be listed in both the summary and the detailed
+      // grant section without individual commentary. Keep that real listing
+      // even after unrelated follow-up text has been removed from its section.
+      if (decision.decision === "unknown" && !rationaleText && !(keySection && proposalSection)) {
+        return null;
+      }
       const speakerNotes = extractSpeakerNotes(detailSection);
       const linkedSourceUrl = normalizeUrl(link.url);
       const contentHash = hashContent({
@@ -811,8 +817,7 @@ function decisionMentionsFromRecord(
         }
       };
     })
-    .filter((mention): mention is ParsedDecisionMention => mention !== null)
-    .filter((mention) => mention.normalizedDecision !== "unknown" || mention.rationaleText);
+    .filter((mention): mention is ParsedDecisionMention => mention !== null);
 
   return { source, mentions };
 }

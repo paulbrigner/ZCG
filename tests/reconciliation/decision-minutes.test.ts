@@ -255,6 +255,21 @@ test("does not borrow a later administrative rejection or a previous meeting's a
   assert.doesNotMatch(parsed.mentions[0]?.rationaleText ?? "", /Promotional Merch|rejected/);
 });
 
+test("retains grouped title-only proposals when administrative follow-ups are removed", () => {
+  const titles = ["ZecHub 2025: An Education Hub For Zcash", "Zcash Brazil 2025", "Zcash Global en Espanol 2025", "ZK AV Club Community Support"];
+  const parsed = hooks.decisionMentionsFromRecord(recordFixture({
+    title: "Zcash Community Grants Meeting Minutes 12/9/2024",
+    plainText: ["ZCG Meeting", "Key Takeaways:", "Open Grants",
+      "The following grants have been tabled until January 2025:", ...titles,
+      "Open Grant Proposals", "2025 Community Funding Programs Grants - ZCG will table these decisions until the new committee is appointed.",
+      ...titles, "Brainstorm Session Follow-Ups", "GitHub Migration - The submission form is now available."
+    ].join("\n\n"),
+    links: titles.map((text, i) => ({href: `https://forum.zcashcommunity.com/t/proposal/${55700+i}`, text}))
+  }));
+  assert.deepEqual(parsed.mentions.map(m=>m.candidateTitle),titles);
+  assert.ok(parsed.mentions.every(m=>m.normalizedDecision==='unknown' && m.rationaleText===null));
+});
+
 test("takes the meeting date from the title before unrelated body dates", () => {
   assert.equal(
     hooks.extractMeetingDate("ZCG Meeting Minutes 1/23/23", "A follow-up happened on March 18, 2023."),
