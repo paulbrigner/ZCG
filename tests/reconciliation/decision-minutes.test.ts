@@ -532,9 +532,20 @@ test("builds an exact, idempotent status assertion only from accepted key-takeaw
   assert.ok(assertion);
   assert.equal(assertion.toStatus, "approved");
   assert.equal(assertion.effectiveDate, "2026-07-14");
+  const relinked = hooks.exactDecisionStatusAssertion(
+    { ...application, id: "another-application" } as never, mention as never,
+    "00000000-0000-4000-8000-000000000023", source as never, record as never
+  );
+  assert.notEqual(relinked?.idempotencyKey, assertion.idempotencyKey);
+  const later = hooks.exactDecisionStatusAssertion(
+    application as never,
+    { ...mention, metadata: { decisionSection: "key_takeaways", decisionDate: "2026-07-16" } } as never,
+    "00000000-0000-4000-8000-000000000023", source as never, record as never
+  );
+  assert.equal(later?.effectiveDate, "2026-07-16");
   assert.equal(
     assertion.idempotencyKey,
-    "decision-mention:00000000-0000-4000-8000-000000000023:mention-content-hash"
+    `decision-mention:00000000-0000-4000-8000-000000000023:${application.id}:mention-content-hash`
   );
 
   assert.equal(

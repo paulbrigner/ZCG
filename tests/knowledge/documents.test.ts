@@ -419,3 +419,20 @@ test("rejects invalid scoped application IDs before a full refresh can run", asy
     /Invalid grant application ID: \(empty\)/
   );
 });
+
+test("distinguishes a later vote date from the meeting date in briefing evidence", () => {
+  const documents = knowledgeDocumentTestHooks.documentsFromApplication(applicationRow({
+    decisionMentions: [{
+      id: "mention", source_record_id: "minutes", meeting_date: "2023-01-23",
+      decision_date: "2023-01-25", meeting_title: "January 23 minutes",
+      topic_url: "https://forum.zcashcommunity.com/t/meeting/43921",
+      candidate_title: "ZecHub", normalized_decision: "approved",
+      decision_text: "Update: on January 25, ZCG unanimously approved via Signal.",
+      rationale_text: null, speaker_notes: "[]", match_method: "reviewed_minutes_mention", confidence: "1"
+    }]
+  }));
+  const decision = documents.find(d => d.documentKind === "decision_minutes")!;
+  assert.match(decision.content, /Meeting date: 2023-01-23/);
+  assert.match(decision.content, /Decision date: 2023-01-25/);
+  assert.equal(decision.metadata.decisionDate, "2023-01-25");
+});
