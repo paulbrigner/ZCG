@@ -215,6 +215,16 @@ Important boundaries:
   owners stop reconciliation before generated data is changed. Older duplicate
   records are retained for separate, reviewed cleanup rather than deleted during
   matching. Full and targeted reconciliation share the same GitHub planning code.
+- An explicit All Grants GitHub issue link also identifies an application when
+  its title and labels no longer contain `Grant`. Newly linked issues reuse the
+  existing registry application ID; established GitHub applications retain their
+  existing identity. `Closed - Did Not Follow Process` is retained as the closure
+  label and normalizes to `filtered`, without entering committee review.
+  If the GitHub source disappears, targeted reconciliation immediately restores
+  surviving registry evidence and clears obsolete GitHub state and labels. If
+  the registry row disappears first, the persisted GitHub source owner keeps the
+  same application ID. If both sources disappear, either full or targeted
+  reconciliation retains the application as `unknown` for review.
 - `source_records` remains the current projection used by canonical and
   retrieval queries. Every inserted, changed, moved, re-keyed, or removed
   source state appends a new `source_record_observations` version. Identical
