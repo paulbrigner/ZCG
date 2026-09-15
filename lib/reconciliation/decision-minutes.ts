@@ -671,7 +671,7 @@ function meetingGrantSections(plainText: string) {
     return {
       keyTakeaways: plainText.slice(summaryHeading.end).trim(),
       detailedText: "",
-      followUpText
+      followUpText: ""
     };
   }
 

@@ -202,6 +202,17 @@ test("handles decision reference labels in older snapshots without HTML", () => 
   assert.deepEqual(parsed.mentions.map(m => [m.candidateTitle, m.normalizedDecision]), [["Privacy Tool", "declined"]]);
 });
 
+test("keeps an async outcome on the application when an older snapshot links the outcome separately", () => {
+  const parsed = hooks.decisionMentionsFromRecord(recordFixture({
+    plainText: "ZCG Meeting\nKey Takeaways:\nOpen Grants\nPrivacy Tool\nDeclined asnyc",
+    links: [
+      {href: "https://forum.zcashcommunity.com/t/grant/55501", text: "Privacy Tool"},
+      {href: "https://forum.zcashcommunity.com/t/grant/55501/2", text: "Declined asnyc"}
+    ]
+  }));
+  assert.deepEqual(parsed.mentions.map(m => [m.candidateTitle, m.normalizedDecision]), [["Privacy Tool", "declined"]]);
+});
+
 test("retains legacy Forum discussion links that identify the application", () => {
   const parsed = hooks.decisionMentionsFromRecord(recordFixture({
     plainText: "ZOMG Meeting\nOpen Grant Proposals\nEternity Protocol\nForum discussion\nThe committee rejected this proposal.",
