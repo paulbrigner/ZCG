@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useMemo, useRef, useState } from "react";
 import type {
   ReconciliationDecisionType,
   ReconciliationIssueReviewRow,
@@ -127,6 +127,7 @@ function linkedIssuesText(value: string | null) {
 }
 
 export function ReconciliationManagementPanel({ initialWorkspace, canWrite }: ReconciliationManagementPanelProps) {
+  const decisionHeadingRef = useRef<HTMLHeadingElement>(null);
   const [workspace, setWorkspace] = useState(initialWorkspace);
   const [form, setForm] = useState<DecisionForm>(emptyForm);
   const [pending, setPending] = useState(false);
@@ -154,6 +155,15 @@ export function ReconciliationManagementPanel({ initialWorkspace, canWrite }: Re
     setForm((current) => ({ ...current, ...patch }));
   }
 
+  function focusDecisionForm() {
+    setMessage("");
+    setError("");
+    requestAnimationFrame(() => {
+      decisionHeadingRef.current?.focus({ preventScroll: true });
+      decisionHeadingRef.current?.scrollIntoView({ block: "start" });
+    });
+  }
+
   function prepareSourceLink(issue: ReconciliationIssueReviewRow) {
     updateForm({
       decisionType: "link_source",
@@ -168,6 +178,7 @@ export function ReconciliationManagementPanel({ initialWorkspace, canWrite }: Re
         ? `Manual review confirms this source belongs with ${issue.canonicalTitle}.`
         : "Manual review confirms this source link."
     });
+    focusDecisionForm();
   }
 
   function prepareDismissal(issue: ReconciliationIssueReviewRow) {
@@ -181,6 +192,7 @@ export function ReconciliationManagementPanel({ initialWorkspace, canWrite }: Re
       resolutionStatus: "dismissed",
       rationale: "Manual review determined this generated issue does not require a data change."
     });
+    focusDecisionForm();
   }
 
   async function submitDecision(event: FormEvent<HTMLFormElement>) {
@@ -260,13 +272,26 @@ export function ReconciliationManagementPanel({ initialWorkspace, canWrite }: Re
         <section className="panel">
           <div className="section-heading">
             <div>
-              <h2>Create manual decision</h2>
-              <span className="section-count">Durable reviewer input replayed after generated reconciliation</span>
+              <h2 ref={decisionHeadingRef} tabIndex={-1}>
+                {form.decisionType === "dismiss_issue" ? "Review dismissal" : "Create manual decision"}
+              </h2>
+              <span className="section-count">
+                {form.decisionType === "dismiss_issue"
+                  ? "Review the issue and rationale, then choose Save dismissal."
+                  : "Review the details below, then choose Save decision."}
+              </span>
             </div>
             <button className="ghost-button" disabled={pending} onClick={applyDecisions} type="button">
               Reapply decisions
             </button>
           </div>
+
+          {activeIssue ? (
+            <p className="form-status">
+              Selected issue: {activeIssue.githubIssueNumber ? `#${activeIssue.githubIssueNumber} — ` : ""}
+              {activeIssue.summary}
+            </p>
+          ) : null}
 
           <form className="reconciliation-decision-form" onSubmit={submitDecision}>
             <label className="search-field compact-field">
@@ -368,18 +393,13 @@ export function ReconciliationManagementPanel({ initialWorkspace, canWrite }: Re
             </label>
             <div className="form-actions">
               <button disabled={pending || !canWrite} type="submit">
-                Save decision
+                {form.decisionType === "dismiss_issue" ? "Save dismissal" : "Save decision"}
               </button>
             </div>
           </form>
 
-          {activeIssue ? (
-            <p className="form-status">
-              Selected issue: {activeIssue.issueType} | {activeIssue.summary}
-            </p>
-          ) : null}
-          {message ? <p className="form-status">{message}</p> : null}
-          {error ? <p className="form-error">{error}</p> : null}
+          {message ? <p className="form-status" role="status">{message}</p> : null}
+          {error ? <p className="form-error" role="alert">{error}</p> : null}
         </section>
       ) : (
         <section className="panel">
@@ -440,7 +460,7 @@ export function ReconciliationManagementPanel({ initialWorkspace, canWrite }: Re
                             Use for source link
                           </button>
                           <button className="ghost-button" disabled={pending} onClick={() => prepareDismissal(issue)} type="button">
-                            Dismiss
+                            Review dismissal
                           </button>
                         </div>
                       ) : null}
