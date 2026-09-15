@@ -220,6 +220,9 @@ Important boundaries:
   existing registry application ID; established GitHub applications retain their
   existing identity. `Closed - Did Not Follow Process` is retained as the closure
   label and normalizes to `filtered`, without entering committee review.
+  If the GitHub source disappears, targeted reconciliation immediately restores
+  surviving registry evidence and clears obsolete GitHub state and labels. If
+  both sources disappear, it retains the application as `unknown` for review.
 - `source_records` remains the current projection used by canonical and
   retrieval queries. Every inserted, changed, moved, re-keyed, or removed
   source state appends a new `source_record_observations` version. Identical

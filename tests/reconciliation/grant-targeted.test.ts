@@ -245,7 +245,7 @@ test("retires a generated canonical application when its GitHub source is missin
       return queryResult([{ key: hooks.grantReconciliationLeaseKey }], 1);
     }
 
-    if (text.includes("from grant_applications ga") && text.includes("source_summary->>'generatedBy'")) {
+    if (text.includes("from grant_applications ga") && text.includes("source_summary->>'generatedBy'") && text.includes("like 'github:%'")) {
       return queryResult([generatedApplicationRow()]);
     }
 

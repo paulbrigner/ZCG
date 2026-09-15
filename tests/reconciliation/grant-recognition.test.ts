@@ -61,6 +61,7 @@ test("registry recognition requires the exact repository and issue, and never as
   assert.ok(unassigned);
   assert.equal(hooks.statusFromGitHub(unassigned), "submitted");
   assert.equal(hooks.statusFromGitHub({ ...unassigned, labels: [closureLabel, "Grant Application", "Ready For ZCG Review"] }), "filtered");
+  assert.equal(hooks.parseGitHubApplication({ ...issue, metadata: JSON.stringify({ tombstone: true }) }, byUrl), null);
 });
 
 test("existing GitHub owners retain their key even when an older registry duplicate exists", () => {
@@ -126,6 +127,37 @@ test("PostgreSQL full and targeted reconciliation link #378 without replacing it
     await verify();
     await runGrantReconciliation();
     await verify();
+    await client.query(`insert into reconciliation_decisions(decision_key,decision_type,source_kind,source_id,canonical_key,rationale)
+      values ('keep-registry-owner','link_source','google_sheet_row',$1,$2,'Preserve confirmed registry source')`, [sheet.source_id, canonicalKey]);
+    const decisionBefore = (await client.query("select to_jsonb(d) as data from reconciliation_decisions d")).rows;
+    const reviewBody = { title, html_url: issueUrl, labels: [{ name: "Grant Application" }, { name: "Ready For ZCG Review" }] };
+    const reviewSheet = { ...JSON.parse(sheet.raw_payload), "Grant Status": "ZCG to discuss" };
+    for (const disappearance of ["missing", "tombstoned", "both_sources_missing"]) {
+      await client.query(`insert into source_records(id,source_kind,source_id,source_url,title,raw_payload,metadata)
+        values ($1,'github_issue',$2,$3,$4,$5::jsonb,'{"number":378,"state":"open"}')
+        on conflict (id) do update set raw_payload=excluded.raw_payload,metadata=excluded.metadata`,
+      [issue.id, sourceId, issueUrl, title, JSON.stringify(reviewBody)]);
+      await client.query("update source_records set raw_payload=$2::jsonb where id=$1", [sheet.id, JSON.stringify(reviewSheet)]);
+      await runTargetedGitHubReconciliation({ githubSourceId: sourceId });
+      assert.equal((await client.query("select normalized_status from grant_applications where id=$1", [applicationId])).rows[0].normalized_status, "under_review");
+
+      if (disappearance === "tombstoned") await client.query("update source_records set metadata=metadata || '{\"tombstone\":true}'::jsonb where id=$1", [issue.id]);
+      else await client.query("delete from source_records where id=$1", [issue.id]);
+      if (disappearance === "both_sources_missing") await client.query("delete from source_records where id=$1", [sheet.id]);
+      const retired = await runTargetedGitHubReconciliation({ githubSourceId: sourceId });
+      assert.equal(retired.requiresFullReconciliation, true);
+      assert.deepEqual(retired.applicationIds, [applicationId]);
+      assert.deepEqual((await client.query("select id,canonical_key,normalized_status,github_state from grant_applications where id=$1", [applicationId])).rows,
+        [{ id: applicationId, canonical_key: canonicalKey, normalized_status: disappearance === "both_sources_missing" ? "unknown" : "submitted", github_state: null }]);
+      assert.equal((await client.query("select count(*)::int as n from grant_application_github_labels where application_id=$1", [applicationId])).rows[0].n, 0);
+      assert.deepEqual((await client.query("select to_jsonb(d) as data from reconciliation_decisions d")).rows, decisionBefore);
+      if (disappearance !== "both_sources_missing") {
+        assert.equal((await client.query("select count(*)::int as n from source_links where canonical_id=$1 and source_record_id=$2", [applicationId, sheet.id])).rows[0].n, 1);
+        // Full reconciliation must agree, including a tombstone with retained old title/labels.
+        await runGrantReconciliation();
+        assert.equal((await client.query("select normalized_status from grant_applications where id=$1", [applicationId])).rows[0].normalized_status, "submitted");
+      }
+    }
   } finally {
     if (previousDriver === undefined) delete process.env.DATABASE_DRIVER;
     else process.env.DATABASE_DRIVER = previousDriver;

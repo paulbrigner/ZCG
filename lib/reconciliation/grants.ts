@@ -1257,6 +1257,7 @@ function parseGitHubApplication(
   record: RawSourceRecord,
   historicalByIssueUrl: ReadonlyMap<string, HistoricalApplicationGroup> = new Map()
 ): GitHubApplication | null {
+  if (isTombstonedGitHubSource(record)) return null;
   const raw = parseJsonRecord(record.raw_payload);
   const metadata = parseJsonRecord(record.metadata);
   const title = stringValue(raw.title) ?? record.title ?? "";
@@ -2228,16 +2229,22 @@ async function clearTargetedGeneratedState(
 async function fetchGeneratedGitHubApplicationsForRetirement(options: {
   canonicalKey?: string;
   activeCanonicalKeys?: readonly string[];
+  preservedRegistrySourceId?: string;
 }) {
   const targeted = options.canonicalKey !== undefined;
-  const scopePredicate = targeted
+  const preservedRegistry = options.preservedRegistrySourceId !== undefined;
+  const scopePredicate = preservedRegistry
+    ? "and ga.source_summary->>'githubSourceId' = $2"
+    : targeted
     ? "and ga.canonical_key = $2"
     : `and not exists (
          select 1
            from jsonb_array_elements_text($2::jsonb) as active(canonical_key)
           where active.canonical_key = ga.canonical_key
        )`;
-  const scopeValue = targeted
+  const scopeValue = preservedRegistry
+    ? options.preservedRegistrySourceId
+    : targeted
     ? options.canonicalKey
     : JSON.stringify(options.activeCanonicalKeys ?? []);
   const result = await query<RetirableGitHubApplicationRow>(
@@ -2253,7 +2260,7 @@ async function fetchGeneratedGitHubApplicationsForRetirement(options: {
             ga.match_confidence::text,
             coalesce(ga.source_summary, '{}'::jsonb)::text as source_summary
        from grant_applications ga
-      where ga.canonical_key like 'github:%'
+      where ga.canonical_key like '${preservedRegistry ? "sheet-all-grants:%" : "github:%"}'
         and ga.source_summary->>'generatedBy' = $1
         ${scopePredicate}
       order by ga.canonical_key`,
@@ -2275,7 +2282,7 @@ function retirementApplicationInput(
     !Array.isArray(sourceSummary.retirement)
       ? (sourceSummary.retirement as Record<string, unknown>)
       : {};
-  const githubSourceId = row.canonical_key.slice("github:".length);
+  const githubSourceId = stringValue(sourceSummary.githubSourceId) ?? row.canonical_key.slice("github:".length);
   const retiredAt = stringValue(priorRetirement.retiredAt) ?? context.observedAt;
   const previousStatus = stringValue(priorRetirement.previousStatus) ?? row.normalized_status;
 
@@ -2285,7 +2292,7 @@ function retirementApplicationInput(
     applicantName: row.applicant_name,
     githubIssueNumber: numberValue(row.github_issue_number),
     githubIssueUrl: row.github_issue_url,
-    githubState: row.github_state,
+    githubState: row.canonical_key.startsWith("sheet-all-grants:") ? null : row.github_state,
     normalizedStatus: "unknown",
     requestedAmountUsd: numberValue(row.requested_amount_usd),
     matchConfidence: numberValue(row.match_confidence) ?? 0,
@@ -2591,6 +2598,105 @@ function planGitHubApplication(params: {
   };
 }
 
+function planHistoricalApplication(
+  group: HistoricalApplicationGroup,
+  paymentDetailGroups: Map<string, SheetProjectGroup>,
+  manualSourceLinkKeys: ReadonlySet<string>
+) {
+  const sheetStatus = statusFromSheet(group.status);
+  const normalizedStatus = statusFromSheetWithoutOfficialAssignment(group.status);
+  const paymentMatch = ["declined", "withdrawn", "filtered"].includes(normalizedStatus)
+    ? null : bestPaymentDetailMatchForHistoricalApplication(group, paymentDetailGroups);
+  const sourceRows = [...group.rows, ...(paymentMatch?.group.rows ?? [])];
+
+  const planned: PlannedApplication = {
+    application: {
+      canonicalKey: group.canonicalKey,
+      title: group.title,
+      applicantName: group.applicantName,
+      githubIssueNumber: group.githubIssueNumber,
+      githubIssueUrl: group.githubIssueUrl,
+      githubState: null,
+      normalizedStatus,
+      requestedAmountUsd: null,
+      matchConfidence: paymentMatch?.confidence ?? 1,
+      sourceSummary: {
+        generatedBy,
+        historicalRegistryProject: group.title,
+        historicalRegistryApplicant: group.applicantName,
+        historicalRegistryStatus: group.status,
+        historicalRegistrySubmittedDate: group.submittedDate,
+        historicalRegistryDecisionDate: group.decisionDate,
+        historicalRegistryDecisionTurnaroundDays: group.decisionTurnaroundDays,
+        historicalRegistryGrantPlatformLink: group.grantPlatformLink,
+        historicalRegistryLegacyProposalUrl: group.legacyProposalUrl,
+        historicalRegistryForumUrl: group.forumUrl,
+        historicalRegistryCountry: group.country,
+        historicalRegistryOrganizationOrIndividual: group.organizationOrIndividual,
+        historicalRegistryRowCount: group.rows.length,
+        sheetProject: paymentMatch?.group.project ?? null,
+        sheetRowCount: paymentMatch?.group.rows.length ?? 0,
+        sheetCategory: paymentMatch?.group.category ?? null
+      }
+    },
+    links: sourceRows.map((row) => ({ sourceRecordId: row.id, confidence: row.id === group.rows[0]?.id ? 1 : paymentMatch?.confidence ?? 1 })),
+    githubLabels: [],
+    forumLinks: mergeForumLinks(sourceRows),
+    grant: isFundedGrantStatus(normalizedStatus)
+      ? {
+          title: group.title,
+          granteeName: group.applicantName ?? paymentMatch?.group.grantee ?? null,
+          status: normalizedStatus,
+          approvedAmountUsd: group.amountFunded2021
+        }
+      : null,
+    issues: []
+  };
+
+  if (sheetStatus === "under_review") {
+    planned.issues.push({
+      issueType: "sheet_review_without_official_github_assignment",
+      severity: "warning",
+      sourceRecordId: group.rows[0]?.id,
+      summary: `Sheet marks ${group.title} for review without a verified GitHub assignment`,
+      details: {
+        historicalRegistryTitle: group.title,
+        githubIssueNumber: group.githubIssueNumber,
+        githubIssueUrl: group.githubIssueUrl,
+        sheetStatus: group.status,
+        missingGitHubLabelSlugs: ["grant_application", "ready_for_zcg_review"],
+        requiredGitHubLabelSlugs: ["grant_application", "ready_for_zcg_review"]
+      }
+    });
+  }
+
+  const manualGitHubIssueSourceLink =
+    group.githubIssueNumber !== null &&
+    manualSourceLinkKeys.has(
+      manualSourceLinkKey({
+        sourceKind: "github_issue",
+        sourceId: `${githubIssueSourceIdPrefix}${group.githubIssueNumber}`,
+        canonicalKey: planned.application.canonicalKey
+      })
+    );
+
+  if (group.githubIssueNumber !== null && !manualGitHubIssueSourceLink) {
+    planned.issues.push({
+      issueType: "missing_github_source_mirror",
+      severity: "warning",
+      sourceRecordId: group.rows[0]?.id,
+      summary: `All Grants registry links to GitHub issue #${group.githubIssueNumber}, but no mirrored GitHub issue matched`,
+      details: {
+        historicalRegistryTitle: group.title,
+        githubIssueNumber: group.githubIssueNumber,
+        githubIssueUrl: group.githubIssueUrl
+      }
+    });
+  }
+
+  return { planned, matchedPaymentDetailKey: paymentMatch?.group.key ?? null };
+}
+
 async function performGrantReconciliation(
   context: ReconciliationContext
 ): Promise<ReconciliationRunResult> {
@@ -2698,100 +2804,8 @@ async function performGrantReconciliation(
       continue;
     }
 
-    const sheetStatus = statusFromSheet(group.status);
-    const normalizedStatus = statusFromSheetWithoutOfficialAssignment(group.status);
-    const paymentMatch = ["declined", "withdrawn", "filtered"].includes(normalizedStatus)
-      ? null : bestPaymentDetailMatchForHistoricalApplication(group, paymentDetailGroups);
-    const sourceRows = [...group.rows, ...(paymentMatch?.group.rows ?? [])];
-
-    if (paymentMatch) {
-      matchedPaymentDetailKeys.add(paymentMatch.group.key);
-    }
-
-    const planned: PlannedApplication = {
-      application: {
-        canonicalKey: group.canonicalKey,
-        title: group.title,
-        applicantName: group.applicantName,
-        githubIssueNumber: group.githubIssueNumber,
-        githubIssueUrl: group.githubIssueUrl,
-        githubState: null,
-        normalizedStatus,
-        requestedAmountUsd: null,
-        matchConfidence: paymentMatch?.confidence ?? 1,
-        sourceSummary: {
-          generatedBy,
-          historicalRegistryProject: group.title,
-          historicalRegistryApplicant: group.applicantName,
-          historicalRegistryStatus: group.status,
-          historicalRegistrySubmittedDate: group.submittedDate,
-          historicalRegistryDecisionDate: group.decisionDate,
-          historicalRegistryDecisionTurnaroundDays: group.decisionTurnaroundDays,
-          historicalRegistryGrantPlatformLink: group.grantPlatformLink,
-          historicalRegistryLegacyProposalUrl: group.legacyProposalUrl,
-          historicalRegistryForumUrl: group.forumUrl,
-          historicalRegistryCountry: group.country,
-          historicalRegistryOrganizationOrIndividual: group.organizationOrIndividual,
-          historicalRegistryRowCount: group.rows.length,
-          sheetProject: paymentMatch?.group.project ?? null,
-          sheetRowCount: paymentMatch?.group.rows.length ?? 0,
-          sheetCategory: paymentMatch?.group.category ?? null
-        }
-      },
-      links: sourceRows.map((row) => ({ sourceRecordId: row.id, confidence: row.id === group.rows[0]?.id ? 1 : paymentMatch?.confidence ?? 1 })),
-      githubLabels: [],
-      forumLinks: mergeForumLinks(sourceRows),
-      grant: isFundedGrantStatus(normalizedStatus)
-        ? {
-            title: group.title,
-            granteeName: group.applicantName ?? paymentMatch?.group.grantee ?? null,
-            status: normalizedStatus,
-            approvedAmountUsd: group.amountFunded2021
-          }
-        : null,
-      issues: []
-    };
-
-    if (sheetStatus === "under_review") {
-      planned.issues.push({
-        issueType: "sheet_review_without_official_github_assignment",
-        severity: "warning",
-        sourceRecordId: group.rows[0]?.id,
-        summary: `Sheet marks ${group.title} for review without a verified GitHub assignment`,
-        details: {
-          historicalRegistryTitle: group.title,
-          githubIssueNumber: group.githubIssueNumber,
-          githubIssueUrl: group.githubIssueUrl,
-          sheetStatus: group.status,
-          missingGitHubLabelSlugs: ["grant_application", "ready_for_zcg_review"],
-          requiredGitHubLabelSlugs: ["grant_application", "ready_for_zcg_review"]
-        }
-      });
-    }
-
-    const manualGitHubIssueSourceLink =
-      group.githubIssueNumber !== null &&
-      manualSourceLinkKeys.has(
-        manualSourceLinkKey({
-          sourceKind: "github_issue",
-          sourceId: `${githubIssueSourceIdPrefix}${group.githubIssueNumber}`,
-          canonicalKey: planned.application.canonicalKey
-        })
-      );
-
-    if (group.githubIssueNumber !== null && !manualGitHubIssueSourceLink) {
-      planned.issues.push({
-        issueType: "missing_github_source_mirror",
-        severity: "warning",
-        sourceRecordId: group.rows[0]?.id,
-        summary: `All Grants registry links to GitHub issue #${group.githubIssueNumber}, but no mirrored GitHub issue matched`,
-        details: {
-          historicalRegistryTitle: group.title,
-          githubIssueNumber: group.githubIssueNumber,
-          githubIssueUrl: group.githubIssueUrl
-        }
-      });
-    }
+    const { planned, matchedPaymentDetailKey } = planHistoricalApplication(group, paymentDetailGroups, manualSourceLinkKeys);
+    if (matchedPaymentDetailKey) matchedPaymentDetailKeys.add(matchedPaymentDetailKey);
 
     plannedApplications.push(planned);
     counts.applicationsCreatedOrUpdated += 1;
@@ -3026,19 +3040,66 @@ async function retireTargetedGitHubApplication(
   context: ReconciliationContext,
   reason: GitHubApplicationRetirementReason
 ): Promise<TargetedGitHubReconciliationResult> {
-  const candidates = await fetchGeneratedGitHubApplicationsForRetirement({
-    canonicalKey: `github:${githubSourceId}`
-  });
-  const priorMilestoneScope = await loadMilestoneApplicationScope(candidates.map((row) => row.id));
+  const [candidates, registryCandidates] = await Promise.all([
+    fetchGeneratedGitHubApplicationsForRetirement({ canonicalKey: `github:${githubSourceId}` }),
+    fetchGeneratedGitHubApplicationsForRetirement({ preservedRegistrySourceId: githubSourceId })
+  ]);
+  const priorMilestoneScope = await loadMilestoneApplicationScope([...candidates, ...registryCandidates].map((row) => row.id));
   const retired = await retireGeneratedGitHubApplications(candidates, context, () => reason);
+  const refreshedRegistryIds: string[] = [];
+  const discoveredForumUrls: string[] = [];
 
-  let affectedApplicationIds = retired.applicationIds;
-  if (retired.applicationIds.length) {
+  if (registryCandidates.length) {
+    const [sheetRecords, existingKeys, manualSourceLinkKeys] = await Promise.all([
+      fetchSourceRecords("google_sheet_row"), fetchExistingHistoricalApplicationKeys(), getActiveManualSourceLinkKeys()
+    ]);
+    const historicalGroups = buildHistoricalApplicationGroups(sheetRecords, existingKeys);
+    const paymentDetailGroups = buildPaymentDetailGroups(sheetRecords);
+    const sourceRecordsById = new Map(sheetRecords.map((record) => [record.id, record]));
+
+    for (const row of registryCandidates) {
+      const group = [...historicalGroups.values()].find((group) => group.canonicalKey === row.canonical_key);
+      if (!group) {
+        const missing = await retireGeneratedGitHubApplications([row], context, () => reason);
+        refreshedRegistryIds.push(...missing.applicationIds);
+        continue;
+      }
+
+      // The GitHub evidence disappeared, but this application still has a
+      // registry owner. Apply the same Sheet-only projection as a full refresh
+      // immediately, so obsolete assignment labels cannot keep it in review.
+      const { planned } = planHistoricalApplication(group, paymentDetailGroups, manualSourceLinkKeys);
+      planned.application.statusEvidence = statusEvidenceForPlannedApplication(planned, sourceRecordsById);
+      const ids = await bulkUpsertApplications([planned.application], context);
+      const applicationId = ids.get(row.canonical_key);
+      if (!applicationId) throw new Error(`Failed to restore registry application ${row.canonical_key}`);
+      await clearTargetedGeneratedState(applicationId);
+      await replaceApplicationGithubLabels([applicationId], []);
+      if (planned.grant) await bulkUpsertGrants([{ ...planned.grant, applicationId }]);
+      else await query(`delete from grants where application_id = $1`, [applicationId]);
+
+      const forumSourceIds = await bulkUpsertForumSourceRecords(planned.forumLinks);
+      const links: SourceLinkInput[] = planned.links.map((link) => ({ ...link, canonicalId: applicationId }));
+      for (const link of planned.forumLinks) {
+        const sourceRecordId = forumSourceIds.get(link.url);
+        if (sourceRecordId) links.push({ sourceRecordId, canonicalId: applicationId, confidence: 1, relationshipRole: link.relationshipRole });
+        discoveredForumUrls.push(link.url);
+      }
+      await bulkLinkSources(links);
+      await bulkCreateIssues(planned.issues.map((issue) => ({ ...issue, canonicalId: applicationId })));
+      refreshedRegistryIds.push(applicationId);
+    }
+  }
+
+  const changedApplicationIds = [...retired.applicationIds, ...refreshedRegistryIds];
+  let affectedApplicationIds = changedApplicationIds;
+  if (changedApplicationIds.length) {
     await applyManualSourceLinkDecisions();
     const milestones = await syncGrantMilestoneProjections({ applicationIds: priorMilestoneScope });
-    affectedApplicationIds = [...new Set([...retired.applicationIds, ...milestones.affectedApplicationIds])];
+    affectedApplicationIds = [...new Set([...changedApplicationIds, ...milestones.affectedApplicationIds])];
+    if (refreshedRegistryIds.length) await applyManualReconciliationDecisions();
 
-    for (const applicationId of retired.applicationIds) {
+    for (const applicationId of changedApplicationIds) {
       await query(
         `insert into audit_events (action, target_type, target_id, metadata)
          values ('reconciliation.grants.targeted_retired', 'grant_application', $1, $2::jsonb)`,
@@ -3061,7 +3122,7 @@ async function retireTargetedGitHubApplication(
     reason,
     githubSourceId,
     applicationIds: affectedApplicationIds,
-    discoveredForumUrls: []
+    discoveredForumUrls: [...new Set(discoveredForumUrls)]
   };
 }
 
