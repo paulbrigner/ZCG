@@ -401,16 +401,16 @@ export default async function GrantApplicationPage({
           <div>
             <dt>Requested</dt>
             <dd>{moneyText(application.requested_amount_usd)}</dd>
+            {application.ledger_funding ? (() => {
+              const funding = JSON.parse(application.ledger_funding) as { confirmedScheduleAmountUsd: number | null };
+              return <>
+                <dt>Funding in payment ledger</dt>
+                <dd>{funding.confirmedScheduleAmountUsd === null ? "Unconfirmed" : ledgerMoneyText(String(funding.confirmedScheduleAmountUsd))}
+                  <small>May reflect a partial approval; excludes refunds and reimbursements.</small>
+                </dd>
+              </>;
+            })() : null}
           </div>
-          {application.ledger_funding ? (() => {
-            const funding = JSON.parse(application.ledger_funding) as { confirmedScheduleAmountUsd: number | null; status: string };
-            return <div>
-              <dt>Funding in payment ledger</dt>
-              <dd>{funding.confirmedScheduleAmountUsd === null ? "Unconfirmed" : ledgerMoneyText(String(funding.confirmedScheduleAmountUsd))}
-                <small>May reflect a partial approval; excludes refunds and reimbursements.</small>
-              </dd>
-            </div>;
-          })() : null}
           <div>
             <dt>Status</dt>
             <dd>
