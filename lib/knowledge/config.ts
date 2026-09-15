@@ -1,6 +1,6 @@
 const defaultAiBaseUrl = "https://api.venice.ai/api/v1";
 const defaultAiModel = "openai-gpt-55";
-const defaultCommitteeBriefingAiModel = "openai-gpt-56-terra-pro";
+const defaultCommitteeBriefingAiModel = "openai-gpt-6-astra";
 const defaultEmbeddingModel = "text-embedding-bge-m3";
 const defaultEmbeddingDims = 1024;
 const defaultAiTimeoutMs = 18000;
@@ -56,6 +56,23 @@ export function committeeBriefingAiModel() {
 
 export function grantAnalysisAiModel(reportType: "committee_briefing" | "custom") {
   return reportType === "committee_briefing" ? committeeBriefingAiModel() : knowledgeAiModel();
+}
+
+export function grantAnalysisGenerationOptions(reportType: "committee_briefing" | "custom") {
+  if (reportType === "committee_briefing") {
+    return {
+      reasoningEffort: "medium" as const,
+      // This budget includes hidden reasoning as well as the final briefing.
+      maxTokens: 25_000,
+      timeoutMs: 240_000
+    };
+  }
+
+  return {
+    temperature: 0.15,
+    maxTokens: 2_200,
+    timeoutMs: Math.max(90_000, knowledgeAiTimeoutMs())
+  };
 }
 
 export function knowledgeAiTimeoutMs() {

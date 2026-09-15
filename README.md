@@ -276,6 +276,27 @@ configured AI provider, which can incur provider cost, and creates a new
 version while preserving the prior briefing and its citation snapshot in
 history.
 
+### Briefing model and runtime limits
+
+Committee briefings use standard Astra through Venice (`openai-gpt-6-astra`)
+with explicit **medium** reasoning. Custom analyses and knowledge answers retain
+their separate GPT-5.5 default. `ZCG_KNOWLEDGE_COMMITTEE_BRIEFING_MODEL` overrides
+only the committee model; `ZCG_KNOWLEDGE_AI_MODEL` controls the other paths.
+
+The committee request omits sampling parameters and allows 25,000 completion
+tokens, including reasoning, with a four-minute provider timeout. The existing
+1,400-word prompt and 24 KB storage limit still bound the final briefing. The
+answer Lambda allows seven minutes for retrieval, generation, and persistence;
+each model request reserves 30 seconds of remaining execution time for saving
+success or failure. Generation remains asynchronous with browser polling.
+`ZCG_KNOWLEDGE_AI_TIMEOUT_MS` continues to control the other answer paths.
+
+Saved reports record input/output tokens, reasoning tokens when supplied by the
+provider, effective request settings, and provider latency. Refused, incomplete,
+or truncated committee responses fail generation. Existing saved briefings remain
+versioned and show a model update available; changing models does not regenerate
+them. See [the model release runbook](docs/deployment/briefing-model.md).
+
 ## Runtime Architecture
 
 - **Web:** Next.js 15, React 19, and TypeScript. The live web tier runs on AWS

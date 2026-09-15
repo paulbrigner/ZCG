@@ -16,6 +16,8 @@ type ChatCompletionResponse = {
     };
   }>;
   usage?: {
+    prompt_tokens?: unknown;
+    completion_tokens?: unknown;
     completion_tokens_details?: {
       reasoning_tokens?: unknown;
     };
@@ -110,21 +112,33 @@ function responseText(payload: ChatCompletionResponse) {
   return "";
 }
 
-export async function composeGroundedGrantAnalysis({
-  systemPrompt,
-  userPrompt,
-  model = knowledgeAiModel(),
-  temperature = 0.2,
-  timeoutMs = knowledgeAiTimeoutMs(),
-  maxTokens
-}: {
+export type GroundedGrantAnalysisOptions = {
   systemPrompt: string;
   userPrompt: string;
   model?: string;
   temperature?: number;
   timeoutMs?: number;
   maxTokens?: number;
-}) {
+  reasoningEffort?: "low" | "medium" | "high" | "xhigh" | "max";
+};
+
+function tokenCount(value: unknown) {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
+}
+
+export async function composeGroundedGrantAnalysis(options: GroundedGrantAnalysisOptions) {
+  return (await composeGroundedGrantAnalysisResult(options)).text;
+}
+
+export async function composeGroundedGrantAnalysisResult({
+  systemPrompt,
+  userPrompt,
+  model = knowledgeAiModel(),
+  temperature = 0.2,
+  timeoutMs = knowledgeAiTimeoutMs(),
+  maxTokens,
+  reasoningEffort
+}: GroundedGrantAnalysisOptions) {
   const apiKey = knowledgeAiApiKey();
 
   if (!apiKey) {
@@ -132,10 +146,12 @@ export async function composeGroundedGrantAnalysis({
   }
 
   const controller = new AbortController();
+  const startedAt = Date.now();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const baseUrl = knowledgeAiBaseUrl();
-    const isVenice = new URL(baseUrl).hostname.toLowerCase().endsWith("venice.ai");
+    const hostname = new URL(baseUrl).hostname.toLowerCase();
+    const isVenice = hostname === "venice.ai" || hostname.endsWith(".venice.ai");
     const response = await fetch(`${baseUrl}/chat/completions`, {
       method: "POST",
       headers: {
@@ -145,13 +161,16 @@ export async function composeGroundedGrantAnalysis({
       },
       body: JSON.stringify({
         model,
-        temperature,
+        // Astra does not accept sampling parameters such as temperature.
+        ...(!reasoningEffort ? { temperature } : {}),
         ...(maxTokens
-          ? isVenice
+          ? isVenice || reasoningEffort
             ? { max_completion_tokens: maxTokens }
             : { max_tokens: maxTokens }
           : {}),
-        ...(isVenice ? { reasoning: { enabled: false }, reasoning_effort: "none" } : {}),
+        ...(reasoningEffort
+          ? { reasoning_effort: reasoningEffort }
+          : isVenice ? { reasoning: { enabled: false }, reasoning_effort: "none" } : {}),
         messages: [
           {
             role: "system",
@@ -174,6 +193,16 @@ export async function composeGroundedGrantAnalysis({
 
     const payload = (await response.json()) as ChatCompletionResponse;
     const text = responseText(payload);
+    const choice = payload.choices?.[0];
+    const finishReason = typeof choice?.finish_reason === "string" ? choice.finish_reason : null;
+    const refused = typeof choice?.message?.refusal === "string" && Boolean(choice.message.refusal.trim());
+
+    if (refused || (finishReason && finishReason !== "stop") || (reasoningEffort && !finishReason)) {
+      throw new Error(
+        `Knowledge answer response was incomplete (finish reason: ${finishReason ?? "unknown"}).` +
+        (refused ? " The provider returned a refusal." : "")
+      );
+    }
 
     if (!text) {
       const choice = payload.choices?.[0];
@@ -190,7 +219,19 @@ export async function composeGroundedGrantAnalysis({
       );
     }
 
-    return text;
+    return {
+      text,
+      finishReason,
+      inputTokens: tokenCount(payload.usage?.prompt_tokens),
+      outputTokens: tokenCount(payload.usage?.completion_tokens),
+      reasoningTokens: tokenCount(payload.usage?.completion_tokens_details?.reasoning_tokens),
+      latencyMs: Date.now() - startedAt
+    };
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error(`Knowledge answer request timed out after ${timeoutMs} ms.`, { cause: error });
+    }
+    throw error;
   } finally {
     clearTimeout(timeout);
   }
